@@ -16,5 +16,15 @@ namespace DataManager
         {
 
         }
+
+        private void lblLog_Click(object sender, EventArgs e)
+        {
+
+        }
+
+        private void lblTubPath_Click(object sender, EventArgs e)
+        {
+
+        }
     }
 }
