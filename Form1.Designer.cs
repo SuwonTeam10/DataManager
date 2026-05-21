@@ -236,7 +236,8 @@
             tabCleaner.Controls.Add(lblRange);
             tabCleaner.Controls.Add(btnSetRight);
             tabCleaner.Controls.Add(btnSetLeft);
-            tabCleaner.Location = new Point(8, 46);
+            tabCleaner.Location = new Point(4, 29);
+            tabCleaner.Margin = new Padding(2);
             tabCleaner.Name = "tabCleaner";
             tabCleaner.Padding = new Padding(3);
             tabCleaner.Size = new Size(1477, 289);
@@ -357,7 +358,7 @@
             btnFilter.Font = new Font("맑은 고딕", 10.875F, FontStyle.Regular, GraphicsUnit.Point, 129);
             btnFilter.Location = new Point(498, 28);
             btnFilter.Name = "btnFilter";
-            btnFilter.Size = new Size(164, 52);
+            btnFilter.Size = new Size(105, 32);
             btnFilter.TabIndex = 10;
             btnFilter.Text = "필터 적용";
             btnFilter.UseVisualStyleBackColor = true;
@@ -377,7 +378,7 @@
             btnSetRight.Font = new Font("맑은 고딕", 10.875F);
             btnSetRight.Location = new Point(203, 28);
             btnSetRight.Name = "btnSetRight";
-            btnSetRight.Size = new Size(164, 52);
+            btnSetRight.Size = new Size(105, 32);
             btnSetRight.TabIndex = 8;
             btnSetRight.Text = "끝 지정";
             btnSetRight.UseVisualStyleBackColor = true;
@@ -686,7 +687,7 @@
             // 
             // Form1
             // 
-            AutoScaleDimensions = new SizeF(14F, 32F);
+            AutoScaleDimensions = new SizeF(9F, 20F);
             AutoScaleMode = AutoScaleMode.Font;
             ClientSize = new Size(1597, 1255);
             Controls.Add(tabMain);
