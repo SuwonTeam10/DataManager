@@ -6,5 +6,15 @@ namespace DataManager
         {
             InitializeComponent();
         }
+
+        private void lblConfigPath_Click(object sender, EventArgs e)
+        {
+
+        }
+
+        private void groupTubNavigator_Enter(object sender, EventArgs e)
+        {
+
+        }
     }
 }
