@@ -711,7 +711,7 @@
         private ListView lvTimeline;
         private TabControl tabMain;
         private TabPage tabCleaner;
-        private TabPage tabGraph;
+        private TabPage tabGraph;//
         private TabPage tabTrainTest;
         private Label lblProgress;
         private ProgressBar progressTrain;
