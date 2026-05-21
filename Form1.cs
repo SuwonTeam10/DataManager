@@ -4,6 +4,7 @@ namespace DataManager
 {
     public partial class Form1 : Form
     {
+        // catalog 한 줄에서 읽어온 Donkeycar 프레임 정보를 저장한다.
         private sealed class TubFrame
         {
             public int FrameNumber { get; set; }
@@ -18,6 +19,7 @@ namespace DataManager
             }
         }
 
+        // 백그라운드에서 Tub 데이터를 읽은 뒤 UI 스레드로 전달할 결과를 저장한다.
         private sealed class TubLoadResult
         {
             public List<TubFrame> Frames { get; } = new();
@@ -29,6 +31,7 @@ namespace DataManager
         private readonly List<TubFrame> tubFrames = new();
         private readonly HashSet<int> missingImageFrames = new();
         private readonly ImageList timelineImages = new();
+        // 타임라인은 성능을 위해 현재 구간의 연속 20장만 썸네일로 표시한다.
         private const int TimelineVisibleCount = 20;
         private int currentTimelineStart = -1;
         private bool isUpdatingTimelineSelection;
@@ -37,7 +40,6 @@ namespace DataManager
         {
             InitializeComponent();
 
-            btnLoadTub.Click += btnLoadTub_Click;
             btnReloadTub.Click += btnReloadTub_Click;
             lstFrames.SelectedIndexChanged += lstFrames_SelectedIndexChanged;
             lvTimeline.SelectedIndexChanged += lvTimeline_SelectedIndexChanged;
@@ -47,6 +49,7 @@ namespace DataManager
             btnNext.Click += btnNext_Click;
             btnLast.Click += btnLast_Click;
 
+            // 타임라인 썸네일 표시용 ImageList를 설정한다.
             timelineImages.ImageSize = new Size(36, 27);
             timelineImages.ColorDepth = ColorDepth.Depth32Bit;
             lvTimeline.LargeImageList = timelineImages;
@@ -68,6 +71,7 @@ namespace DataManager
 
         private void btnLoadConfig_Click(object sender, EventArgs e)
         {
+            // Donkeycar 프로젝트 폴더를 선택하고 manage.py 존재 여부로 유효성을 확인한다.
             using (FolderBrowserDialog dlg = new FolderBrowserDialog())
             {
                 dlg.Description = "Donkeycar 프로젝트 폴더를 선택하세요.";
@@ -88,6 +92,7 @@ namespace DataManager
 
         private async void btnLoadTub_Click(object? sender, EventArgs e)
         {
+            // 사용자가 선택한 Tub 폴더에서 catalog와 프레임 데이터를 불러온다.
             using (FolderBrowserDialog dlg = new FolderBrowserDialog())
             {
                 dlg.Description = "Donkeycar tub 데이터 폴더를 선택하세요.";
@@ -101,6 +106,7 @@ namespace DataManager
 
         private async void btnReloadTub_Click(object? sender, EventArgs e)
         {
+            // 마지막으로 불러온 Tub 폴더를 다시 읽어 화면 데이터를 갱신한다.
             if (string.IsNullOrWhiteSpace(tubPath))
             {
                 MessageBox.Show("먼저 Tub 폴더를 선택하세요.", "Load Tub", MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -112,6 +118,7 @@ namespace DataManager
 
         private async Task LoadTubAsync(string selectedTubPath)
         {
+            // catalog 파일이 많은 Tub도 UI가 멈추지 않도록 실제 읽기는 백그라운드에서 처리한다.
             string[] catalogFiles = Directory.GetFiles(selectedTubPath, "catalog_*.catalog")
                 .OrderBy(file => file)
                 .ToArray();
@@ -141,6 +148,7 @@ namespace DataManager
 
             try
             {
+                // catalog 파싱은 시간이 걸릴 수 있으므로 UI 스레드 밖에서 실행한다.
                 TubLoadResult result = await Task.Run(() => ReadTubFrames(selectedTubPath, catalogFiles));
 
                 tubFrames.AddRange(result.Frames);
@@ -174,6 +182,7 @@ namespace DataManager
 
         private static TubLoadResult ReadTubFrames(string selectedTubPath, string[] catalogFiles)
         {
+            // catalog JSON Lines를 읽어 이미지 파일명, angle, throttle을 프레임 목록으로 변환한다.
             TubLoadResult result = new TubLoadResult();
             string imageBasePath = GetImageBasePath(selectedTubPath);
 
@@ -220,6 +229,7 @@ namespace DataManager
 
         private void ResetTubView()
         {
+            // Tub 로딩 후 프레임 목록과 TrackBar 범위를 초기화한다.
             lstFrames.BeginUpdate();
 
             lstFrames.Items.Clear();
@@ -251,6 +261,7 @@ namespace DataManager
 
         private void UpdateTimelineForFrame(int frameIndex)
         {
+            // 현재 프레임이 포함된 연속 20장 구간만 썸네일 타임라인에 표시한다.
             int timelineStart = (frameIndex / TimelineVisibleCount) * TimelineVisibleCount;
             if (timelineStart == currentTimelineStart)
             {
@@ -286,6 +297,7 @@ namespace DataManager
 
         private void ShowFrame(int index)
         {
+            // 선택한 프레임의 이미지, 조향각, 속도, 타임라인 선택 상태를 화면에 반영한다.
             if (index < 0 || index >= tubFrames.Count)
             {
                 return;
@@ -316,6 +328,7 @@ namespace DataManager
 
             if (!File.Exists(frame.ImagePath) && missingImageFrames.Add(index))
             {
+                // 이미지가 없으면 중복 등록을 막고 휴지통 목록에 누락 프레임을 표시한다.
                 lstTrash.Items.Add($"{frame}: missing image");
             }
 
@@ -326,6 +339,7 @@ namespace DataManager
 
         private static string GetImageBasePath(string selectedTubPath)
         {
+            // Donkeycar Tub에서 이미지 폴더 이름이 다를 수 있어 가능한 기본 위치를 찾는다.
             string imagesPath = Path.Combine(selectedTubPath, "images");
             if (Directory.Exists(imagesPath))
             {
@@ -343,6 +357,7 @@ namespace DataManager
 
         private static string FindImagePath(string selectedTubPath, string imageBasePath, string imageFileName)
         {
+            // 파일명 순서가 아니라 catalog의 cam/image_array 값을 기준으로 이미지 경로를 만든다.
             if (Path.IsPathRooted(imageFileName))
             {
                 return imageFileName;
@@ -359,6 +374,7 @@ namespace DataManager
 
         private static Image LoadImage(string imagePath)
         {
+            // PictureBox에 표시할 현재 프레임 이미지를 로드한다.
             if (!File.Exists(imagePath))
             {
                 Bitmap missing = new Bitmap(160, 120);
@@ -376,6 +392,7 @@ namespace DataManager
 
         private static Image CreateTimelineThumbnail(string imagePath)
         {
+            // 타임라인에 표시할 작은 썸네일 이미지를 생성한다.
             if (!File.Exists(imagePath))
             {
                 Bitmap missing = new Bitmap(36, 27);
@@ -393,6 +410,7 @@ namespace DataManager
 
         private static string GetStringValue(JsonElement root, string propertyName)
         {
+            // catalog JSON에서 문자열 값을 안전하게 가져온다.
             if (!root.TryGetProperty(propertyName, out JsonElement value))
             {
                 return "";
@@ -403,6 +421,7 @@ namespace DataManager
 
         private static int GetIntValue(JsonElement root, string propertyName, int defaultValue)
         {
+            // catalog JSON에서 정수 값을 안전하게 가져온다.
             if (!root.TryGetProperty(propertyName, out JsonElement value))
             {
                 return defaultValue;
@@ -418,6 +437,7 @@ namespace DataManager
 
         private static double GetDoubleValue(JsonElement root, string propertyName)
         {
+            // catalog JSON에서 실수 값을 안전하게 가져온다.
             if (!root.TryGetProperty(propertyName, out JsonElement value))
             {
                 return 0;
@@ -433,16 +453,19 @@ namespace DataManager
 
         private void AddLog(string message)
         {
+            // Train/Test 탭의 로그 창에 작업 상태를 누적 출력한다.
             txtLog.AppendText(Environment.NewLine + message);
         }
 
         private void lstFrames_SelectedIndexChanged(object? sender, EventArgs e)
         {
+            // 프레임 목록에서 선택한 항목으로 현재 프레임을 이동한다.
             ShowFrame(lstFrames.SelectedIndex);
         }
 
         private void lvTimeline_SelectedIndexChanged(object? sender, EventArgs e)
         {
+            // 타임라인 썸네일을 클릭하면 해당 프레임으로 이동한다.
             if (isUpdatingTimelineSelection)
             {
                 return;
@@ -461,26 +484,31 @@ namespace DataManager
 
         private void trackFrame_Scroll(object? sender, EventArgs e)
         {
+            // TrackBar 위치에 맞춰 현재 프레임을 이동한다.
             ShowFrame(trackFrame.Value);
         }
 
         private void btnFirst_Click(object? sender, EventArgs e)
         {
+            // 첫 번째 프레임으로 이동한다.
             ShowFrame(0);
         }
 
         private void btnPrev_Click(object? sender, EventArgs e)
         {
+            // 이전 프레임으로 한 칸 이동한다.
             ShowFrame(Math.Max(0, trackFrame.Value - 1));
         }
 
         private void btnNext_Click(object? sender, EventArgs e)
         {
+            // 다음 프레임으로 한 칸 이동한다.
             ShowFrame(Math.Min(tubFrames.Count - 1, trackFrame.Value + 1));
         }
 
         private void btnLast_Click(object? sender, EventArgs e)
         {
+            // 마지막 프레임으로 이동한다.
             ShowFrame(tubFrames.Count - 1);
         }
     }
