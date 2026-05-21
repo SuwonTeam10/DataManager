@@ -114,7 +114,6 @@
             lblTubPath.Size = new Size(168, 28);
             lblTubPath.TabIndex = 2;
             lblTubPath.Text = "Tub 경로: 없음";
-            lblTubPath.Click += lblTubPath_Click;
             // 
             // btnLoadTub
             // 
@@ -433,7 +432,6 @@
             lblLog.Size = new Size(69, 34);
             lblLog.TabIndex = 21;
             lblLog.Text = "로그";
-            lblLog.Click += lblLog_Click;
             // 
             // txtLog
             // 
