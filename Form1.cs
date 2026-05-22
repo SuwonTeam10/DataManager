@@ -1,9 +1,151 @@
 ﻿using System.Text.Json;
+using static DataManager.ICE;
+using static DataManager.ICE.RemoteExecutor;
+using System.Text.RegularExpressions;
 
 namespace DataManager
 {
     public partial class Form1 : Form
     {
+        private ICE.ICommandExecutor _executor; 
+
+        // 1. 학습 버튼 클릭 시
+        private void btn_Train_Click(object sender, EventArgs e)
+        {
+            if (_executor == null)
+            {
+                MessageBox.Show("먼저 로컬/원격 연결 설정을 완료해주세요!", "설정 필요", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            if (string.IsNullOrEmpty(configPath))
+            {
+                MessageBox.Show("Donkeycar 프로젝트 폴더(Config)를 먼저 로드해주세요!", "폴더 누락", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            _executor.ExecuteTrain(configPath, (log) =>
+            {
+                this.Invoke(new Action(() =>
+                {
+                    UpdateChartRealTime(log);
+                }));
+            });
+        }
+
+        // 2. 빠져있던 차트 업데이트 함수
+        private void UpdateChartRealTime(string logText)
+        {
+            if (string.IsNullOrEmpty(logText)) return;
+
+            txtLog.AppendText(logText + Environment.NewLine);
+
+            string pattern = @"loss:\s*([0-9]*\.?[0-9]+)";
+            Match match = Regex.Match(logText, pattern);
+
+            if (match.Success)
+            {
+                double lossValue = Convert.ToDouble(match.Groups[1].Value);
+                
+                // <최인성> UI님, loss값 차트 이름 뭐에요? 못 찾았습니다,,,
+                // chartLoss.Series["Loss"].Points.AddY(lossValue);
+            }
+        }
+
+        // 3. 로컬 라디오 버튼을 클릭했을 때 (기본값)
+        // (디자인 창에서 로컬 라디오 버튼 더블클릭 후 연결하세요)
+        private void rbLocal_CheckedChanged(object sender, EventArgs e)
+        {
+            if (rdoLocal.Checked)
+            {
+                _executor = new ICE.LocalExecutor();
+            }
+        }
+
+        // 4. 원격 라디오 버튼을 클릭했을 때
+        // (디자인 창에서 원격 라디오 버튼 더블클릭 후 연결하세요)
+        private void rbRemote_CheckedChanged(object sender, EventArgs e)
+        {
+            if (rdoRemote.Checked)
+            {
+                using (var loginForm = new LoginForm())
+                {
+                    if (loginForm.ShowDialog() == DialogResult.OK)
+                    {
+                        // 로그인 성공 시 원격 모드 셋팅
+                        _executor = new ICE.RemoteExecutor(loginForm.Host, loginForm.User, loginForm.Pass);
+                    }
+                    else
+                    {
+                        // 로그인 창 닫으면 오류 없이 자동으로 로컬 버튼으로 원복됨!
+                        rdoLocal.Checked = true;
+                    }
+                }
+            }
+        }
+
+        // 1. 로컬 라디오 버튼 상태 변경 시 (로컬 함수)
+        private void rdoLocal_CheckedChanged(object sender, EventArgs e)
+        {
+            if (rdoLocal.Checked)
+            {
+                _executor = new ICE.LocalExecutor();
+            }
+        }
+
+        // 2. 원격 라디오 버튼 상태 변경 시 (원격 함수 & 로그인 창 호출)
+        // Form1.cs 내부의 원격 라디오버튼 로직 업데이트
+        private void rdoRemote_CheckedChanged(object sender, EventArgs e)
+        {
+            if (rdoRemote.Checked)
+            {
+                using (var loginForm = new LoginForm())
+                {
+                    if (loginForm.ShowDialog() == DialogResult.OK)
+                    {
+                        // 연결 성공! 실행기 만들고 프로필 라벨 업데이트
+                        _executor = new ICE.RemoteExecutor(loginForm.Host, loginForm.User, loginForm.Pass);
+
+                        lblProfile.Text = $"👤 {loginForm.User} 접속중"; // 아이디 표시
+                        lblProfile.Tag = loginForm.Host; // Tag에 IP를 숨겨둡니다.
+                        lblProfile.ForeColor = Color.Blue; // 접속된 느낌으로 파란색!
+                        lblProfile.Cursor = Cursors.Hand; // 마우스 올리면 손가락 모양
+                    }
+                    else
+                    {
+                        rdoLocal.Checked = true;
+                        lblProfile.Text = "로컬 모드";
+                        lblProfile.ForeColor = Color.Black;
+                    }
+                }
+            }
+        }
+
+        // 디자인 창에서 lblProfile을 더블클릭해서 연결하세요! (로그아웃 기능)
+        private void lblProfile_Click(object sender, EventArgs e)
+        {
+            // 원격 접속 중일 때만 반응
+            if (rdoRemote.Checked)
+            {
+                string ip = lblProfile.Tag?.ToString(); // 숨겨둔 IP 꺼내기
+
+                DialogResult result = MessageBox.Show(
+                    $"현재 접속 정보\n- IP: {ip}\n\n로그아웃하고 로컬 모드로 전환하시겠습니까?",
+                    "로그아웃",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Question);
+
+                if (result == DialogResult.Yes)
+                {
+                    // Yes 누르면 강제로 로컬 라디오버튼 체크 -> 자동으로 연결 끊기고 복구됨!
+                    rdoLocal.Checked = true;
+                    lblProfile.Text = "로컬 모드";
+                    lblProfile.ForeColor = Color.Black;
+                    lblProfile.Cursor = Cursors.Default;
+                }
+            }
+        }
+
         // catalog 한 줄에서 읽어온 Donkeycar 프레임 정보를 저장한다.
         private sealed class TubFrame
         {
@@ -39,6 +181,12 @@ namespace DataManager
         public Form1()
         {
             InitializeComponent();
+
+            // <추가-최인성> 라디오버튼: 프로그램 시작 시 실행기를 '로컬'로 기본 세팅 (튕김 방지)
+            _executor = new ICE.LocalExecutor();
+            // 라디오 버튼 연결
+            rdoLocal.CheckedChanged += rdoLocal_CheckedChanged;
+            rdoRemote.CheckedChanged += rdoRemote_CheckedChanged;
 
             btnReloadTub.Click += btnReloadTub_Click;
             lstFrames.SelectedIndexChanged += lstFrames_SelectedIndexChanged;
@@ -510,6 +658,11 @@ namespace DataManager
         {
             // 마지막 프레임으로 이동한다.
             ShowFrame(tubFrames.Count - 1);
+        }
+
+        private void lvTimeline_SelectedIndexChanged_1(object sender, EventArgs e)
+        {
+
         }
     }
 }
