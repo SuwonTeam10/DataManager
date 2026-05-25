@@ -63,6 +63,7 @@ namespace DataManager
             btnPrev.Click += btnPrev_Click;
             btnNext.Click += btnNext_Click;
             btnLast.Click += btnLast_Click;
+            btnFilter.Click += btnFilter_Click;
 
             timelineImages.ImageSize = new Size(36, 27);
             timelineImages.ColorDepth = ColorDepth.Depth32Bit;
@@ -707,6 +708,97 @@ namespace DataManager
                     await Task.Yield();
                 }
             }
+        }
+
+        private async void btnFilter_Click(object sender, EventArgs e)
+        {
+            // 체크박스로 선택한 조건에 맞는 프레임을 찾아 삭제 후보 목록(lstTrash)에 표시한다.
+            if (tubFrames.Count == 0)
+            {
+                MessageBox.Show("먼저 Tub 데이터를 불러오세요.", "필터 적용", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            if (!chkThrottleZero.Checked && !chkMissingImage.Checked && !chkAbnormalAngle.Checked)
+            {
+                MessageBox.Show("적용할 필터 조건을 선택하세요.", "필터 적용", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            btnFilter.Enabled = false;
+            UseWaitCursor = true;
+            lstTrash.Items.Clear();
+
+            try
+            {
+                bool filterThrottleZero = chkThrottleZero.Checked;
+                bool filterMissingImage = chkMissingImage.Checked;
+                bool filterAbnormalAngle = chkAbnormalAngle.Checked;
+                List<TubFrame> framesSnapshot = tubFrames.ToList();
+                HashSet<int> missingImageFramesSnapshot = missingImageFrames.ToHashSet();
+
+                List<string> filterResults = await Task.Run(() =>
+                    BuildFilterResults(framesSnapshot, missingImageFramesSnapshot, filterThrottleZero, filterMissingImage, filterAbnormalAngle));
+
+                lstTrash.Items.AddRange(filterResults.Cast<object>().ToArray());
+                AddLog($"필터 적용 완료: {filterResults.Count}개 프레임");
+            }
+            finally
+            {
+                UseWaitCursor = false;
+                btnFilter.Enabled = true;
+            }
+        }
+
+        private static List<string> BuildFilterResults(
+            List<TubFrame> frames,
+            HashSet<int> missingImageFramesSnapshot,
+            bool filterThrottleZero,
+            bool filterMissingImage,
+            bool filterAbnormalAngle)
+        {
+            // 실제 삭제는 하지 않고, 조건에 해당하는 프레임과 사유만 계산한다.
+            List<string> filterResults = new();
+
+            for (int i = 0; i < frames.Count; i++)
+            {
+                TubFrame frame = frames[i];
+                List<string> reasons = new();
+
+                if (filterThrottleZero && IsThrottleZero(frame.Throttle))
+                {
+                    reasons.Add("throttle = 0");
+                }
+
+                if (filterMissingImage && missingImageFramesSnapshot.Contains(i))
+                {
+                    reasons.Add("missing image");
+                }
+
+                if (filterAbnormalAngle && IsAbnormalAngle(frame.Angle))
+                {
+                    reasons.Add("abnormal angle");
+                }
+
+                if (reasons.Count > 0)
+                {
+                    filterResults.Add($"{frame}: {string.Join(", ", reasons)}");
+                }
+            }
+
+            return filterResults;
+        }
+
+        private static bool IsThrottleZero(double throttle)
+        {
+            // 부동소수점 오차를 고려해 0에 매우 가까운 값도 정지 데이터로 판단한다.
+            return Math.Abs(throttle) < 0.000001;
+        }
+
+        private static bool IsAbnormalAngle(double angle)
+        {
+            // Donkeycar 조향값은 일반적으로 -1.0 ~ 1.0 범위를 사용하므로 이 범위를 벗어나면 비정상으로 본다.
+            return double.IsNaN(angle) || double.IsInfinity(angle) || angle < -1.0 || angle > 1.0;
         }
 
         private static string GetImageBasePath(string selectedTubPath)
