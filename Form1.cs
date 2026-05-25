@@ -1,44 +1,58 @@
-﻿using System.Text.Json;
+﻿using System;
+using System.Collections.Generic;
+using System.Drawing;
+using System.IO;
+using System.Linq;
+using System.Text.Json;
+using System.Text.RegularExpressions;
+using System.Threading.Tasks;
+using System.Windows.Forms;
+using static DataManager.ICE;
+using static DataManager.ICE.RemoteExecutor;
 
 namespace DataManager
 {
     public partial class Form1 : Form
     {
-        // catalog 한 줄에서 읽어온 Donkeycar 프레임 정보를 저장한다.
-        private sealed class TubFrame
-        {
-            public int FrameNumber { get; set; }
-            public string ImageFileName { get; set; } = "";
-            public string ImagePath { get; set; } = "";
-            public double Angle { get; set; }
-            public double Throttle { get; set; }
-
-            public override string ToString()
-            {
-                return $"Frame {FrameNumber:D6}";
-            }
-        }
-
-        // 백그라운드에서 Tub 데이터를 읽은 뒤 UI 스레드로 전달할 결과를 저장한다.
-        private sealed class TubLoadResult
-        {
-            public List<TubFrame> Frames { get; } = new();
-            public List<string> Errors { get; } = new();
-        }
+        // ==========================================
+        // 전역 변수 선언
+        // ==========================================
+        private ICE.ICommandExecutor _executor;
+        private string modelPath = "";
+        private string testImagePath = "";
+        private string loggedInUser = "";
+        private System.Windows.Forms.Timer playTimer;
+        private bool _isUpdatingRadio = false;
 
         private string configPath = "";
         private string tubPath = "";
         private readonly List<TubFrame> tubFrames = new();
         private readonly HashSet<int> missingImageFrames = new();
         private readonly ImageList timelineImages = new();
-        // 타임라인은 성능을 위해 현재 구간의 연속 20장만 썸네일로 표시한다.
         private const int TimelineVisibleCount = 20;
         private int currentTimelineStart = -1;
         private bool isUpdatingTimelineSelection;
 
+        // ==========================================
+        // 1. 초기화 및 생성자
+        // ==========================================
         public Form1()
         {
             InitializeComponent();
+
+            _executor = new ICE.LocalExecutor();
+
+            rdoLocal.CheckedChanged += rdoLocal_CheckedChanged;
+            rdoRemote.CheckedChanged += rdoRemote_CheckedChanged;
+
+            playTimer = new System.Windows.Forms.Timer();
+            playTimer.Interval = 100;
+            playTimer.Tick += PlayTimer_Tick;
+
+            this.Load += Form1_Load;
+
+            // 상단 메뉴바 동적 생성
+            CreateTopMenu();
 
             btnReloadTub.Click += btnReloadTub_Click;
             lstFrames.SelectedIndexChanged += lstFrames_SelectedIndexChanged;
@@ -49,7 +63,6 @@ namespace DataManager
             btnNext.Click += btnNext_Click;
             btnLast.Click += btnLast_Click;
 
-            // 타임라인 썸네일 표시용 ImageList를 설정한다.
             timelineImages.ImageSize = new Size(36, 27);
             timelineImages.ColorDepth = ColorDepth.Depth32Bit;
             lvTimeline.LargeImageList = timelineImages;
@@ -59,70 +72,365 @@ namespace DataManager
             lvTimeline.ShowItemToolTips = true;
         }
 
-        private void lblConfigPath_Click(object sender, EventArgs e)
+        private void Form1_Load(object sender, EventArgs e)
         {
+            DialogResult res = MessageBox.Show(
+                "Donkeycar 데이터 관리 프로그램에 오신 것을 환영합니다!\n\n프로그램 사용이 처음이신가요?\n'예'를 누르시면 사용 설명서가 팝업으로 뜹니다.",
+                "환영합니다!",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Information);
 
-        }
-
-        private void groupTubNavigator_Enter(object sender, EventArgs e)
-        {
-
-        }
-
-        private void btnLoadConfig_Click(object sender, EventArgs e)
-        {
-            // Donkeycar 프로젝트 폴더를 선택하고 manage.py 존재 여부로 유효성을 확인한다.
-            using (FolderBrowserDialog dlg = new FolderBrowserDialog())
+            if (res == DialogResult.Yes)
             {
-                dlg.Description = "Donkeycar 프로젝트 폴더를 선택하세요.";
+                MessageBox.Show("[기본 사용 순서]\n\n1. 좌측 [서버 연결 설정]에서 [원격] 선택 후 로그인\n2. [설정 파일 열기] 클릭하여 서버 경로 동기화\n3. [Tub 데이터 열기]로 윈도우로 다운받은 주행기록 폴더 열기\n4. 이상한 데이터 필터링 및 삭제\n5. [학습] 버튼을 눌러 AI 훈련시키기\n6. 훈련된 모델로 [모델 테스트] 진행\n\n이 내용은 상단 메뉴바에서도 언제든 확인 가능합니다.", "초보자 가이드");
+            }
+        }
 
-                if (dlg.ShowDialog() == DialogResult.OK)
+        private void CreateTopMenu()
+        {
+            MenuStrip menuStrip = new MenuStrip();
+            this.MainMenuStrip = menuStrip;
+            this.Controls.Add(menuStrip);
+
+            ToolStripMenuItem menuManual = new ToolStripMenuItem("📖 Donkeycar 사용 설명서");
+            menuManual.DropDownItems.Add("1. [설정 파일 열기] 클릭 후 경로 지정 (원격은 자동 지정)");
+            menuManual.DropDownItems.Add("2. [Tub 데이터 열기]로 주행 데이터(data 폴더) 불러오기");
+            menuManual.DropDownItems.Add("3. 원격 서버 로그인 후 [학습] 버튼 클릭");
+            menuManual.DropDownItems.Add("4. 생성된 모델과 테스트 이미지를 선택해 [모델 테스트] 진행");
+            menuManual.MouseEnter += (s, e) => menuManual.ShowDropDown();
+
+            ToolStripMenuItem menuHotkeys = new ToolStripMenuItem("⌨️ 단축키 안내");
+            menuHotkeys.DropDownItems.Add("Space Bar : 자동 재생 / 정지 토글");
+            menuHotkeys.DropDownItems.Add("← / → 방향키 : 프레임 1칸씩 이동");
+            menuHotkeys.MouseEnter += (s, e) => menuHotkeys.ShowDropDown();
+
+            menuStrip.Items.Add(menuManual);
+            menuStrip.Items.Add(menuHotkeys);
+        }
+
+        // ==========================================
+        // 2. 서버 연결 및 가상환경 설정
+        // ==========================================
+        private void rdoRemote_CheckedChanged(object sender, EventArgs e)
+        {
+            if (_isUpdatingRadio || !rdoRemote.Checked) return;
+
+            while (true)
+            {
+                using (var loginForm = new LoginForm())
                 {
-                    if (!File.Exists(Path.Combine(dlg.SelectedPath, "manage.py")))
+                    if (loginForm.ShowDialog() == DialogResult.OK)
                     {
-                        MessageBox.Show("manage.py 파일이 없는 폴더입니다.", "Config Loader", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                        return;
-                    }
+                        try
+                        {
+                            _executor = new ICE.RemoteExecutor(loginForm.Host, loginForm.User, loginForm.Pass);
+                            loggedInUser = loginForm.User;
+                            lblProfile.Text = $"👤 {loginForm.User} 접속중";
+                            lblProfile.Tag = loginForm.Host;
+                            lblProfile.ForeColor = Color.Blue;
+                            lblProfile.Cursor = Cursors.Hand;
 
-                    configPath = dlg.SelectedPath; // 선택한 프로젝트 폴더 경로 저장
-                    lblConfigPath.Text = configPath; // 선택 경로를 화면에 표시
+                            ToolTip tt = new ToolTip();
+                            tt.SetToolTip(lblProfile, $"클릭하여 로그아웃\nIP: {loginForm.Host}");
+
+                            return;
+                        }
+                        catch (Exception ex)
+                        {
+                            DialogResult retry = MessageBox.Show($"서버 연결에 실패했습니다.\n아이디와 비밀번호를 확인하세요.\n\n[오류내용]: {ex.Message}\n\n다시 시도하시겠습니까?", "접속 실패", MessageBoxButtons.RetryCancel, MessageBoxIcon.Error);
+                            if (retry == DialogResult.Cancel) break;
+                        }
+                    }
+                    else
+                    {
+                        break;
+                    }
+                }
+            }
+
+            _isUpdatingRadio = true;
+            rdoLocal.Checked = true;
+            _executor = new ICE.LocalExecutor();
+            _isUpdatingRadio = false;
+        }
+
+        private void rdoLocal_CheckedChanged(object sender, EventArgs e)
+        {
+            if (_isUpdatingRadio || !rdoLocal.Checked) return;
+
+            if (_executor is ICE.RemoteExecutor)
+            {
+                DialogResult res = MessageBox.Show("원격 서버 연결을 종료하고 로컬 모드로 전환하시겠습니까?", "연결 종료", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+
+                if (res == DialogResult.Yes)
+                {
+                    _executor.Stop();
+                    _executor = new ICE.LocalExecutor();
+                    lblProfile.Text = "로컬 모드";
+                    lblProfile.ForeColor = Color.Black;
+                    lblProfile.Cursor = Cursors.Default;
+                }
+                else
+                {
+                    _isUpdatingRadio = true;
+                    rdoRemote.Checked = true;
+                    _isUpdatingRadio = false;
+                }
+            }
+            else
+            {
+                _executor = new ICE.LocalExecutor();
+            }
+        }
+
+        private void lblProfile_Click(object sender, EventArgs e)
+        {
+            if (rdoRemote.Checked)
+            {
+                string ip = lblProfile.Tag?.ToString();
+                DialogResult result = MessageBox.Show($"현재 접속 정보\n- IP: {ip}\n\n로그아웃하고 로컬 모드로 전환하시겠습니까?", "로그아웃", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+
+                if (result == DialogResult.Yes)
+                {
+                    _isUpdatingRadio = true;
+                    rdoLocal.Checked = true;
+                    lblProfile.Text = "로컬 모드";
+                    lblProfile.ForeColor = Color.Black;
+                    lblProfile.Cursor = Cursors.Default;
+
+                    _executor.Stop();
+                    _executor = new ICE.LocalExecutor();
+                    _isUpdatingRadio = false;
                 }
             }
         }
 
-        private async void btnLoadTub_Click(object? sender, EventArgs e)
+        // 디자인 창에서 체크박스 연결
+        private void chkUseVenv_CheckedChanged(object sender, EventArgs e)
         {
-            // 사용자가 선택한 Tub 폴더에서 catalog와 프레임 데이터를 불러온다.
+            if (chkUseVenv.Checked)
+            {
+                MessageBox.Show("✅ 가상환경(venv) 모드가 켜졌습니다.\n\n[설명]\n서버 환경 충돌을 막기 위해 독립된 공간에서 안전하게 AI를 실행합니다. (권장)", "가상환경 켬", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            else
+            {
+                DialogResult res = MessageBox.Show("⚠️ 가상환경(venv) 모드를 끄시겠습니까?\n\n[주의]\n서버에 설치된 기본 파이썬으로 실행되며, 패키지 충돌 오류가 발생할 수 있습니다.", "가상환경 끔 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+                if (res == DialogResult.No) chkUseVenv.Checked = true;
+            }
+        }
+
+        // ==========================================
+        // 3. 파이썬 연동: 설정, 학습, 테스트
+        // ==========================================
+        private void btnLoadConfig_Click(object sender, EventArgs e)
+        {
+            if (rdoRemote.Checked)
+            {
+                configPath = $"/home/{loggedInUser}/mycar";
+                lblConfigPath.Text = configPath;
+                MessageBox.Show($"[원격 모드 설정 완료]\n\n{loggedInUser}님의 서버 폴더({configPath})로\n작업 기준점이 똑똑하게 자동 설정되었습니다!\n\n이제 다음 단계인 'Tub 데이터 열기'를 진행해 주세요.", "설정 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            MessageBox.Show("로컬(윈도우) 환경에서 작업할 준비를 합니다.\n\n이어서 뜨는 폴더 선택 창에서\n'manage.py' 파일이 들어있는 동키카 기본 폴더(mycar)를 선택해 주세요.", "작업 폴더 선택 안내", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            using (FolderBrowserDialog dlg = new FolderBrowserDialog())
+            {
+                dlg.Description = "manage.py 파일이 있는 mycar 폴더를 찾아 선택해주세요.";
+                if (dlg.ShowDialog() == DialogResult.OK)
+                {
+                    configPath = dlg.SelectedPath;
+                    lblConfigPath.Text = configPath;
+                }
+            }
+        }
+
+        private void btnTrain_Click(object sender, EventArgs e)
+        {
+            if (_executor == null)
+            {
+                MessageBox.Show("먼저 로컬/원격 연결 설정을 완료해주세요!", "설정 필요", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            if (string.IsNullOrEmpty(configPath))
+            {
+                MessageBox.Show("Donkeycar 프로젝트 폴더(Load Config)를 먼저 로드해주세요!", "폴더 누락", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            DialogResult res = MessageBox.Show($"원격 서버({configPath})에서 AI 모델 학습을 시작하시겠습니까?\n(학습에는 시간이 오래 걸릴 수 있습니다.)", "학습 시작 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+            if (res == DialogResult.No) return;
+
+            txtLog.AppendText(Environment.NewLine + "[Train] AI 모델 학습을 시작합니다...");
+
+            bool useVenv = chkUseVenv != null ? chkUseVenv.Checked : true;
+            _executor.ExecuteTrain(configPath, useVenv, (log) =>
+            {
+                this.Invoke(new Action(() => { UpdateChartRealTime(log); }));
+            });
+        }
+
+        private void UpdateChartRealTime(string logText)
+        {
+            if (string.IsNullOrEmpty(logText)) return;
+            txtLog.AppendText(logText + Environment.NewLine);
+
+            if (logText.Contains("[Errno 2]") || logText.Contains("Error") || logText.Contains("Exception"))
+            {
+                MessageBox.Show($"학습 중 파이썬 오류가 발생했습니다.\n로그 창을 확인해주세요.\n\n내용: {logText}", "학습 오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+
+            if (logText.Contains("Saved model") || logText.Contains("Finished"))
+            {
+                MessageBox.Show("AI 모델 학습이 성공적으로 완료되었습니다!\n서버의 models 폴더에서 .h5 파일을 확인하세요.", "학습 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+
+            Match matchLoss = Regex.Match(logText, @"loss:\s*([0-9]*\.?[0-9]+)");
+            if (matchLoss.Success)
+            {
+                double lossValue = Convert.ToDouble(matchLoss.Groups[1].Value);
+                // chartLoss.Series["Loss"].Points.AddY(lossValue); 
+            }
+
+            Match epochMatch = Regex.Match(logText, @"(?:Epoch\s+)?(\d+)/(\d+)");
+            if (epochMatch.Success && progressBarTrain != null)
+            {
+                int current = int.Parse(epochMatch.Groups[1].Value);
+                int total = int.Parse(epochMatch.Groups[2].Value);
+                progressBarTrain.Maximum = total;
+                progressBarTrain.Value = current <= total ? current : total;
+            }
+        }
+
+        private void btnSelectModel_Click(object sender, EventArgs e)
+        {
+            if (rdoRemote.Checked)
+            {
+                modelPath = "models/mypilot.h5";
+                MessageBox.Show($"[원격 모드]\n서버의 기본 학습 모델로 지정되었습니다:\n{modelPath}", "모델 선택", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                txtLog.AppendText(Environment.NewLine + $"[Info] 선택된 모델: {modelPath}");
+                return;
+            }
+
+            using (OpenFileDialog dlg = new OpenFileDialog())
+            {
+                dlg.Title = "테스트할 Donkeycar 모델(.h5) 선택";
+                dlg.Filter = "Keras Models (*.h5)|*.h5|All files (*.*)|*.*";
+                if (dlg.ShowDialog() == DialogResult.OK)
+                {
+                    modelPath = dlg.FileName;
+                    MessageBox.Show($"모델이 선택되었습니다:\n{modelPath}");
+                }
+            }
+        }
+
+        private void btnSelectTestImage_Click(object sender, EventArgs e)
+        {
+            using (FolderBrowserDialog dlg = new FolderBrowserDialog())
+            {
+                dlg.Description = "테스트할 이미지들이 들어있는 폴더(예: data3/images)를 선택하세요.";
+                if (!string.IsNullOrEmpty(tubPath)) dlg.SelectedPath = tubPath;
+
+                if (dlg.ShowDialog() == DialogResult.OK)
+                {
+                    testImagePath = dlg.SelectedPath;
+                    MessageBox.Show($"테스트 이미지 폴더가 선택되었습니다:\n{testImagePath}", "선택 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    txtLog.AppendText(Environment.NewLine + $"[Info] 선택된 테스트 폴더: {testImagePath}");
+                }
+            }
+        }
+
+        private void btnModelTest_Click(object sender, EventArgs e)
+        {
+            if (_executor == null)
+            {
+                MessageBox.Show("먼저 로컬/원격 연결을 완료해주세요!", "연결 오류", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            if (string.IsNullOrEmpty(testImagePath))
+            {
+                MessageBox.Show("먼저 [테스트 이미지 선택] 버튼을 눌러 AI에게 보여줄 폴더를 골라주세요!", "이미지 누락", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            if (string.IsNullOrEmpty(modelPath))
+            {
+                DialogResult res = MessageBox.Show($"선택된 모델 파일(.h5)이 없습니다.\n기본 모델(mypilot.h5)을 사용하여 테스트를 진행하시겠습니까?", "기본 모델 사용 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+                if (res == DialogResult.Yes) modelPath = "models/mypilot.h5";
+                else return;
+            }
+            else
+            {
+                DialogResult res = MessageBox.Show($"선택하신 모델 [{Path.GetFileName(modelPath)}] (으)로\n테스트를 진행하시겠습니까?", "테스트 진행 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+                if (res == DialogResult.No) return;
+            }
+
+            txtLog.AppendText(Environment.NewLine + $"[Test] {Path.GetFileName(modelPath)} 예측 시작...");
+
+            bool useVenv = chkUseVenv != null ? chkUseVenv.Checked : true;
+            _executor.ExecuteTest(configPath, modelPath, useVenv, (log) =>
+            {
+                this.Invoke(new Action(() => { if (!string.IsNullOrEmpty(log)) txtLog.AppendText(Environment.NewLine + log); }));
+            });
+        }
+
+        // ==========================================
+        // 4. 데이터(Tub) 탐색 및 이미지 로딩 로직
+        // ==========================================
+        private void btnPlayStop_Click(object sender, EventArgs e)
+        {
+            try
+            {
+                if (tubFrames.Count == 0) return;
+                if (playTimer.Enabled) playTimer.Stop();
+                else
+                {
+                    if (trackFrame.Value == trackFrame.Maximum) trackFrame.Value = 0;
+                    playTimer.Start();
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"재생 중 오류가 발생했습니다.\n\n[오류내용]: {ex.Message}", "재생 오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private void PlayTimer_Tick(object sender, EventArgs e)
+        {
+            if (trackFrame.Value < trackFrame.Maximum) trackFrame.Value++;
+            else playTimer.Stop();
+        }
+
+        protected override void OnFormClosing(FormClosingEventArgs e)
+        {
+            if (_executor != null) _executor.Stop();
+            base.OnFormClosing(e);
+        }
+
+        private async void btnLoadTub_Click(object sender, EventArgs e)
+        {
             using (FolderBrowserDialog dlg = new FolderBrowserDialog())
             {
                 dlg.Description = "Donkeycar tub 데이터 폴더를 선택하세요.";
-
-                if (dlg.ShowDialog() == DialogResult.OK)
-                {
-                    await LoadTubAsync(dlg.SelectedPath);
-                }
+                if (dlg.ShowDialog() == DialogResult.OK) await LoadTubAsync(dlg.SelectedPath);
             }
         }
 
-        private async void btnReloadTub_Click(object? sender, EventArgs e)
+        private async void btnReloadTub_Click(object sender, EventArgs e)
         {
-            // 마지막으로 불러온 Tub 폴더를 다시 읽어 화면 데이터를 갱신한다.
             if (string.IsNullOrWhiteSpace(tubPath))
             {
                 MessageBox.Show("먼저 Tub 폴더를 선택하세요.", "Load Tub", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
-
             await LoadTubAsync(tubPath);
         }
 
         private async Task LoadTubAsync(string selectedTubPath)
         {
-            // catalog 파일이 많은 Tub도 UI가 멈추지 않도록 실제 읽기는 백그라운드에서 처리한다.
-            string[] catalogFiles = Directory.GetFiles(selectedTubPath, "catalog_*.catalog")
-                .OrderBy(file => file)
-                .ToArray();
-
+            string[] catalogFiles = Directory.GetFiles(selectedTubPath, "catalog_*.catalog").OrderBy(file => file).ToArray();
             if (catalogFiles.Length == 0)
             {
                 MessageBox.Show("catalog_*.catalog 파일을 찾을 수 없습니다.", "Load Tub", MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -148,23 +456,12 @@ namespace DataManager
 
             try
             {
-                // catalog 파싱은 시간이 걸릴 수 있으므로 UI 스레드 밖에서 실행한다.
                 TubLoadResult result = await Task.Run(() => ReadTubFrames(selectedTubPath, catalogFiles));
-
                 tubFrames.AddRange(result.Frames);
-
                 ResetTubView();
 
-                if (tubFrames.Count > 0)
-                {
-                    ShowFrame(0);
-                }
-
-                foreach (string error in result.Errors)
-                {
-                    AddLog(error);
-                }
-
+                if (tubFrames.Count > 0) ShowFrame(0);
+                foreach (string error in result.Errors) AddLog(error);
                 AddLog($"Load Tub 완료: {tubFrames.Count}개 프레임");
             }
             catch (Exception ex)
@@ -182,7 +479,6 @@ namespace DataManager
 
         private static TubLoadResult ReadTubFrames(string selectedTubPath, string[] catalogFiles)
         {
-            // catalog JSON Lines를 읽어 이미지 파일명, angle, throttle을 프레임 목록으로 변환한다.
             TubLoadResult result = new TubLoadResult();
             string imageBasePath = GetImageBasePath(selectedTubPath);
 
@@ -190,21 +486,14 @@ namespace DataManager
             {
                 foreach (string line in File.ReadLines(catalogFile))
                 {
-                    if (string.IsNullOrWhiteSpace(line))
-                    {
-                        continue;
-                    }
-
+                    if (string.IsNullOrWhiteSpace(line)) continue;
                     try
                     {
                         using JsonDocument document = JsonDocument.Parse(line);
                         JsonElement root = document.RootElement;
                         string imageFileName = GetStringValue(root, "cam/image_array");
 
-                        if (string.IsNullOrWhiteSpace(imageFileName))
-                        {
-                            continue;
-                        }
+                        if (string.IsNullOrWhiteSpace(imageFileName)) continue;
 
                         TubFrame frame = new TubFrame
                         {
@@ -214,7 +503,6 @@ namespace DataManager
                             Angle = GetDoubleValue(root, "user/angle"),
                             Throttle = GetDoubleValue(root, "user/throttle")
                         };
-
                         result.Frames.Add(frame);
                     }
                     catch (JsonException ex)
@@ -223,20 +511,16 @@ namespace DataManager
                     }
                 }
             }
-
             return result;
         }
 
         private void ResetTubView()
         {
-            // Tub 로딩 후 프레임 목록과 TrackBar 범위를 초기화한다.
             lstFrames.BeginUpdate();
-
             lstFrames.Items.Clear();
             lvTimeline.Items.Clear();
             timelineImages.Images.Clear();
             currentTimelineStart = -1;
-
             trackFrame.Minimum = 0;
             trackFrame.Maximum = Math.Max(0, tubFrames.Count - 1);
             trackFrame.Value = 0;
@@ -244,29 +528,16 @@ namespace DataManager
             try
             {
                 object[] frameItems = new object[tubFrames.Count];
-
-                for (int i = 0; i < tubFrames.Count; i++)
-                {
-                    TubFrame frame = tubFrames[i];
-                    frameItems[i] = frame;
-                }
-
+                for (int i = 0; i < tubFrames.Count; i++) frameItems[i] = tubFrames[i];
                 lstFrames.Items.AddRange(frameItems);
             }
-            finally
-            {
-                lstFrames.EndUpdate();
-            }
+            finally { lstFrames.EndUpdate(); }
         }
 
         private void UpdateTimelineForFrame(int frameIndex)
         {
-            // 현재 프레임이 포함된 연속 20장 구간만 썸네일 타임라인에 표시한다.
             int timelineStart = (frameIndex / TimelineVisibleCount) * TimelineVisibleCount;
-            if (timelineStart == currentTimelineStart)
-            {
-                return;
-            }
+            if (timelineStart == currentTimelineStart) return;
 
             currentTimelineStart = timelineStart;
             lvTimeline.BeginUpdate();
@@ -276,32 +547,20 @@ namespace DataManager
             try
             {
                 int timelineEnd = Math.Min(tubFrames.Count, timelineStart + TimelineVisibleCount);
-
                 for (int i = timelineStart; i < timelineEnd; i++)
                 {
                     TubFrame frame = tubFrames[i];
                     string imageKey = i.ToString();
                     timelineImages.Images.Add(imageKey, CreateTimelineThumbnail(frame.ImagePath));
-                    lvTimeline.Items.Add(new ListViewItem("", imageKey)
-                    {
-                        Tag = i,
-                        ToolTipText = frame.ToString()
-                    });
+                    lvTimeline.Items.Add(new ListViewItem("", imageKey) { Tag = i, ToolTipText = frame.ToString() });
                 }
             }
-            finally
-            {
-                lvTimeline.EndUpdate();
-            }
+            finally { lvTimeline.EndUpdate(); }
         }
 
         private void ShowFrame(int index)
         {
-            // 선택한 프레임의 이미지, 조향각, 속도, 타임라인 선택 상태를 화면에 반영한다.
-            if (index < 0 || index >= tubFrames.Count)
-            {
-                return;
-            }
+            if (index < 0 || index >= tubFrames.Count) return;
 
             TubFrame frame = tubFrames[index];
 
@@ -310,7 +569,6 @@ namespace DataManager
             lstFrames.SelectedIndexChanged += lstFrames_SelectedIndexChanged;
 
             trackFrame.Value = index;
-
             UpdateTimelineForFrame(index);
 
             int timelineItemIndex = index - currentTimelineStart;
@@ -328,7 +586,6 @@ namespace DataManager
 
             if (!File.Exists(frame.ImagePath) && missingImageFrames.Add(index))
             {
-                // 이미지가 없으면 중복 등록을 막고 휴지통 목록에 누락 프레임을 표시한다.
                 lstTrash.Items.Add($"{frame}: missing image");
             }
 
@@ -339,42 +596,23 @@ namespace DataManager
 
         private static string GetImageBasePath(string selectedTubPath)
         {
-            // Donkeycar Tub에서 이미지 폴더 이름이 다를 수 있어 가능한 기본 위치를 찾는다.
             string imagesPath = Path.Combine(selectedTubPath, "images");
-            if (Directory.Exists(imagesPath))
-            {
-                return imagesPath;
-            }
-
+            if (Directory.Exists(imagesPath)) return imagesPath;
             string imageArrayPath = Path.Combine(selectedTubPath, "image_array");
-            if (Directory.Exists(imageArrayPath))
-            {
-                return imageArrayPath;
-            }
-
+            if (Directory.Exists(imageArrayPath)) return imageArrayPath;
             return selectedTubPath;
         }
 
         private static string FindImagePath(string selectedTubPath, string imageBasePath, string imageFileName)
         {
-            // 파일명 순서가 아니라 catalog의 cam/image_array 값을 기준으로 이미지 경로를 만든다.
-            if (Path.IsPathRooted(imageFileName))
-            {
-                return imageFileName;
-            }
-
+            if (Path.IsPathRooted(imageFileName)) return imageFileName;
             string normalizedImageFileName = imageFileName.Replace('/', Path.DirectorySeparatorChar);
-            if (!string.IsNullOrWhiteSpace(Path.GetDirectoryName(normalizedImageFileName)))
-            {
-                return Path.Combine(selectedTubPath, normalizedImageFileName);
-            }
-
+            if (!string.IsNullOrWhiteSpace(Path.GetDirectoryName(normalizedImageFileName))) return Path.Combine(selectedTubPath, normalizedImageFileName);
             return Path.Combine(imageBasePath, normalizedImageFileName);
         }
 
         private static Image LoadImage(string imagePath)
         {
-            // PictureBox에 표시할 현재 프레임 이미지를 로드한다.
             if (!File.Exists(imagePath))
             {
                 Bitmap missing = new Bitmap(160, 120);
@@ -384,7 +622,6 @@ namespace DataManager
                 graphics.DrawString("Missing image", SystemFonts.DefaultFont, brush, new PointF(28, 52));
                 return missing;
             }
-
             using FileStream stream = new FileStream(imagePath, FileMode.Open, FileAccess.Read);
             using Image source = Image.FromStream(stream);
             return new Bitmap(source);
@@ -392,7 +629,6 @@ namespace DataManager
 
         private static Image CreateTimelineThumbnail(string imagePath)
         {
-            // 타임라인에 표시할 작은 썸네일 이미지를 생성한다.
             if (!File.Exists(imagePath))
             {
                 Bitmap missing = new Bitmap(36, 27);
@@ -402,7 +638,6 @@ namespace DataManager
                 graphics.DrawRectangle(pen, 0, 0, 35, 26);
                 return missing;
             }
-
             using FileStream stream = new FileStream(imagePath, FileMode.Open, FileAccess.Read);
             using Image source = Image.FromStream(stream);
             return new Bitmap(source, new Size(36, 27));
@@ -410,106 +645,55 @@ namespace DataManager
 
         private static string GetStringValue(JsonElement root, string propertyName)
         {
-            // catalog JSON에서 문자열 값을 안전하게 가져온다.
-            if (!root.TryGetProperty(propertyName, out JsonElement value))
-            {
-                return "";
-            }
-
+            if (!root.TryGetProperty(propertyName, out JsonElement value)) return "";
             return value.ValueKind == JsonValueKind.String ? value.GetString() ?? "" : value.ToString();
         }
 
         private static int GetIntValue(JsonElement root, string propertyName, int defaultValue)
         {
-            // catalog JSON에서 정수 값을 안전하게 가져온다.
-            if (!root.TryGetProperty(propertyName, out JsonElement value))
-            {
-                return defaultValue;
-            }
-
-            if (value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out int result))
-            {
-                return result;
-            }
-
+            if (!root.TryGetProperty(propertyName, out JsonElement value)) return defaultValue;
+            if (value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out int result)) return result;
             return int.TryParse(value.ToString(), out result) ? result : defaultValue;
         }
 
         private static double GetDoubleValue(JsonElement root, string propertyName)
         {
-            // catalog JSON에서 실수 값을 안전하게 가져온다.
-            if (!root.TryGetProperty(propertyName, out JsonElement value))
-            {
-                return 0;
-            }
-
-            if (value.ValueKind == JsonValueKind.Number && value.TryGetDouble(out double result))
-            {
-                return result;
-            }
-
+            if (!root.TryGetProperty(propertyName, out JsonElement value)) return 0;
+            if (value.ValueKind == JsonValueKind.Number && value.TryGetDouble(out double result)) return result;
             return double.TryParse(value.ToString(), out result) ? result : 0;
         }
 
-        private void AddLog(string message)
+        private void AddLog(string message) => txtLog.AppendText(Environment.NewLine + message);
+        private void lstFrames_SelectedIndexChanged(object sender, EventArgs e) => ShowFrame(lstFrames.SelectedIndex);
+        private void lvTimeline_SelectedIndexChanged(object sender, EventArgs e) { if (!isUpdatingTimelineSelection && lvTimeline.SelectedItems.Count > 0 && lvTimeline.SelectedItems[0].Tag is int index) ShowFrame(index); }
+        private void trackFrame_Scroll(object sender, EventArgs e) => ShowFrame(trackFrame.Value);
+        private void btnFirst_Click(object sender, EventArgs e) => ShowFrame(0);
+        private void btnPrev_Click(object sender, EventArgs e) => ShowFrame(Math.Max(0, trackFrame.Value - 1));
+        private void btnNext_Click(object sender, EventArgs e) => ShowFrame(Math.Min(tubFrames.Count - 1, trackFrame.Value + 1));
+        private void btnLast_Click(object sender, EventArgs e) => ShowFrame(tubFrames.Count - 1);
+
+        // 안 쓰는 빈 이벤트 모음 (에러 방지용)
+        private void lblConfigPath_Click(object sender, EventArgs e) { }
+        private void groupTubNavigator_Enter(object sender, EventArgs e) { }
+        private void lvTimeline_SelectedIndexChanged_1(object sender, EventArgs e) { }
+
+        // ==========================================
+        // 내부 클래스
+        // ==========================================
+        private sealed class TubFrame
         {
-            // Train/Test 탭의 로그 창에 작업 상태를 누적 출력한다.
-            txtLog.AppendText(Environment.NewLine + message);
+            public int FrameNumber { get; set; }
+            public string ImageFileName { get; set; } = "";
+            public string ImagePath { get; set; } = "";
+            public double Angle { get; set; }
+            public double Throttle { get; set; }
+            public override string ToString() => $"Frame {FrameNumber:D6}";
         }
 
-        private void lstFrames_SelectedIndexChanged(object? sender, EventArgs e)
+        private sealed class TubLoadResult
         {
-            // 프레임 목록에서 선택한 항목으로 현재 프레임을 이동한다.
-            ShowFrame(lstFrames.SelectedIndex);
-        }
-
-        private void lvTimeline_SelectedIndexChanged(object? sender, EventArgs e)
-        {
-            // 타임라인 썸네일을 클릭하면 해당 프레임으로 이동한다.
-            if (isUpdatingTimelineSelection)
-            {
-                return;
-            }
-
-            if (lvTimeline.SelectedItems.Count == 0)
-            {
-                return;
-            }
-
-            if (lvTimeline.SelectedItems[0].Tag is int index)
-            {
-                ShowFrame(index);
-            }
-        }
-
-        private void trackFrame_Scroll(object? sender, EventArgs e)
-        {
-            // TrackBar 위치에 맞춰 현재 프레임을 이동한다.
-            ShowFrame(trackFrame.Value);
-        }
-
-        private void btnFirst_Click(object? sender, EventArgs e)
-        {
-            // 첫 번째 프레임으로 이동한다.
-            ShowFrame(0);
-        }
-
-        private void btnPrev_Click(object? sender, EventArgs e)
-        {
-            // 이전 프레임으로 한 칸 이동한다.
-            ShowFrame(Math.Max(0, trackFrame.Value - 1));
-        }
-
-        private void btnNext_Click(object? sender, EventArgs e)
-        {
-            // 다음 프레임으로 한 칸 이동한다.
-            ShowFrame(Math.Min(tubFrames.Count - 1, trackFrame.Value + 1));
-        }
-
-        private void btnLast_Click(object? sender, EventArgs e)
-        {
-            // 마지막 프레임으로 이동한다.
-            ShowFrame(tubFrames.Count - 1);
+            public List<TubFrame> Frames { get; } = new();
+            public List<string> Errors { get; } = new();
         }
     }
 }
