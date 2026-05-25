@@ -31,6 +31,7 @@ namespace DataManager
         private readonly ImageList timelineImages = new();
         private const int TimelineVisibleCount = 20;
         private int currentTimelineStart = -1;
+        private int missingImageScanVersion;
         private bool isUpdatingTimelineSelection;
 
         // ==========================================
@@ -464,6 +465,7 @@ namespace DataManager
 
             tubFrames.Clear();
             missingImageFrames.Clear();
+            missingImageScanVersion++;
             currentTimelineStart = -1;
             lstTrash.Items.Clear();
             lstFrames.Items.Clear();
@@ -484,6 +486,7 @@ namespace DataManager
                 if (tubFrames.Count > 0) ShowFrame(0);
                 foreach (string error in result.Errors) AddLog(error);
                 AddLog($"Load Tub 완료: {tubFrames.Count}개 프레임 ({(isOldRecordTub ? "구버전 record JSON" : "catalog")} 형식)");
+                _ = CheckMissingImagesAsync();
             }
             catch (Exception ex)
             {
@@ -502,12 +505,14 @@ namespace DataManager
         {
             // 신버전 Donkeycar Tub의 catalog 파일을 읽어 프레임 데이터로 변환한다.
             TubLoadResult result = new TubLoadResult();
+            Dictionary<string, Dictionary<string, string>> imageLookupCache = new();
 
             foreach (string catalogFile in catalogFiles)
             {
                 // catalog가 하위 tub 폴더에 있을 수 있으므로 해당 catalog 폴더를 이미지 기준 경로로 사용한다.
                 string tubBasePath = Path.GetDirectoryName(catalogFile) ?? selectedTubPath;
                 string imageBasePath = GetImageBasePath(tubBasePath);
+                Dictionary<string, string>? imageLookup = null;
 
                 foreach (string line in File.ReadLines(catalogFile))
                 {
@@ -524,7 +529,7 @@ namespace DataManager
                         {
                             FrameNumber = GetIntValue(root, "_index", result.Frames.Count),
                             ImageFileName = imageFileName,
-                            ImagePath = FindImagePath(tubBasePath, imageBasePath, imageFileName),
+                            ImagePath = FindImagePath(tubBasePath, imageBasePath, imageLookupCache, ref imageLookup, imageFileName),
                             Angle = GetDoubleValue(root, "user/angle"),
                             Throttle = GetDoubleValue(root, "user/throttle")
                         };
@@ -543,12 +548,14 @@ namespace DataManager
         {
             // 구버전 Donkeycar Tub은 record_0.json 같은 개별 JSON 파일에 프레임 정보를 저장한다.
             TubLoadResult result = new TubLoadResult();
+            Dictionary<string, Dictionary<string, string>> imageLookupCache = new();
 
             foreach (string recordFile in recordFiles)
             {
                 // record 파일도 하위 tub 폴더에 있을 수 있으므로 record가 있는 폴더 기준으로 이미지를 찾는다.
                 string tubBasePath = Path.GetDirectoryName(recordFile) ?? selectedTubPath;
                 string imageBasePath = GetImageBasePath(tubBasePath);
+                Dictionary<string, string>? imageLookup = null;
 
                 try
                 {
@@ -573,7 +580,7 @@ namespace DataManager
                         {
                             FrameNumber = GetIntValue(root, "_index", fallbackFrameNumber),
                             ImageFileName = imageFileName,
-                            ImagePath = FindImagePath(tubBasePath, imageBasePath, imageFileName),
+                            ImagePath = FindImagePath(tubBasePath, imageBasePath, imageLookupCache, ref imageLookup, imageFileName),
                             Angle = GetDoubleValue(root, "user/angle"),
                             Throttle = GetDoubleValue(root, "user/throttle")
                         };
@@ -673,6 +680,35 @@ namespace DataManager
             lblThrottle.Text = $"속도: {frame.Throttle:0.00}";
         }
 
+        private async Task CheckMissingImagesAsync()
+        {
+            // Load Tub 직후 UI를 먼저 보여주고, 이미지 누락 검사는 백그라운드에서 천천히 수행한다.
+            int scanVersion = missingImageScanVersion;
+            List<TubFrame> framesSnapshot = tubFrames.ToList();
+
+            for (int i = 0; i < framesSnapshot.Count; i++)
+            {
+                int frameIndex = i;
+                TubFrame frame = framesSnapshot[i];
+                bool isMissing = await Task.Run(() => !File.Exists(frame.ImagePath));
+
+                if (scanVersion != missingImageScanVersion || frameIndex >= tubFrames.Count || !ReferenceEquals(frame, tubFrames[frameIndex]))
+                {
+                    return;
+                }
+
+                if (isMissing && missingImageFrames.Add(frameIndex))
+                {
+                    lstTrash.Items.Add($"{frame}: missing image");
+                }
+
+                if (frameIndex % 50 == 0)
+                {
+                    await Task.Yield();
+                }
+            }
+        }
+
         private static string GetImageBasePath(string selectedTubPath)
         {
             string imagesPath = Path.Combine(selectedTubPath, "images");
@@ -682,12 +718,59 @@ namespace DataManager
             return selectedTubPath;
         }
 
-        private static string FindImagePath(string selectedTubPath, string imageBasePath, string imageFileName)
+        private static Dictionary<string, string> GetImageLookup(string selectedTubPath, Dictionary<string, Dictionary<string, string>> imageLookupCache)
         {
+            // 이미지 폴더명이 달라도 파일명으로 찾을 수 있도록 tub 폴더 아래의 이미지 파일 목록을 캐시한다.
+            if (imageLookupCache.TryGetValue(selectedTubPath, out Dictionary<string, string>? cachedLookup))
+            {
+                return cachedLookup;
+            }
+
+            string[] imageExtensions = { ".jpg", ".jpeg", ".png" };
+            Dictionary<string, string> imageLookup = Directory.GetFiles(selectedTubPath, "*.*", SearchOption.AllDirectories)
+                .Where(file => imageExtensions.Contains(Path.GetExtension(file).ToLowerInvariant()))
+                .GroupBy(file => Path.GetFileName(file), StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+
+            imageLookupCache[selectedTubPath] = imageLookup;
+            return imageLookup;
+        }
+
+        private static string FindImagePath(
+            string selectedTubPath,
+            string imageBasePath,
+            Dictionary<string, Dictionary<string, string>> imageLookupCache,
+            ref Dictionary<string, string>? imageLookup,
+            string imageFileName)
+        {
+            // catalog의 cam/image_array 파일명을 기준으로 이미지 경로를 결정한다.
+            // 기본 위치에서 못 찾을 때만 tub 하위 전체 검색 캐시를 만든다.
             if (Path.IsPathRooted(imageFileName)) return imageFileName;
             string normalizedImageFileName = imageFileName.Replace('/', Path.DirectorySeparatorChar);
-            if (!string.IsNullOrWhiteSpace(Path.GetDirectoryName(normalizedImageFileName))) return Path.Combine(selectedTubPath, normalizedImageFileName);
-            return Path.Combine(imageBasePath, normalizedImageFileName);
+            string fileNameOnly = Path.GetFileName(normalizedImageFileName);
+
+            if (!string.IsNullOrWhiteSpace(Path.GetDirectoryName(normalizedImageFileName)))
+            {
+                string catalogRelativePath = Path.Combine(selectedTubPath, normalizedImageFileName);
+                if (File.Exists(catalogRelativePath))
+                {
+                    return catalogRelativePath;
+                }
+            }
+
+            string basePath = Path.Combine(imageBasePath, fileNameOnly);
+            if (File.Exists(basePath))
+            {
+                return basePath;
+            }
+
+            imageLookup ??= GetImageLookup(selectedTubPath, imageLookupCache);
+            if (imageLookup.TryGetValue(fileNameOnly, out string? foundImagePath))
+            {
+                return foundImagePath;
+            }
+
+            return basePath;
         }
 
         private static int GetFileOrderNumber(string filePath)
@@ -779,6 +862,7 @@ namespace DataManager
         private sealed class TubLoadResult
         {
             public List<TubFrame> Frames { get; } = new();
+            public List<string> MissingImages { get; } = new();
             public List<string> Errors { get; } = new();
         }
     }
