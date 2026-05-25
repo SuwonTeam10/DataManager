@@ -86,7 +86,6 @@
             groupBox2 = new GroupBox();
             chkUseVenv = new CheckBox();
             rdoRemote = new RadioButton();
-            lblProfile = new Label();
             groupTubLoader.SuspendLayout();
             groupDataView.SuspendLayout();
             groupTimeline.SuspendLayout();
@@ -814,24 +813,11 @@
             rdoRemote.Text = "원격 (서버)";
             rdoRemote.UseVisualStyleBackColor = true;
             // 
-            // lblProfile
-            // 
-            lblProfile.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-            lblProfile.AutoSize = true;
-            lblProfile.Font = new Font("맑은 고딕", 12F, FontStyle.Regular, GraphicsUnit.Point, 0);
-            lblProfile.Location = new Point(1070, 9);
-            lblProfile.Name = "lblProfile";
-            lblProfile.Size = new Size(160, 21);
-            lblProfile.TabIndex = 23;
-            lblProfile.Text = "로컬 (리눅스/우분투)";
-            lblProfile.Click += lblProfile_Click;
-            // 
             // Form1
             // 
             AutoScaleDimensions = new SizeF(7F, 15F);
             AutoScaleMode = AutoScaleMode.Font;
             ClientSize = new Size(1242, 791);
-            Controls.Add(lblProfile);
             Controls.Add(groupBox2);
             Controls.Add(tabMain);
             Controls.Add(groupTimeline);
@@ -868,7 +854,6 @@
             groupBox2.ResumeLayout(false);
             groupBox2.PerformLayout();
             ResumeLayout(false);
-            PerformLayout();
         }
 
         #endregion
@@ -928,7 +913,6 @@
         private RadioButton rdoLocal;
         private GroupBox groupBox2;
         private RadioButton rdoRemote;
-        private Label lblProfile;
         private ProgressBar progressBarTrain;
         private CheckBox chkUseVenv;
     }

@@ -23,6 +23,7 @@ namespace DataManager
         private string loggedInUser = "";
         private System.Windows.Forms.Timer playTimer;
         private bool _isUpdatingRadio = false;
+        private ToolStripMenuItem menuProfile;
 
         private string configPath = "";
         private string tubPath = "";
@@ -40,20 +41,24 @@ namespace DataManager
         {
             InitializeComponent();
 
+            // 프로그램 시작 시 기본 실행기를 로컬로 세팅
             _executor = new ICE.LocalExecutor();
 
+            // 라디오 버튼 및 타이머 연결 (디자이너와 겹치지 않는 특수 이벤트만 유지)
             rdoLocal.CheckedChanged += rdoLocal_CheckedChanged;
             rdoRemote.CheckedChanged += rdoRemote_CheckedChanged;
 
             playTimer = new System.Windows.Forms.Timer();
-            playTimer.Interval = 100;
+            playTimer.Interval = 100; // 0.1초 간격
             playTimer.Tick += PlayTimer_Tick;
-
-            this.Load += Form1_Load;
 
             // 상단 메뉴바 동적 생성
             CreateTopMenu();
 
+            // ⚠️ [수정] btnLoadConfig, btnLoadTub, btnTrain 등의 Click += 코드를 전부 삭제했습니다.
+            // 비주얼 스튜디오 디자이너가 뒷단에서 자동으로 연결해 주므로 이 자리의 += 코드는 지워야 1번씩만 실행됩니다.
+
+            // 나머지 탐색 바 및 리스트 이벤트 제어
             btnReloadTub.Click += btnReloadTub_Click;
             lstFrames.SelectedIndexChanged += lstFrames_SelectedIndexChanged;
             lvTimeline.SelectedIndexChanged += lvTimeline_SelectedIndexChanged;
@@ -63,6 +68,7 @@ namespace DataManager
             btnNext.Click += btnNext_Click;
             btnLast.Click += btnLast_Click;
 
+            // 타임라인 썸네일 이미지 리스트 설정
             timelineImages.ImageSize = new Size(36, 27);
             timelineImages.ColorDepth = ColorDepth.Depth32Bit;
             lvTimeline.LargeImageList = timelineImages;
@@ -86,26 +92,62 @@ namespace DataManager
             }
         }
 
+        // 상단 메뉴바 자동 생성기 (UI/UX 패치)
         private void CreateTopMenu()
         {
             MenuStrip menuStrip = new MenuStrip();
+            menuStrip.BackColor = Color.WhiteSmoke; // ★ 배경색을 약간 회색으로 주어 메뉴바 영역이 확실히 보이게 함!
+            menuStrip.Padding = new Padding(5, 5, 5, 5); // 넉넉한 여백
             this.MainMenuStrip = menuStrip;
             this.Controls.Add(menuStrip);
 
+            menuStrip.BringToFront(); // ★ 핵심: 다른 UI(프레임 목록 등) 뒤에 가려지지 않고 무조건 맨 위로 오게 강제 설정!
+
+            // 1. Donkeycar 사용 설명서 메뉴
             ToolStripMenuItem menuManual = new ToolStripMenuItem("📖 Donkeycar 사용 설명서");
-            menuManual.DropDownItems.Add("1. [설정 파일 열기] 클릭 후 경로 지정 (원격은 자동 지정)");
-            menuManual.DropDownItems.Add("2. [Tub 데이터 열기]로 주행 데이터(data 폴더) 불러오기");
-            menuManual.DropDownItems.Add("3. 원격 서버 로그인 후 [학습] 버튼 클릭");
-            menuManual.DropDownItems.Add("4. 생성된 모델과 테스트 이미지를 선택해 [모델 테스트] 진행");
+            menuManual.DropDownItems.Add("1. 좌측 [서버 연결 설정]에서 [원격] 선택 후 로그인");
+            menuManual.DropDownItems.Add("2. [설정 파일 열기] 클릭 후 기준 폴더 자동 세팅");
+            menuManual.DropDownItems.Add("3. [Tub 데이터 열기]로 윈도우로 다운받은 주행 데이터 불러오기");
+            menuManual.DropDownItems.Add("4. [학습] 버튼을 클릭하여 AI 모델 생성");
+            menuManual.DropDownItems.Add("5. 생성된 모델과 테스트 폴더를 선택해 [모델 테스트] 진행");
             menuManual.MouseEnter += (s, e) => menuManual.ShowDropDown();
 
+            // 2. 단축키 메뉴
             ToolStripMenuItem menuHotkeys = new ToolStripMenuItem("⌨️ 단축키 안내");
             menuHotkeys.DropDownItems.Add("Space Bar : 자동 재생 / 정지 토글");
             menuHotkeys.DropDownItems.Add("← / → 방향키 : 프레임 1칸씩 이동");
             menuHotkeys.MouseEnter += (s, e) => menuHotkeys.ShowDropDown();
 
+            // 3. ★ 우측 상단 로그인 프로필 메뉴 (잘림 방지 및 디테일 추가)
+            menuProfile = new ToolStripMenuItem("👤 로컬 모드 (로그아웃 상태)");
+            menuProfile.Alignment = ToolStripItemAlignment.Right;
+            menuProfile.Font = new Font("맑은 고딕", 9, FontStyle.Bold);
+
+            // ★ 화면 잘림 방지: 오른쪽 끝에 있으므로 메뉴가 '왼쪽 아래'로 펼쳐지도록 방향 강제 지정!
+            menuProfile.DropDownDirection = ToolStripDropDownDirection.BelowLeft;
+
+            // 프로필 하위 메뉴 (인성님 아이디어 적용)
+            ToolStripMenuItem infoRole = new ToolStripMenuItem("상태: 로컬 환경 대기 중");
+            infoRole.Enabled = false; // 클릭 안되는 정보 표시용
+
+            ToolStripMenuItem infoTrain = new ToolStripMenuItem("오늘 학습 시도: 0회");
+            infoTrain.Enabled = false;
+
+            ToolStripSeparator separator = new ToolStripSeparator(); // 구분선
+
+            ToolStripMenuItem menuLogout = new ToolStripMenuItem("🛑 원격 서버 로그아웃");
+            menuLogout.Click += menuLogout_Click;
+
+            menuProfile.DropDownItems.Add(infoRole);
+            menuProfile.DropDownItems.Add(infoTrain);
+            menuProfile.DropDownItems.Add(separator);
+            menuProfile.DropDownItems.Add(menuLogout);
+
+            menuProfile.MouseEnter += (s, e) => menuProfile.ShowDropDown();
+
             menuStrip.Items.Add(menuManual);
             menuStrip.Items.Add(menuHotkeys);
+            menuStrip.Items.Add(menuProfile);
         }
 
         // ==========================================
@@ -125,13 +167,17 @@ namespace DataManager
                         {
                             _executor = new ICE.RemoteExecutor(loginForm.Host, loginForm.User, loginForm.Pass);
                             loggedInUser = loginForm.User;
-                            lblProfile.Text = $"👤 {loginForm.User} 접속중";
-                            lblProfile.Tag = loginForm.Host;
-                            lblProfile.ForeColor = Color.Blue;
-                            lblProfile.Cursor = Cursors.Hand;
 
-                            ToolTip tt = new ToolTip();
-                            tt.SetToolTip(lblProfile, $"클릭하여 로그아웃\nIP: {loginForm.Host}");
+                            // ★ lblProfile 찌꺼기 싹 지우고 menuProfile로 완벽 대체!
+                            menuProfile.Text = $"👤 {loginForm.User} 접속중";
+                            menuProfile.ForeColor = Color.Blue; // 글씨를 파란색으로!
+                            menuProfile.Tag = loginForm.Host;   // 나중에 로그아웃할 때 쓰려고 IP를 살짝 숨겨둠
+
+                            // 하위 메뉴 첫 번째 줄에 접속 IP 띄우기
+                            if (menuProfile.DropDownItems.Count > 0 && menuProfile.DropDownItems[0] is ToolStripMenuItem ipMenuItem)
+                            {
+                                ipMenuItem.Text = $"접속 IP: {loginForm.Host}";
+                            }
 
                             return;
                         }
@@ -154,6 +200,7 @@ namespace DataManager
             _isUpdatingRadio = false;
         }
 
+
         private void rdoLocal_CheckedChanged(object sender, EventArgs e)
         {
             if (_isUpdatingRadio || !rdoLocal.Checked) return;
@@ -166,9 +213,15 @@ namespace DataManager
                 {
                     _executor.Stop();
                     _executor = new ICE.LocalExecutor();
-                    lblProfile.Text = "로컬 모드";
-                    lblProfile.ForeColor = Color.Black;
-                    lblProfile.Cursor = Cursors.Default;
+
+                    // 로컬 전환 시 파란색을 다시 검은색
+                    menuProfile.Text = "👤 로컬 모드 (로그아웃 상태)";
+                    menuProfile.ForeColor = Color.Black;
+
+                    if (menuProfile.DropDownItems.Count > 0 && menuProfile.DropDownItems[0] is ToolStripMenuItem ipMenuItem)
+                    {
+                        ipMenuItem.Text = "상태: 로컬 환경 대기 중";
+                    }
                 }
                 else
                 {
@@ -183,20 +236,26 @@ namespace DataManager
             }
         }
 
-        private void lblProfile_Click(object sender, EventArgs e)
+        private void menuLogout_Click(object sender, EventArgs e)
         {
             if (rdoRemote.Checked)
             {
-                string ip = lblProfile.Tag?.ToString();
+                string ip = menuProfile.Tag?.ToString();
                 DialogResult result = MessageBox.Show($"현재 접속 정보\n- IP: {ip}\n\n로그아웃하고 로컬 모드로 전환하시겠습니까?", "로그아웃", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
 
                 if (result == DialogResult.Yes)
                 {
                     _isUpdatingRadio = true;
                     rdoLocal.Checked = true;
-                    lblProfile.Text = "로컬 모드";
-                    lblProfile.ForeColor = Color.Black;
-                    lblProfile.Cursor = Cursors.Default;
+
+                    // 로그아웃 시 파란색을 다시 검은색
+                    menuProfile.Text = "👤 로컬 모드 (로그아웃 상태)";
+                    menuProfile.ForeColor = Color.Black;
+
+                    if (menuProfile.DropDownItems.Count > 0 && menuProfile.DropDownItems[0] is ToolStripMenuItem ipMenuItem)
+                    {
+                        ipMenuItem.Text = "상태: 로컬 환경 대기 중";
+                    }
 
                     _executor.Stop();
                     _executor = new ICE.LocalExecutor();
@@ -275,17 +334,32 @@ namespace DataManager
             if (string.IsNullOrEmpty(logText)) return;
             txtLog.AppendText(logText + Environment.NewLine);
 
+            // 1. 에러 발생 시 알림
             if (logText.Contains("[Errno 2]") || logText.Contains("Error") || logText.Contains("Exception"))
             {
                 MessageBox.Show($"학습 중 파이썬 오류가 발생했습니다.\n로그 창을 확인해주세요.\n\n내용: {logText}", "학습 오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return;
             }
 
-            if (logText.Contains("Saved model") || logText.Contains("Finished"))
+            // ★ 2. 완료 조건 확장 (조기 종료 등 포함) + 인성님 아이디어 적용 (로그 정리 및 안내)
+            if (logText.Contains("Saved model") || logText.Contains("Finished") || logText.Contains("Stopping early") || logText.ToLower().Contains("model saved"))
             {
-                MessageBox.Show("AI 모델 학습이 성공적으로 완료되었습니다!\n서버의 models 폴더에서 .h5 파일을 확인하세요.", "학습 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                // UI 정리 (진행률 바 0으로 초기화)
+                if (progressBarTrain != null)
+                {
+                    progressBarTrain.Value = 0;
+                }
+
+                // 로그 창에 구분선과 안내 멘트 추가
+                txtLog.AppendText(Environment.NewLine + "--------------------------------------------------");
+                txtLog.AppendText(Environment.NewLine + "✅ [학습 완료] AI 모델 생성이 끝났습니다.");
+                txtLog.AppendText(Environment.NewLine + "--------------------------------------------------" + Environment.NewLine);
+
+                // 팝업 알림 (다음 행동 지침 포함)
+                MessageBox.Show("🎉 AI 모델 학습이 무사히 완료되었습니다!\n\n[다음 단계]\n1. 하단의 '모델 선택'을 눌러 방금 학습된 모델(mypilot.h5)을 선택하세요.\n2. '테스트 이미지 선택'을 누르고 주행 데이터 폴더를 고르세요.\n3. '모델 테스트' 버튼을 눌러 AI가 예측 조향각을 잘 뽑아내는지 확인해보세요!", "학습 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
 
+            // 3. Loss 값 추출 (그래프용 - 현재는 주석 처리됨)
             Match matchLoss = Regex.Match(logText, @"loss:\s*([0-9]*\.?[0-9]+)");
             if (matchLoss.Success)
             {
@@ -293,7 +367,8 @@ namespace DataManager
                 // chartLoss.Series["Loss"].Points.AddY(lossValue); 
             }
 
-            Match epochMatch = Regex.Match(logText, @"(?:Epoch\s+)?(\d+)/(\d+)");
+            // ★ 4. 진행률 바 널뛰기 버그 수정 (반드시 'Epoch'로 시작하는 줄만 잡도록 수정)
+            Match epochMatch = Regex.Match(logText, @"Epoch\s+(\d+)/(\d+)");
             if (epochMatch.Success && progressBarTrain != null)
             {
                 int current = int.Parse(epochMatch.Groups[1].Value);
@@ -463,6 +538,9 @@ namespace DataManager
                 if (tubFrames.Count > 0) ShowFrame(0);
                 foreach (string error in result.Errors) AddLog(error);
                 AddLog($"Load Tub 완료: {tubFrames.Count}개 프레임");
+
+                // ★ 추가된 순차적 안내 팝업창
+                MessageBox.Show($"주행 데이터 {tubFrames.Count}장을 성공적으로 불러왔습니다!\n\n[다음 단계 안내]\n1. 화면 하단의 슬라이더를 움직여 비정상적인 주행 사진이 있는지 확인하세요.\n2. 필요하다면 데이터 필터링/삭제 기능을 이용해 정리하세요.\n3. 정리가 완료되었다면 좌측 하단의 [학습] 버튼을 눌러 AI 훈련을 시작하세요.", "데이터 로드 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
             catch (Exception ex)
             {
