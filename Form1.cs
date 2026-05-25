@@ -431,7 +431,8 @@ namespace DataManager
         private async Task LoadTubAsync(string selectedTubPath)
         {
             // 신버전 Tub은 catalog_*.catalog, 구버전 Tub은 record_*.json 파일을 사용한다.
-            string[] catalogFiles = Directory.GetFiles(selectedTubPath, "catalog_*.catalog")
+            // 사용자가 data 폴더를 선택해도 내부 tub 폴더를 찾을 수 있도록 하위 폴더까지 검색한다.
+            string[] catalogFiles = Directory.GetFiles(selectedTubPath, "catalog_*.catalog", SearchOption.AllDirectories)
                 .OrderBy(GetFileOrderNumber)
                 .ThenBy(file => file)
                 .ToArray();
@@ -440,7 +441,8 @@ namespace DataManager
 
             if (isOldRecordTub)
             {
-                recordFiles = Directory.GetFiles(selectedTubPath, "record_*.json")
+                // catalog 파일이 없으면 구버전 record JSON 형식으로 판단하고 record_*.json을 찾는다.
+                recordFiles = Directory.GetFiles(selectedTubPath, "record_*.json", SearchOption.AllDirectories)
                     .OrderBy(GetFileOrderNumber)
                     .ThenBy(file => file)
                     .ToArray();
@@ -471,6 +473,7 @@ namespace DataManager
 
             try
             {
+                // Tub 형식에 따라 신버전 catalog 파서 또는 구버전 record JSON 파서를 선택한다.
                 TubLoadResult result = await Task.Run(() =>
                     isOldRecordTub
                         ? ReadOldTubFrames(selectedTubPath, recordFiles)
@@ -497,11 +500,15 @@ namespace DataManager
 
         private static TubLoadResult ReadTubFrames(string selectedTubPath, string[] catalogFiles)
         {
+            // 신버전 Donkeycar Tub의 catalog 파일을 읽어 프레임 데이터로 변환한다.
             TubLoadResult result = new TubLoadResult();
-            string imageBasePath = GetImageBasePath(selectedTubPath);
 
             foreach (string catalogFile in catalogFiles)
             {
+                // catalog가 하위 tub 폴더에 있을 수 있으므로 해당 catalog 폴더를 이미지 기준 경로로 사용한다.
+                string tubBasePath = Path.GetDirectoryName(catalogFile) ?? selectedTubPath;
+                string imageBasePath = GetImageBasePath(tubBasePath);
+
                 foreach (string line in File.ReadLines(catalogFile))
                 {
                     if (string.IsNullOrWhiteSpace(line)) continue;
@@ -517,7 +524,7 @@ namespace DataManager
                         {
                             FrameNumber = GetIntValue(root, "_index", result.Frames.Count),
                             ImageFileName = imageFileName,
-                            ImagePath = FindImagePath(selectedTubPath, imageBasePath, imageFileName),
+                            ImagePath = FindImagePath(tubBasePath, imageBasePath, imageFileName),
                             Angle = GetDoubleValue(root, "user/angle"),
                             Throttle = GetDoubleValue(root, "user/throttle")
                         };
@@ -536,10 +543,13 @@ namespace DataManager
         {
             // 구버전 Donkeycar Tub은 record_0.json 같은 개별 JSON 파일에 프레임 정보를 저장한다.
             TubLoadResult result = new TubLoadResult();
-            string imageBasePath = GetImageBasePath(selectedTubPath);
 
             foreach (string recordFile in recordFiles)
             {
+                // record 파일도 하위 tub 폴더에 있을 수 있으므로 record가 있는 폴더 기준으로 이미지를 찾는다.
+                string tubBasePath = Path.GetDirectoryName(recordFile) ?? selectedTubPath;
+                string imageBasePath = GetImageBasePath(tubBasePath);
+
                 try
                 {
                     using JsonDocument document = JsonDocument.Parse(File.ReadAllText(recordFile));
@@ -555,17 +565,18 @@ namespace DataManager
                     int fallbackFrameNumber = GetFileOrderNumber(recordFile);
                     if (fallbackFrameNumber == int.MaxValue)
                     {
+                        // 파일명에서 번호를 못 찾으면 읽은 순서를 프레임 번호로 사용한다.
                         fallbackFrameNumber = result.Frames.Count;
                     }
 
-                    TubFrame frame = new TubFrame
-                    {
-                        FrameNumber = GetIntValue(root, "_index", fallbackFrameNumber),
-                        ImageFileName = imageFileName,
-                        ImagePath = FindImagePath(selectedTubPath, imageBasePath, imageFileName),
-                        Angle = GetDoubleValue(root, "user/angle"),
-                        Throttle = GetDoubleValue(root, "user/throttle")
-                    };
+                        TubFrame frame = new TubFrame
+                        {
+                            FrameNumber = GetIntValue(root, "_index", fallbackFrameNumber),
+                            ImageFileName = imageFileName,
+                            ImagePath = FindImagePath(tubBasePath, imageBasePath, imageFileName),
+                            Angle = GetDoubleValue(root, "user/angle"),
+                            Throttle = GetDoubleValue(root, "user/throttle")
+                        };
 
                     result.Frames.Add(frame);
                 }
