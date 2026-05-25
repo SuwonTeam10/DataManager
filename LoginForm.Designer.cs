@@ -61,7 +61,7 @@
             btnConnect.Location = new Point(336, 324);
             btnConnect.Name = "btnConnect";
             btnConnect.Size = new Size(112, 47);
-            btnConnect.TabIndex = 1;
+            btnConnect.TabIndex = 3;
             btnConnect.Text = "Login";
             btnConnect.UseVisualStyleBackColor = false;
             btnConnect.Click += btnConnect_Click;
@@ -73,7 +73,7 @@
             txtUser.Location = new Point(99, 207);
             txtUser.Name = "txtUser";
             txtUser.Size = new Size(588, 43);
-            txtUser.TabIndex = 2;
+            txtUser.TabIndex = 1;
             txtUser.Text = "아이디";
             txtUser.TextChanged += txtUser_TextChanged;
             // 
@@ -84,7 +84,7 @@
             txtPass.Location = new Point(99, 264);
             txtPass.Name = "txtPass";
             txtPass.Size = new Size(588, 43);
-            txtPass.TabIndex = 3;
+            txtPass.TabIndex = 2;
             txtPass.Text = "비밀번호";
             txtPass.TextChanged += txtPass_TextChanged;
             // 
@@ -94,7 +94,7 @@
             btnShowHost.Location = new Point(500, 151);
             btnShowHost.Name = "btnShowHost";
             btnShowHost.Size = new Size(90, 43);
-            btnShowHost.TabIndex = 4;
+            btnShowHost.TabIndex = 5;
             btnShowHost.Text = "😎";
             btnShowHost.UseVisualStyleBackColor = true;
             btnShowHost.Click += btnShowHost_Click_1;
@@ -105,7 +105,7 @@
             btnShowPass.Location = new Point(500, 264);
             btnShowPass.Name = "btnShowPass";
             btnShowPass.Size = new Size(90, 43);
-            btnShowPass.TabIndex = 5;
+            btnShowPass.TabIndex = 8;
             btnShowPass.Text = "😎";
             btnShowPass.UseVisualStyleBackColor = true;
             btnShowPass.Click += btnShowPass_Click_1;
@@ -138,7 +138,7 @@
             btnClearPass.Location = new Point(606, 264);
             btnClearPass.Name = "btnClearPass";
             btnClearPass.Size = new Size(81, 43);
-            btnClearPass.TabIndex = 8;
+            btnClearPass.TabIndex = 9;
             btnClearPass.Text = "X";
             btnClearPass.UseVisualStyleBackColor = true;
             btnClearPass.Click += btnClearPass_Click_1;
@@ -150,7 +150,7 @@
             chkSaveInfo.Location = new Point(99, 331);
             chkSaveInfo.Name = "chkSaveInfo";
             chkSaveInfo.Size = new Size(193, 34);
-            chkSaveInfo.TabIndex = 9;
+            chkSaveInfo.TabIndex = 4;
             chkSaveInfo.Text = "로그인 정보 저장";
             chkSaveInfo.UseVisualStyleBackColor = true;
             chkSaveInfo.CheckedChanged += chkSaveInfo_CheckedChanged;
@@ -163,10 +163,9 @@
             lbErrorMsg.Location = new Point(232, 387);
             lbErrorMsg.Name = "lbErrorMsg";
             lbErrorMsg.Size = new Size(322, 32);
-            lbErrorMsg.TabIndex = 10;
+            lbErrorMsg.TabIndex = 11;
             lbErrorMsg.Text = "IP와 아이디를 확인해주세요.";
             lbErrorMsg.Visible = false;
-            lbErrorMsg.Click += lbErrorMsg_Click;
             // 
             // lblLogin
             // 

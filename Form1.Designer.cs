@@ -57,6 +57,7 @@
             btnSetLeft = new Button();
             tabGraph = new TabPage();
             tabTrainTest = new TabPage();
+            progressBarTrain = new ProgressBar();
             lblLog = new Label();
             txtLog = new TextBox();
             lblRealAngle = new Label();
@@ -83,6 +84,7 @@
             groupTubNavigator = new GroupBox();
             rdoLocal = new RadioButton();
             groupBox2 = new GroupBox();
+            chkUseVenv = new CheckBox();
             rdoRemote = new RadioButton();
             lblProfile = new Label();
             groupTubLoader.SuspendLayout();
@@ -441,6 +443,7 @@
             // 
             // tabTrainTest
             // 
+            tabTrainTest.Controls.Add(progressBarTrain);
             tabTrainTest.Controls.Add(lblLog);
             tabTrainTest.Controls.Add(txtLog);
             tabTrainTest.Controls.Add(lblRealAngle);
@@ -459,6 +462,13 @@
             tabTrainTest.TabIndex = 2;
             tabTrainTest.Text = "학습/테스트";
             tabTrainTest.UseVisualStyleBackColor = true;
+            // 
+            // progressBarTrain
+            // 
+            progressBarTrain.Location = new Point(338, 86);
+            progressBarTrain.Name = "progressBarTrain";
+            progressBarTrain.Size = new Size(295, 30);
+            progressBarTrain.TabIndex = 24;
             // 
             // lblLog
             // 
@@ -550,6 +560,7 @@
             btnSelectTestImage.TabIndex = 14;
             btnSelectTestImage.Text = "테스트 이미지 선택";
             btnSelectTestImage.UseVisualStyleBackColor = true;
+            btnSelectTestImage.Click += btnSelectTestImage_Click;
             // 
             // btnSelectModel
             // 
@@ -561,6 +572,7 @@
             btnSelectModel.TabIndex = 13;
             btnSelectModel.Text = "모델 선택";
             btnSelectModel.UseVisualStyleBackColor = true;
+            btnSelectModel.Click += btnSelectModel_Click;
             // 
             // btnModelTest
             // 
@@ -572,6 +584,7 @@
             btnModelTest.TabIndex = 12;
             btnModelTest.Text = "모델 테스트";
             btnModelTest.UseVisualStyleBackColor = true;
+            btnModelTest.Click += btnModelTest_Click;
             // 
             // btnTrain
             // 
@@ -583,6 +596,7 @@
             btnTrain.TabIndex = 11;
             btnTrain.Text = "학습";
             btnTrain.UseVisualStyleBackColor = true;
+            btnTrain.Click += btnTrain_Click;
             // 
             // btnLoadConfig
             // 
@@ -692,6 +706,7 @@
             btnPlayStop.TabIndex = 3;
             btnPlayStop.Text = "재생/정지";
             btnPlayStop.UseVisualStyleBackColor = true;
+            btnPlayStop.Click += btnPlayStop_Click;
             // 
             // btnNext
             // 
@@ -752,7 +767,7 @@
             // 
             rdoLocal.AutoSize = true;
             rdoLocal.Font = new Font("Microsoft Sans Serif", 12F);
-            rdoLocal.Location = new Point(6, 27);
+            rdoLocal.Location = new Point(6, 17);
             rdoLocal.Name = "rdoLocal";
             rdoLocal.Size = new Size(141, 24);
             rdoLocal.TabIndex = 21;
@@ -763,21 +778,35 @@
             // groupBox2
             // 
             groupBox2.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
+            groupBox2.Controls.Add(chkUseVenv);
             groupBox2.Controls.Add(rdoRemote);
             groupBox2.Controls.Add(rdoLocal);
             groupBox2.Font = new Font("Microsoft Sans Serif", 9.75F, FontStyle.Regular, GraphicsUnit.Point, 0);
-            groupBox2.Location = new Point(1002, 289);
+            groupBox2.Location = new Point(1002, 283);
             groupBox2.Name = "groupBox2";
-            groupBox2.Size = new Size(213, 95);
+            groupBox2.Size = new Size(213, 101);
             groupBox2.TabIndex = 22;
             groupBox2.TabStop = false;
-            groupBox2.Text = "실형 타입";
+            groupBox2.Text = "서버 연결 설정";
+            // 
+            // chkUseVenv
+            // 
+            chkUseVenv.AutoSize = true;
+            chkUseVenv.Checked = true;
+            chkUseVenv.CheckState = CheckState.Checked;
+            chkUseVenv.Font = new Font("Microsoft Sans Serif", 12F, FontStyle.Regular, GraphicsUnit.Point, 0);
+            chkUseVenv.Location = new Point(6, 77);
+            chkUseVenv.Name = "chkUseVenv";
+            chkUseVenv.Size = new Size(104, 24);
+            chkUseVenv.TabIndex = 25;
+            chkUseVenv.Text = "가상환경 적용";
+            chkUseVenv.UseVisualStyleBackColor = true;
             // 
             // rdoRemote
             // 
             rdoRemote.AutoSize = true;
             rdoRemote.Font = new Font("Microsoft Sans Serif", 12F);
-            rdoRemote.Location = new Point(6, 61);
+            rdoRemote.Location = new Point(6, 47);
             rdoRemote.Name = "rdoRemote";
             rdoRemote.Size = new Size(89, 24);
             rdoRemote.TabIndex = 22;
@@ -787,12 +816,15 @@
             // 
             // lblProfile
             // 
+            lblProfile.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             lblProfile.AutoSize = true;
-            lblProfile.Location = new Point(1159, 9);
+            lblProfile.Font = new Font("맑은 고딕", 12F, FontStyle.Regular, GraphicsUnit.Point, 0);
+            lblProfile.Location = new Point(1070, 9);
             lblProfile.Name = "lblProfile";
-            lblProfile.Size = new Size(71, 15);
+            lblProfile.Size = new Size(160, 21);
             lblProfile.TabIndex = 23;
-            lblProfile.Text = "사용자 정보";
+            lblProfile.Text = "로컬 (리눅스/우분투)";
+            lblProfile.Click += lblProfile_Click;
             // 
             // Form1
             // 
@@ -813,6 +845,7 @@
             Name = "Form1";
             Text = "Donkeycar 데이터 관리 프로그램";
             WindowState = FormWindowState.Maximized;
+            Load += Form1_Load;
             groupTubLoader.ResumeLayout(false);
             groupTubLoader.PerformLayout();
             groupDataView.ResumeLayout(false);
@@ -896,5 +929,7 @@
         private GroupBox groupBox2;
         private RadioButton rdoRemote;
         private Label lblProfile;
+        private ProgressBar progressBarTrain;
+        private CheckBox chkUseVenv;
     }
 }

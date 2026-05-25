@@ -1,7 +1,5 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.Diagnostics;
-using System.Text;
 using System.Threading.Tasks;
 using Renci.SshNet;
 
@@ -11,30 +9,34 @@ namespace DataManager
     {
         public interface ICommandExecutor
         {
-            void ExecuteTrain(string path, Action<string> onLogReceived);
+            // useVenv 매개변수 추가됨!
+            void ExecuteTrain(string path, bool useVenv, Action<string> onLogReceived);
+            void ExecuteTest(string path, string modelPath, bool useVenv, Action<string> onLogReceived);
             void Stop();
         }
 
         public class LocalExecutor : ICommandExecutor
         {
             private Process _process;
-            public void ExecuteTrain(string path, Action<string> onLogReceived)
+            public void ExecuteTrain(string path, bool useVenv, Action<string> onLogReceived)
+            {
+                RunProcess(path, "manage.py train", onLogReceived);
+            }
+
+            public void ExecuteTest(string path, string modelPath, bool useVenv, Action<string> onLogReceived)
+            {
+                string args = $"manage.py drive --model \"{modelPath}\"";
+                RunProcess(path, args, onLogReceived);
+            }
+
+            private void RunProcess(string path, string arguments, Action<string> onLogReceived)
             {
                 _process = new Process
                 {
-                    StartInfo = new ProcessStartInfo
-                    {
-                        FileName = "python",
-                        Arguments = "manage.py train",
-                        WorkingDirectory = path,
-                        UseShellExecute = false,
-                        RedirectStandardOutput = true,
-                        RedirectStandardError = true,
-                        CreateNoWindow = true
-                    }
+                    StartInfo = new ProcessStartInfo { FileName = "python", Arguments = arguments, WorkingDirectory = path, UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true }
                 };
-                _process.OutputDataReceived += (s, e) => onLogReceived(e.Data);
-                _process.ErrorDataReceived += (s, e) => onLogReceived(e.Data);
+                _process.OutputDataReceived += (s, e) => { if (e.Data != null) onLogReceived(e.Data); };
+                _process.ErrorDataReceived += (s, e) => { if (e.Data != null) onLogReceived(e.Data); };
                 _process.Start();
                 _process.BeginOutputReadLine();
                 _process.BeginErrorReadLine();
@@ -54,25 +56,24 @@ namespace DataManager
                 _shell = _ssh.CreateShellStream("donkey", 80, 24, 800, 600, 1024);
             }
 
-            public void ExecuteTrain(string path, Action<string> onLogReceived)
+            public void ExecuteTrain(string path, bool useVenv, Action<string> onLogReceived)
             {
-                _shell.WriteLine($"cd {path} && python manage.py train");
-
-                Task.Run(() => {
-                    while (true)
-                    {
-                        var line = _shell.ReadLine();
-                        if (line != null) onLogReceived(line);
-                    }
-                });
+                string venvCmd = useVenv ? "source ~/env/bin/activate && " : "";
+                RunRemoteCommand(path, $"{venvCmd}python manage.py train", onLogReceived);
             }
 
-            public void Stop()
+            public void ExecuteTest(string path, string modelPath, bool useVenv, Action<string> onLogReceived)
             {
-                _shell?.Dispose();
-                _ssh?.Disconnect();
-                _ssh?.Dispose();
+                string venvCmd = useVenv ? "source ~/env/bin/activate && " : "";
+                RunRemoteCommand(path, $"{venvCmd}python manage.py drive --model {modelPath}", onLogReceived);
             }
+
+            private void RunRemoteCommand(string path, string command, Action<string> onLogReceived)
+            {
+                _shell.WriteLine($"cd {path} && {command}");
+                Task.Run(() => { while (true) { var line = _shell.ReadLine(); if (line != null) onLogReceived(line); } });
+            }
+            public void Stop() { _shell?.Dispose(); _ssh?.Disconnect(); _ssh?.Dispose(); }
         }
     }
 }
