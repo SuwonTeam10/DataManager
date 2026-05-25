@@ -430,10 +430,25 @@ namespace DataManager
 
         private async Task LoadTubAsync(string selectedTubPath)
         {
-            string[] catalogFiles = Directory.GetFiles(selectedTubPath, "catalog_*.catalog").OrderBy(file => file).ToArray();
-            if (catalogFiles.Length == 0)
+            // 신버전 Tub은 catalog_*.catalog, 구버전 Tub은 record_*.json 파일을 사용한다.
+            string[] catalogFiles = Directory.GetFiles(selectedTubPath, "catalog_*.catalog")
+                .OrderBy(GetFileOrderNumber)
+                .ThenBy(file => file)
+                .ToArray();
+            string[] recordFiles = Array.Empty<string>();
+            bool isOldRecordTub = catalogFiles.Length == 0;
+
+            if (isOldRecordTub)
             {
-                MessageBox.Show("catalog_*.catalog 파일을 찾을 수 없습니다.", "Load Tub", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                recordFiles = Directory.GetFiles(selectedTubPath, "record_*.json")
+                    .OrderBy(GetFileOrderNumber)
+                    .ThenBy(file => file)
+                    .ToArray();
+            }
+
+            if (catalogFiles.Length == 0 && recordFiles.Length == 0)
+            {
+                MessageBox.Show("catalog_*.catalog 또는 record_*.json 파일을 찾을 수 없습니다.", "Load Tub", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
 
@@ -456,13 +471,16 @@ namespace DataManager
 
             try
             {
-                TubLoadResult result = await Task.Run(() => ReadTubFrames(selectedTubPath, catalogFiles));
+                TubLoadResult result = await Task.Run(() =>
+                    isOldRecordTub
+                        ? ReadOldTubFrames(selectedTubPath, recordFiles)
+                        : ReadTubFrames(selectedTubPath, catalogFiles));
                 tubFrames.AddRange(result.Frames);
                 ResetTubView();
 
                 if (tubFrames.Count > 0) ShowFrame(0);
                 foreach (string error in result.Errors) AddLog(error);
-                AddLog($"Load Tub 완료: {tubFrames.Count}개 프레임");
+                AddLog($"Load Tub 완료: {tubFrames.Count}개 프레임 ({(isOldRecordTub ? "구버전 record JSON" : "catalog")} 형식)");
             }
             catch (Exception ex)
             {
@@ -511,6 +529,56 @@ namespace DataManager
                     }
                 }
             }
+            return result;
+        }
+
+        private static TubLoadResult ReadOldTubFrames(string selectedTubPath, string[] recordFiles)
+        {
+            // 구버전 Donkeycar Tub은 record_0.json 같은 개별 JSON 파일에 프레임 정보를 저장한다.
+            TubLoadResult result = new TubLoadResult();
+            string imageBasePath = GetImageBasePath(selectedTubPath);
+
+            foreach (string recordFile in recordFiles)
+            {
+                try
+                {
+                    using JsonDocument document = JsonDocument.Parse(File.ReadAllText(recordFile));
+                    JsonElement root = document.RootElement;
+                    string imageFileName = GetStringValue(root, "cam/image_array");
+
+                    if (string.IsNullOrWhiteSpace(imageFileName))
+                    {
+                        result.Errors.Add($"record 이미지 정보 없음: {Path.GetFileName(recordFile)}");
+                        continue;
+                    }
+
+                    int fallbackFrameNumber = GetFileOrderNumber(recordFile);
+                    if (fallbackFrameNumber == int.MaxValue)
+                    {
+                        fallbackFrameNumber = result.Frames.Count;
+                    }
+
+                    TubFrame frame = new TubFrame
+                    {
+                        FrameNumber = GetIntValue(root, "_index", fallbackFrameNumber),
+                        ImageFileName = imageFileName,
+                        ImagePath = FindImagePath(selectedTubPath, imageBasePath, imageFileName),
+                        Angle = GetDoubleValue(root, "user/angle"),
+                        Throttle = GetDoubleValue(root, "user/throttle")
+                    };
+
+                    result.Frames.Add(frame);
+                }
+                catch (JsonException ex)
+                {
+                    result.Errors.Add($"record 파싱 오류: {Path.GetFileName(recordFile)} - {ex.Message}");
+                }
+                catch (IOException ex)
+                {
+                    result.Errors.Add($"record 읽기 오류: {Path.GetFileName(recordFile)} - {ex.Message}");
+                }
+            }
+
             return result;
         }
 
@@ -609,6 +677,13 @@ namespace DataManager
             string normalizedImageFileName = imageFileName.Replace('/', Path.DirectorySeparatorChar);
             if (!string.IsNullOrWhiteSpace(Path.GetDirectoryName(normalizedImageFileName))) return Path.Combine(selectedTubPath, normalizedImageFileName);
             return Path.Combine(imageBasePath, normalizedImageFileName);
+        }
+
+        private static int GetFileOrderNumber(string filePath)
+        {
+            // catalog_10.catalog, record_10.json 같은 파일명을 숫자 기준으로 정렬하기 위해 번호를 추출한다.
+            Match match = Regex.Match(Path.GetFileNameWithoutExtension(filePath), @"(\d+)$");
+            return match.Success ? int.Parse(match.Groups[1].Value) : int.MaxValue;
         }
 
         private static Image LoadImage(string imagePath)
