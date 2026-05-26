@@ -69,10 +69,13 @@ namespace DataManager
             btnNext.Click += btnNext_Click;
             btnLast.Click += btnLast_Click;
 
-            // 데이터 정리(범위 지정/필터) 이벤트 연결
+            // 데이터 정리(범위 지정/필터/삭제/휴지통) 이벤트 연결
             btnSetLeft.Click += btnSetLeft_Click;
             btnSetRight.Click += btnSetRight_Click;
             btnFilter.Click += btnFilter_Click;
+            btnDelete.Click += btnDelete_Click;
+            btnRestore.Click += btnRestore_Click;
+            btnEmptyTrash.Click += btnEmptyTrash_Click;
             lstTrash.SelectionMode = SelectionMode.MultiExtended;
 
             // 타임라인 썸네일 이미지 리스트 설정
@@ -949,6 +952,147 @@ namespace DataManager
                 if (outlier) result.Add(idx);
             }
             return result;
+        }
+
+        // ==========================================
+        // 7. 데이터 삭제 / 복원 / 휴지통 비우기
+        // ==========================================
+        private void btnDelete_Click(object? sender, EventArgs e)
+        {
+            if (tubFrames.Count == 0) return;
+
+            int moved = 0;
+            if (rangeStart >= 0 || rangeEnd >= 0)
+            {
+                (int lo, int hi) = GetEffectiveRange();
+                DialogResult res = MessageBox.Show($"범위 {lo}~{hi}의 프레임을 휴지통으로 이동하시겠습니까?", "삭제", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+                if (res == DialogResult.No) return;
+                for (int i = lo; i <= hi; i++)
+                {
+                    if (MoveToTrash(i, "수동 삭제")) moved++;
+                }
+            }
+            else
+            {
+                int index = lstFrames.SelectedIndex;
+                if (index < 0)
+                {
+                    MessageBox.Show("삭제할 프레임을 목록에서 선택하거나 [시작 지정]/[끝 지정]으로 범위를 정하세요.", "삭제", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
+                if (MoveToTrash(index, "수동 삭제")) moved++;
+            }
+
+            RebuildTrashList();
+            AddLog($"{moved}개 프레임을 휴지통으로 이동했습니다.");
+        }
+
+        private void btnRestore_Click(object? sender, EventArgs e)
+        {
+            if (lstTrash.SelectedItems.Count == 0)
+            {
+                MessageBox.Show("복원할 항목을 휴지통 목록에서 선택하세요.", "복원", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            List<TrashEntry> selected = lstTrash.SelectedItems.Cast<TrashEntry>().ToList();
+            foreach (TrashEntry entry in selected) RestoreFromTrash(entry.Frame);
+            RebuildTrashList();
+            AddLog($"{selected.Count}개 프레임을 복원했습니다.");
+        }
+
+        // 안전 모드: 이미지는 deleted 폴더로 이동하고 catalog는 백업 후 해당 기록만 제거(되돌릴 수 있도록 보존).
+        private void btnEmptyTrash_Click(object? sender, EventArgs e)
+        {
+            List<TubFrame> deleted = tubFrames.Where(f => f.Deleted).ToList();
+            if (deleted.Count == 0)
+            {
+                MessageBox.Show("휴지통이 비어 있습니다.", "휴지통 비우기", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            if (string.IsNullOrWhiteSpace(tubPath))
+            {
+                MessageBox.Show("Tub 폴더 정보가 없습니다.", "휴지통 비우기", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            DialogResult res = MessageBox.Show(
+                $"휴지통의 {deleted.Count}개 프레임을 최종 적용합니다.\n\n" +
+                "· 이미지는 tub 폴더 하위 [deleted] 폴더로 이동합니다.\n" +
+                "· catalog 파일은 백업 후 해당 기록을 제거합니다.\n\n계속하시겠습니까?",
+                "휴지통 비우기 (안전 모드)", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+            if (res == DialogResult.No) return;
+
+            try
+            {
+                string deletedDir = Path.Combine(tubPath, "deleted");
+                Directory.CreateDirectory(deletedDir);
+
+                // 1) catalog 파일별로 삭제 대상 기록을 제외하고 재작성 (원본은 1회 백업)
+                foreach (IGrouping<string, TubFrame> group in deleted.Where(f => !string.IsNullOrEmpty(f.SourceCatalog)).GroupBy(f => f.SourceCatalog))
+                {
+                    string catalogFile = group.Key;
+                    if (!File.Exists(catalogFile)) continue;
+
+                    HashSet<string> removeImages = new HashSet<string>(group.Select(f => f.ImageFileName));
+
+                    string backupPath = Path.Combine(deletedDir, Path.GetFileName(catalogFile) + ".backup");
+                    if (!File.Exists(backupPath)) File.Copy(catalogFile, backupPath);
+
+                    List<string> keptLines = new List<string>();
+                    foreach (string line in File.ReadLines(catalogFile))
+                    {
+                        if (string.IsNullOrWhiteSpace(line)) continue;
+                        string? imageName = TryGetImageName(line);
+                        if (imageName != null && removeImages.Contains(imageName)) continue;
+                        keptLines.Add(line);
+                    }
+                    File.WriteAllLines(catalogFile, keptLines);
+                }
+
+                // 2) 이미지 파일을 deleted 폴더로 이동
+                int movedImages = 0;
+                foreach (TubFrame f in deleted)
+                {
+                    if (File.Exists(f.ImagePath))
+                    {
+                        string dest = Path.Combine(deletedDir, Path.GetFileName(f.ImagePath));
+                        File.Move(f.ImagePath, dest, true);
+                        movedImages++;
+                    }
+                }
+
+                // 3) 메모리 목록에서 제거 후 뷰 재구성
+                tubFrames.RemoveAll(f => f.Deleted);
+                missingImageFrames.Clear();
+                ResetTubView();
+                lstTrash.Items.Clear();
+                if (tubFrames.Count > 0) ShowFrame(0);
+                else { picFrame.Image?.Dispose(); picFrame.Image = null; }
+
+                AddLog($"휴지통 비우기 완료: 기록 {deleted.Count}건 제거, 이미지 {movedImages}개 이동 (백업 위치: {deletedDir}).");
+                MessageBox.Show($"휴지통을 비웠습니다.\n\n제거된 기록: {deleted.Count}건\n이동된 이미지: {movedImages}개\n백업 위치: {deletedDir}", "휴지통 비우기 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"휴지통 비우기 중 오류가 발생했습니다.\n\n[오류내용]: {ex.Message}", "휴지통 비우기 오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                AddLog($"휴지통 비우기 오류: {ex.Message}");
+            }
+        }
+
+        // catalog 한 줄(JSON)에서 cam/image_array 값을 추출한다. 실패 시 null.
+        private static string? TryGetImageName(string line)
+        {
+            try
+            {
+                using JsonDocument document = JsonDocument.Parse(line);
+                string name = GetStringValue(document.RootElement, "cam/image_array");
+                return string.IsNullOrWhiteSpace(name) ? null : name;
+            }
+            catch (JsonException)
+            {
+                return null;
+            }
         }
 
         // ==========================================
