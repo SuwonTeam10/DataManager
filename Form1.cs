@@ -985,7 +985,13 @@ namespace DataManager
 
                 bool outlier = Math.Abs(angle) > rangeLimit;
                 if (!outlier && std > 1e-9 && Math.Abs(angle - mean) / std > zThreshold) outlier = true;
-                if (!outlier && k > 0 && Math.Abs(angle - tubFrames[active[k - 1]].Angle) > jumpThreshold) outlier = true;
+                // 급변(스파이크): 직전·직후 유효 프레임 모두와 임계 이상 차이날 때만 판정(복귀 프레임 오검출 방지)
+                if (!outlier && k > 0 && k < active.Count - 1)
+                {
+                    double prev = tubFrames[active[k - 1]].Angle;
+                    double next = tubFrames[active[k + 1]].Angle;
+                    if (Math.Abs(angle - prev) > jumpThreshold && Math.Abs(angle - next) > jumpThreshold) outlier = true;
+                }
 
                 if (outlier) result.Add(idx);
             }
