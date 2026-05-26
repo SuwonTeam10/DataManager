@@ -124,7 +124,28 @@ namespace DataManager
             public void ExecuteTest(string path, string modelPath, bool useVenv, Action<string> onLogReceived)
             {
                 string venvCmd = useVenv ? "source ~/.bashrc && conda activate e2e_env && " : "";
-                RunRemoteCommand(path, $"{venvCmd}python manage.py drive --model {modelPath}", onLogReceived);
+
+                // 1. [만능 패치 1] MRO 에러 자동 해결 스크립트 (테스트 시에도 동일하게 파이썬 모듈을 부르므로 필수)
+                string pyCode =
+                    "import donkeycar, os\n" +
+                    "p=os.path.join(os.path.dirname(donkeycar.__file__), 'pipeline', 'sequence.py')\n" +
+                    "if os.path.exists(p):\n" +
+                    "  c=open(p).read()\n" +
+                    "  c=c.replace('class TfmIterator(Generic[R, XOut, YOut],  SizedIterator[Tuple[XOut, YOut]]):', 'class TfmIterator(SizedIterator):')\n" +
+                    "  c=c.replace('class TfmTupleIterator(Generic[X, Y, XOut, YOut],  SizedIterator[Tuple[XOut, YOut]]):', 'class TfmTupleIterator(SizedIterator):')\n" +
+                    "  c=c.replace('class BaseTfmIterator_(Generic[XOut, YOut],  SizedIterator[Tuple[XOut, YOut]]):', 'class BaseTfmIterator_(SizedIterator):')\n" +
+                    "  open(p,'w').write(c)";
+                string patchCmd = $"cat << 'EOF' > /tmp/patch_mro.py\n{pyCode}\nEOF\n{venvCmd}python /tmp/patch_mro.py && rm /tmp/patch_mro.py";
+
+                // 2. [만능 패치 2] 의존성(패키지) 자동 복구
+                // 테스트(drive)할 때도 TensorFlow를 쓰기 때문에 numpy 버전 충돌을 무조건 막아야 합니다.
+                string ensureEnvCmd = $"{venvCmd}pip install -q imgaug \"numpy<2.0\"";
+
+                // 3. 모델 테스트 실행 (사용자가 선택한 모델 파일 경로 주입)
+                string testCmd = $"{venvCmd}python manage.py drive --model {modelPath}";
+
+                // 패치 -> 패키지 확인 -> 모델 테스트를 논스톱으로 실행!
+                RunRemoteCommand(path, $"{patchCmd} && {ensureEnvCmd} && {testCmd}", onLogReceived);
             }
 
             private void RunRemoteCommand(string path, string command, Action<string> onLogReceived)
