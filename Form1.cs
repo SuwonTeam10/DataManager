@@ -38,6 +38,9 @@ namespace DataManager
         private int rangeStart = -1;
         private int rangeEnd = -1;
 
+        // 자동 재생 성능을 위한 표시용 이미지 LRU 캐시(메모리 상한 적용). 캐시가 Bitmap 소유권을 가진다.
+        private readonly FrameImageCache frameImageCache;
+
         // ==========================================
         // 1. 초기화 및 생성자
         // ==========================================
@@ -55,6 +58,9 @@ namespace DataManager
             playTimer = new System.Windows.Forms.Timer();
             playTimer.Interval = 100; // 0.1초 간격
             playTimer.Tick += PlayTimer_Tick;
+
+            // 표시용 이미지 캐시 초기화 (최근 64프레임 유지)
+            frameImageCache = new FrameImageCache(64, LoadImage);
 
             // 상단 메뉴바 동적 생성
             CreateTopMenu();
@@ -502,15 +508,18 @@ namespace DataManager
             }
         }
 
-        private void PlayTimer_Tick(object sender, EventArgs e)
+        private void PlayTimer_Tick(object? sender, EventArgs e)
         {
-            if (trackFrame.Value < trackFrame.Maximum) trackFrame.Value++;
-            else playTimer.Stop();
+            // 다음 유효(미삭제) 프레임으로 직접 이동. 슬라이더 값만 바꾸면 화면이 갱신되지 않으므로 ShowFrame을 호출한다.
+            int next = NextActiveIndex(trackFrame.Value);
+            if (next < 0) { playTimer.Stop(); return; }
+            ShowFrame(next);
         }
 
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
             if (_executor != null) _executor.Stop();
+            frameImageCache.Clear();
             base.OnFormClosing(e);
         }
 
@@ -556,8 +565,8 @@ namespace DataManager
             lstTrash.Items.Clear();
             lstFrames.Items.Clear();
             lvTimeline.Items.Clear();
-            picFrame.Image?.Dispose();
             picFrame.Image = null;
+            frameImageCache.Clear();
             rangeStart = -1;
             rangeEnd = -1;
             UpdateRangeLabel();
@@ -693,8 +702,8 @@ namespace DataManager
                 isUpdatingTimelineSelection = false;
             }
 
-            picFrame.Image?.Dispose();
-            picFrame.Image = LoadImage(frame.ImagePath);
+            // 캐시가 소유한 이미지를 표시한다. (캐시가 Dispose를 책임지므로 여기서 Dispose하지 않는다.)
+            picFrame.Image = frameImageCache.Get(frame.ImagePath);
 
             if (!File.Exists(frame.ImagePath)) missingImageFrames.Add(index);
 
@@ -776,10 +785,39 @@ namespace DataManager
         private void lstFrames_SelectedIndexChanged(object sender, EventArgs e) => ShowFrame(lstFrames.SelectedIndex);
         private void lvTimeline_SelectedIndexChanged(object sender, EventArgs e) { if (!isUpdatingTimelineSelection && lvTimeline.SelectedItems.Count > 0 && lvTimeline.SelectedItems[0].Tag is int index) ShowFrame(index); }
         private void trackFrame_Scroll(object sender, EventArgs e) => ShowFrame(trackFrame.Value);
-        private void btnFirst_Click(object sender, EventArgs e) => ShowFrame(0);
-        private void btnPrev_Click(object sender, EventArgs e) => ShowFrame(Math.Max(0, trackFrame.Value - 1));
-        private void btnNext_Click(object sender, EventArgs e) => ShowFrame(Math.Min(tubFrames.Count - 1, trackFrame.Value + 1));
-        private void btnLast_Click(object sender, EventArgs e) => ShowFrame(tubFrames.Count - 1);
+        private void btnFirst_Click(object? sender, EventArgs e) { int i = FirstActiveIndex(); if (i >= 0) ShowFrame(i); }
+        private void btnPrev_Click(object? sender, EventArgs e) { int i = PrevActiveIndex(trackFrame.Value); if (i >= 0) ShowFrame(i); }
+        private void btnNext_Click(object? sender, EventArgs e) { int i = NextActiveIndex(trackFrame.Value); if (i >= 0) ShowFrame(i); }
+        private void btnLast_Click(object? sender, EventArgs e) { int i = LastActiveIndex(); if (i >= 0) ShowFrame(i); }
+
+        // 삭제된 프레임을 건너뛰는 탐색 도우미
+        private int NextActiveIndex(int from)
+        {
+            for (int i = from + 1; i < tubFrames.Count; i++)
+                if (!tubFrames[i].Deleted) return i;
+            return -1;
+        }
+
+        private int PrevActiveIndex(int from)
+        {
+            for (int i = from - 1; i >= 0; i--)
+                if (!tubFrames[i].Deleted) return i;
+            return -1;
+        }
+
+        private int FirstActiveIndex()
+        {
+            for (int i = 0; i < tubFrames.Count; i++)
+                if (!tubFrames[i].Deleted) return i;
+            return -1;
+        }
+
+        private int LastActiveIndex()
+        {
+            for (int i = tubFrames.Count - 1; i >= 0; i--)
+                if (!tubFrames[i].Deleted) return i;
+            return -1;
+        }
 
         // 안 쓰는 빈 이벤트 모음 (에러 방지용)
         private void lblConfigPath_Click(object sender, EventArgs e) { }
@@ -1065,10 +1103,11 @@ namespace DataManager
                 // 3) 메모리 목록에서 제거 후 뷰 재구성
                 tubFrames.RemoveAll(f => f.Deleted);
                 missingImageFrames.Clear();
+                picFrame.Image = null;
+                frameImageCache.Clear();
                 ResetTubView();
                 lstTrash.Items.Clear();
                 if (tubFrames.Count > 0) ShowFrame(0);
-                else { picFrame.Image?.Dispose(); picFrame.Image = null; }
 
                 AddLog($"휴지통 비우기 완료: 기록 {deleted.Count}건 제거, 이미지 {movedImages}개 이동 (백업 위치: {deletedDir}).");
                 MessageBox.Show($"휴지통을 비웠습니다.\n\n제거된 기록: {deleted.Count}건\n이동된 이미지: {movedImages}개\n백업 위치: {deletedDir}", "휴지통 비우기 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -1123,6 +1162,50 @@ namespace DataManager
             public TubFrame Frame { get; }
             public TrashEntry(TubFrame frame) => Frame = frame;
             public override string ToString() => $"Frame {Frame.FrameNumber:D6} · {Frame.DeleteReason}";
+        }
+
+        // 표시용 이미지 LRU 캐시. 용량을 초과하면 가장 오래 전 사용한 이미지를 Dispose하여 메모리를 제한한다.
+        private sealed class FrameImageCache
+        {
+            private readonly int capacity;
+            private readonly Func<string, Image> loader;
+            private readonly Dictionary<string, Image> map = new();
+            private readonly LinkedList<string> order = new(); // 앞쪽이 최근 사용
+
+            public FrameImageCache(int capacity, Func<string, Image> loader)
+            {
+                this.capacity = Math.Max(1, capacity);
+                this.loader = loader;
+            }
+
+            public Image Get(string key)
+            {
+                if (map.TryGetValue(key, out Image? cached))
+                {
+                    order.Remove(key);
+                    order.AddFirst(key);
+                    return cached;
+                }
+
+                Image image = loader(key);
+                map[key] = image;
+                order.AddFirst(key);
+
+                while (order.Count > capacity)
+                {
+                    string oldest = order.Last!.Value;
+                    order.RemoveLast();
+                    if (map.Remove(oldest, out Image? evicted)) evicted.Dispose();
+                }
+                return image;
+            }
+
+            public void Clear()
+            {
+                foreach (Image image in map.Values) image.Dispose();
+                map.Clear();
+                order.Clear();
+            }
         }
     }
 }
