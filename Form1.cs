@@ -89,6 +89,9 @@ namespace DataManager
             {
                 MessageBox.Show("[기본 사용 순서]\n\n1. 좌측 [서버 연결 설정]에서 [원격] 선택 후 로그인\n2. [설정 파일 열기] 클릭하여 서버 경로 동기화\n3. [Tub 데이터 열기]로 윈도우로 다운받은 주행기록 폴더 열기\n4. 이상한 데이터 필터링 및 삭제\n5. [학습] 버튼을 눌러 AI 훈련시키기\n6. 훈련된 모델로 [모델 테스트] 진행\n\n이 내용은 상단 메뉴바에서도 언제든 확인 가능합니다.", "초보자 가이드");
             }
+
+            // 기본 재생속도 1x로 설정
+            cmbPlaySpeed.SelectedIndex = 0;
         }
 
         // 상단 메뉴바 자동 생성기 (UI/UX 패치)
@@ -676,14 +679,14 @@ namespace DataManager
                         fallbackFrameNumber = result.Frames.Count;
                     }
 
-                        TubFrame frame = new TubFrame
-                        {
-                            FrameNumber = GetIntValue(root, "_index", fallbackFrameNumber),
-                            ImageFileName = imageFileName,
-                            ImagePath = FindImagePath(tubBasePath, imageBasePath, imageLookupCache, ref imageLookup, imageFileName),
-                            Angle = GetDoubleValue(root, "user/angle"),
-                            Throttle = GetDoubleValue(root, "user/throttle")
-                        };
+                    TubFrame frame = new TubFrame
+                    {
+                        FrameNumber = GetIntValue(root, "_index", fallbackFrameNumber),
+                        ImageFileName = imageFileName,
+                        ImagePath = FindImagePath(tubBasePath, imageBasePath, imageLookupCache, ref imageLookup, imageFileName),
+                        Angle = GetDoubleValue(root, "user/angle"),
+                        Throttle = GetDoubleValue(root, "user/throttle")
+                    };
 
                     result.Frames.Add(frame);
                 }
@@ -1055,6 +1058,32 @@ namespace DataManager
             public List<TubFrame> Frames { get; } = new();
             public List<string> MissingImages { get; } = new();
             public List<string> Errors { get; } = new();
+        }
+
+        private void panel1_Paint(object sender, PaintEventArgs e)
+        {
+
+        }
+
+        private void groupBoxDataLoad_Enter(object sender, EventArgs e)
+        {
+
+        }
+
+        private void chkAutoPlay_CheckedChanged(object sender, EventArgs e)
+        {
+            if (chkAutoPlay.Checked)
+            {
+                chkAutoPlay.BackColor =
+                    Color.FromArgb(59, 130, 246);
+
+                chkAutoPlay.ForeColor = Color.White;
+            }
+            else
+            {
+                chkAutoPlay.BackColor = Color.White;
+                chkAutoPlay.ForeColor = Color.Black;
+            }
         }
     }
 }
