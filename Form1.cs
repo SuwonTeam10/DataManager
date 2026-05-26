@@ -596,7 +596,8 @@ namespace DataManager
                             ImageFileName = imageFileName,
                             ImagePath = FindImagePath(selectedTubPath, imageBasePath, imageFileName),
                             Angle = GetDoubleValue(root, "user/angle"),
-                            Throttle = GetDoubleValue(root, "user/throttle")
+                            Throttle = GetDoubleValue(root, "user/throttle"),
+                            SourceCatalog = catalogFile
                         };
                         result.Frames.Add(frame);
                     }
@@ -679,10 +680,7 @@ namespace DataManager
             picFrame.Image?.Dispose();
             picFrame.Image = LoadImage(frame.ImagePath);
 
-            if (!File.Exists(frame.ImagePath) && missingImageFrames.Add(index))
-            {
-                lstTrash.Items.Add($"{frame}: missing image");
-            }
+            if (!File.Exists(frame.ImagePath)) missingImageFrames.Add(index);
 
             lblFrame.Text = $"프레임: {frame.FrameNumber:D6}";
             lblAngle.Text = $"조향각: {frame.Angle:0.00}";
@@ -773,6 +771,50 @@ namespace DataManager
         private void lvTimeline_SelectedIndexChanged_1(object sender, EventArgs e) { }
 
         // ==========================================
+        // 5. 데이터 정리: 휴지통(삭제 상태) 관리
+        // ==========================================
+        // 프레임을 휴지통으로 이동(소프트 삭제). 실제 파일은 휴지통 비우기 시점까지 유지한다.
+        private bool MoveToTrash(int index, string reason)
+        {
+            if (index < 0 || index >= tubFrames.Count) return false;
+            TubFrame frame = tubFrames[index];
+            if (frame.Deleted) return false;
+            frame.Deleted = true;
+            frame.DeleteReason = reason;
+            RefreshFrameListItem(index);
+            return true;
+        }
+
+        // 휴지통에서 프레임을 되살린다(삭제 상태 해제).
+        private void RestoreFromTrash(TubFrame frame)
+        {
+            if (!frame.Deleted) return;
+            frame.Deleted = false;
+            frame.DeleteReason = "";
+            RefreshFrameListItem(tubFrames.IndexOf(frame));
+        }
+
+        // 현재 삭제 상태인 프레임들로 휴지통 목록을 다시 구성한다.
+        private void RebuildTrashList()
+        {
+            lstTrash.BeginUpdate();
+            lstTrash.Items.Clear();
+            foreach (TubFrame frame in tubFrames)
+            {
+                if (frame.Deleted) lstTrash.Items.Add(new TrashEntry(frame));
+            }
+            lstTrash.EndUpdate();
+        }
+
+        // ListBox 항목의 표시 문자열(삭제 표시)을 갱신하기 위해 동일 항목을 재대입한다.
+        // 항목 값만 교체하므로 선택 인덱스는 바뀌지 않아 SelectedIndexChanged가 발생하지 않는다.
+        private void RefreshFrameListItem(int index)
+        {
+            if (index < 0 || index >= lstFrames.Items.Count) return;
+            lstFrames.Items[index] = tubFrames[index];
+        }
+
+        // ==========================================
         // 내부 클래스
         // ==========================================
         private sealed class TubFrame
@@ -782,13 +824,24 @@ namespace DataManager
             public string ImagePath { get; set; } = "";
             public double Angle { get; set; }
             public double Throttle { get; set; }
-            public override string ToString() => $"Frame {FrameNumber:D6}";
+            public bool Deleted { get; set; }
+            public string DeleteReason { get; set; } = "";
+            public string SourceCatalog { get; set; } = "";
+            public override string ToString() => Deleted ? $"Frame {FrameNumber:D6} [삭제됨]" : $"Frame {FrameNumber:D6}";
         }
 
         private sealed class TubLoadResult
         {
             public List<TubFrame> Frames { get; } = new();
             public List<string> Errors { get; } = new();
+        }
+
+        // 휴지통 목록(lstTrash)에 표시되는 삭제 프레임 항목. 복원 시 원본 프레임으로 역매핑한다.
+        private sealed class TrashEntry
+        {
+            public TubFrame Frame { get; }
+            public TrashEntry(TubFrame frame) => Frame = frame;
+            public override string ToString() => $"Frame {Frame.FrameNumber:D6} · {Frame.DeleteReason}";
         }
     }
 }
