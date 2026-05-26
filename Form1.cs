@@ -902,14 +902,51 @@ namespace DataManager
             }
         }
 
-        // 비정상 조향각(이상치) 프레임 인덱스를 반환한다. (정규화 범위 [-1, 1] 초과)
+        // 비정상 조향각(이상치) 프레임 인덱스를 반환한다.
+        // 판정 기준(셋 중 하나라도 해당 시 이상치):
+        //   (1) 정규화 범위 [-1, 1] 초과
+        //   (2) 통계적 이상치: 대상 구간 평균/표준편차 기준 z-score > 3.0
+        //   (3) 급변: 직전 유효 프레임 대비 조향각 변화량 |Δ| > 0.8
         private HashSet<int> DetectAbnormalAngleFrames(int lo, int hi)
         {
+            const double rangeLimit = 1.0;
+            const double zThreshold = 3.0;
+            const double jumpThreshold = 0.8;
+
             HashSet<int> result = new HashSet<int>();
+
+            // 대상 구간의 미삭제 프레임만 수집
+            List<int> active = new List<int>();
             for (int i = lo; i <= hi; i++)
             {
-                if (tubFrames[i].Deleted) continue;
-                if (Math.Abs(tubFrames[i].Angle) > 1.0) result.Add(i);
+                if (!tubFrames[i].Deleted) active.Add(i);
+            }
+            if (active.Count == 0) return result;
+
+            // 평균/표준편차(표본) 계산
+            double sum = 0;
+            foreach (int i in active) sum += tubFrames[i].Angle;
+            double mean = sum / active.Count;
+
+            double sqSum = 0;
+            foreach (int i in active)
+            {
+                double d = tubFrames[i].Angle - mean;
+                sqSum += d * d;
+            }
+            double std = active.Count > 1 ? Math.Sqrt(sqSum / (active.Count - 1)) : 0;
+
+            // 이상치 판정
+            for (int k = 0; k < active.Count; k++)
+            {
+                int idx = active[k];
+                double angle = tubFrames[idx].Angle;
+
+                bool outlier = Math.Abs(angle) > rangeLimit;
+                if (!outlier && std > 1e-9 && Math.Abs(angle - mean) / std > zThreshold) outlier = true;
+                if (!outlier && k > 0 && Math.Abs(angle - tubFrames[active[k - 1]].Angle) > jumpThreshold) outlier = true;
+
+                if (outlier) result.Add(idx);
             }
             return result;
         }
