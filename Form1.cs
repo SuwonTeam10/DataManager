@@ -55,9 +55,6 @@ namespace DataManager
             // 상단 메뉴바 동적 생성
             CreateTopMenu();
 
-            // ⚠️ [수정] btnLoadConfig, btnLoadTub, btnTrain 등의 Click += 코드를 전부 삭제했습니다.
-            // 비주얼 스튜디오 디자이너가 뒷단에서 자동으로 연결해 주므로 이 자리의 += 코드는 지워야 1번씩만 실행됩니다.
-
             // 나머지 탐색 바 및 리스트 이벤트 제어
             btnReloadTub.Click += btnReloadTub_Click;
             lstFrames.SelectedIndexChanged += lstFrames_SelectedIndexChanged;
@@ -96,12 +93,12 @@ namespace DataManager
         private void CreateTopMenu()
         {
             MenuStrip menuStrip = new MenuStrip();
-            menuStrip.BackColor = Color.WhiteSmoke; // ★ 배경색을 약간 회색으로 주어 메뉴바 영역이 확실히 보이게 함!
-            menuStrip.Padding = new Padding(5, 5, 5, 5); // 넉넉한 여백
+            menuStrip.BackColor = Color.WhiteSmoke; // 배경색을 약간 회색으로 주어 메뉴바 영역이 잘 보임
+            menuStrip.Padding = new Padding(5, 5, 5, 5); // 여백
             this.MainMenuStrip = menuStrip;
             this.Controls.Add(menuStrip);
 
-            menuStrip.BringToFront(); // ★ 핵심: 다른 UI(프레임 목록 등) 뒤에 가려지지 않고 무조건 맨 위로 오게 강제 설정!
+            menuStrip.BringToFront(); // 다른 UI(프레임 목록 등) 뒤에 가려지지 않고 무조건 맨 위로 오게 강제 설정!
 
             // 1. Donkeycar 사용 설명서 메뉴
             ToolStripMenuItem menuManual = new ToolStripMenuItem("📖 Donkeycar 사용 설명서");
@@ -118,12 +115,12 @@ namespace DataManager
             menuHotkeys.DropDownItems.Add("← / → 방향키 : 프레임 1칸씩 이동");
             menuHotkeys.MouseEnter += (s, e) => menuHotkeys.ShowDropDown();
 
-            // 3. ★ 우측 상단 로그인 프로필 메뉴 (잘림 방지 및 디테일 추가)
+            // 3. 우측 상단 로그인 프로필 메뉴 (잘림 방지 및 디테일 추가)
             menuProfile = new ToolStripMenuItem("👤 로컬 모드 (로그아웃 상태)");
             menuProfile.Alignment = ToolStripItemAlignment.Right;
             menuProfile.Font = new Font("맑은 고딕", 9, FontStyle.Bold);
 
-            // ★ 화면 잘림 방지: 오른쪽 끝에 있으므로 메뉴가 '왼쪽 아래'로 펼쳐지도록 방향 강제 지정!
+            // 화면 잘림 방지: 오른쪽 끝에 있으므로 메뉴가 왼쪽 아래로 펼쳐지도록 방향 강제
             menuProfile.DropDownDirection = ToolStripDropDownDirection.BelowLeft;
 
             // 프로필 하위 메뉴 (인성님 아이디어 적용)
@@ -168,7 +165,7 @@ namespace DataManager
                             _executor = new ICE.RemoteExecutor(loginForm.Host, loginForm.User, loginForm.Pass);
                             loggedInUser = loginForm.User;
 
-                            // ★ lblProfile 찌꺼기 싹 지우고 menuProfile로 완벽 대체!
+                            // lblProfile 찌꺼기 싹 지우고 menuProfile로 대체
                             menuProfile.Text = $"👤 {loginForm.User} 접속중";
                             menuProfile.ForeColor = Color.Blue; // 글씨를 파란색으로!
                             menuProfile.Tag = loginForm.Host;   // 나중에 로그아웃할 때 쓰려고 IP를 살짝 숨겨둠
@@ -303,6 +300,25 @@ namespace DataManager
             }
         }
 
+        // 학습/테스트 강제 중지 버튼 클릭 이벤트
+        private void btnStopTask_Click(object sender, EventArgs e)
+        {
+            if (_executor != null)
+            {
+                DialogResult res = MessageBox.Show("현재 진행 중인 학습/테스트를 강제로 멈추시겠습니까?\n(진행 중이던 학습 데이터는 저장되지 않습니다.)", "작업 강제 중지", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+
+                if (res == DialogResult.Yes)
+                {
+                    _executor.Cancel(); // 파이썬에 강제 종료 신호 전송
+
+                    txtLog.AppendText(Environment.NewLine + "🛑 [알림] 사용자에 의해 작업이 강제 중지되었습니다." + Environment.NewLine);
+
+                    // 진행률 바 초기화
+                    if (progressBarTrain != null) progressBarTrain.Value = 0;
+                }
+            }
+        }
+
         private void btnTrain_Click(object sender, EventArgs e)
         {
             if (_executor == null)
@@ -341,7 +357,7 @@ namespace DataManager
                 return;
             }
 
-            // ★ 2. 완료 조건 확장 (조기 종료 등 포함) + 인성님 아이디어 적용 (로그 정리 및 안내)
+            //  2. 로그 정리 및 안내 팝업
             if (logText.Contains("Saved model") || logText.Contains("Finished") || logText.Contains("Stopping early") || logText.ToLower().Contains("model saved"))
             {
                 // UI 정리 (진행률 바 0으로 초기화)
@@ -367,7 +383,8 @@ namespace DataManager
                 // chartLoss.Series["Loss"].Points.AddY(lossValue); 
             }
 
-            // ★ 4. 진행률 바 널뛰기 버그 수정 (반드시 'Epoch'로 시작하는 줄만 잡도록 수정)
+            // 진행률 바 순간이동 버그 수정
+            // 앞쪽에 정확히 'Epoch'라는 단어가 있는 진짜 진행률만 캐치
             Match epochMatch = Regex.Match(logText, @"Epoch\s+(\d+)/(\d+)");
             if (epochMatch.Success && progressBarTrain != null)
             {
@@ -539,7 +556,7 @@ namespace DataManager
                 foreach (string error in result.Errors) AddLog(error);
                 AddLog($"Load Tub 완료: {tubFrames.Count}개 프레임");
 
-                // ★ 추가된 순차적 안내 팝업창
+                // 순차적 안내 팝업창
                 MessageBox.Show($"주행 데이터 {tubFrames.Count}장을 성공적으로 불러왔습니다!\n\n[다음 단계 안내]\n1. 화면 하단의 슬라이더를 움직여 비정상적인 주행 사진이 있는지 확인하세요.\n2. 필요하다면 데이터 필터링/삭제 기능을 이용해 정리하세요.\n3. 정리가 완료되었다면 좌측 하단의 [학습] 버튼을 눌러 AI 훈련을 시작하세요.", "데이터 로드 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
             catch (Exception ex)

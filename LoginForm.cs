@@ -19,7 +19,7 @@ namespace DataManager
         {
             InitializeComponent();
 
-            // 디자인 창 필요 없이 여기서 강제로 이벤트 연결! 
+            // 디자인 창 필요 없이 여기서 강제로 이벤트 연결
             txtHost.Enter += txtHost_Enter;
             txtHost.Leave += txtHost_Leave;
             txtHost.KeyDown += txtHost_KeyDown;

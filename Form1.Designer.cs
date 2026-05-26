@@ -57,6 +57,7 @@
             btnSetLeft = new Button();
             tabGraph = new TabPage();
             tabTrainTest = new TabPage();
+            btnStopTask = new Button();
             progressBarTrain = new ProgressBar();
             lblLog = new Label();
             txtLog = new TextBox();
@@ -442,6 +443,7 @@
             // 
             // tabTrainTest
             // 
+            tabTrainTest.Controls.Add(btnStopTask);
             tabTrainTest.Controls.Add(progressBarTrain);
             tabTrainTest.Controls.Add(lblLog);
             tabTrainTest.Controls.Add(txtLog);
@@ -461,6 +463,16 @@
             tabTrainTest.TabIndex = 2;
             tabTrainTest.Text = "학습/테스트";
             tabTrainTest.UseVisualStyleBackColor = true;
+            // 
+            // btnStopTask
+            // 
+            btnStopTask.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
+            btnStopTask.Location = new Point(15, 52);
+            btnStopTask.Name = "btnStopTask";
+            btnStopTask.Size = new Size(75, 31);
+            btnStopTask.TabIndex = 25;
+            btnStopTask.Text = "학습 정지";
+            btnStopTask.UseVisualStyleBackColor = true;
             // 
             // progressBarTrain
             // 
@@ -915,5 +927,6 @@
         private RadioButton rdoRemote;
         private ProgressBar progressBarTrain;
         private CheckBox chkUseVenv;
+        private Button btnStopTask;
     }
 }
