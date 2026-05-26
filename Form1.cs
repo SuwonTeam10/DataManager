@@ -34,6 +34,10 @@ namespace DataManager
         private int currentTimelineStart = -1;
         private bool isUpdatingTimelineSelection;
 
+        // 데이터 정리(필터/삭제) 대상 범위. -1은 미지정.
+        private int rangeStart = -1;
+        private int rangeEnd = -1;
+
         // ==========================================
         // 1. 초기화 및 생성자
         // ==========================================
@@ -64,6 +68,12 @@ namespace DataManager
             btnPrev.Click += btnPrev_Click;
             btnNext.Click += btnNext_Click;
             btnLast.Click += btnLast_Click;
+
+            // 데이터 정리(범위 지정/필터) 이벤트 연결
+            btnSetLeft.Click += btnSetLeft_Click;
+            btnSetRight.Click += btnSetRight_Click;
+            btnFilter.Click += btnFilter_Click;
+            lstTrash.SelectionMode = SelectionMode.MultiExtended;
 
             // 타임라인 썸네일 이미지 리스트 설정
             timelineImages.ImageSize = new Size(36, 27);
@@ -545,6 +555,9 @@ namespace DataManager
             lvTimeline.Items.Clear();
             picFrame.Image?.Dispose();
             picFrame.Image = null;
+            rangeStart = -1;
+            rangeEnd = -1;
+            UpdateRangeLabel();
 
             try
             {
@@ -812,6 +825,93 @@ namespace DataManager
         {
             if (index < 0 || index >= lstFrames.Items.Count) return;
             lstFrames.Items[index] = tubFrames[index];
+        }
+
+        // ==========================================
+        // 6. 데이터 필터링 (범위 지정 + 조건 필터)
+        // ==========================================
+        private void btnSetLeft_Click(object? sender, EventArgs e)
+        {
+            if (tubFrames.Count == 0) return;
+            rangeStart = trackFrame.Value;
+            UpdateRangeLabel();
+        }
+
+        private void btnSetRight_Click(object? sender, EventArgs e)
+        {
+            if (tubFrames.Count == 0) return;
+            rangeEnd = trackFrame.Value;
+            UpdateRangeLabel();
+        }
+
+        private void UpdateRangeLabel()
+        {
+            string left = rangeStart >= 0 ? rangeStart.ToString() : "-";
+            string right = rangeEnd >= 0 ? rangeEnd.ToString() : "-";
+            lblRange.Text = $"범위: {left} ~ {right}";
+        }
+
+        // 지정된 범위를 [lo, hi]로 정규화한다. 범위가 전혀 지정되지 않았으면 전체 구간을 반환한다.
+        private (int lo, int hi) GetEffectiveRange()
+        {
+            if (rangeStart < 0 && rangeEnd < 0) return (0, tubFrames.Count - 1);
+            int a = rangeStart < 0 ? rangeEnd : rangeStart;
+            int b = rangeEnd < 0 ? rangeStart : rangeEnd;
+            int lo = Math.Max(0, Math.Min(a, b));
+            int hi = Math.Min(tubFrames.Count - 1, Math.Max(a, b));
+            return (lo, hi);
+        }
+
+        private void btnFilter_Click(object? sender, EventArgs e)
+        {
+            if (tubFrames.Count == 0)
+            {
+                MessageBox.Show("먼저 Tub 데이터를 불러오세요.", "필터 적용", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            if (!chkThrottleZero.Checked && !chkMissingImage.Checked && !chkAbnormalAngle.Checked)
+            {
+                MessageBox.Show("적용할 필터 조건을 하나 이상 선택하세요.", "필터 적용", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            (int lo, int hi) = GetEffectiveRange();
+
+            // 비정상 조향각은 이상치 탐지 알고리즘으로 후보를 미리 산출한다.
+            HashSet<int> abnormal = chkAbnormalAngle.Checked ? DetectAbnormalAngleFrames(lo, hi) : new HashSet<int>();
+
+            int moved = 0;
+            for (int i = lo; i <= hi; i++)
+            {
+                TubFrame frame = tubFrames[i];
+                if (frame.Deleted) continue;
+
+                string? reason = null;
+                if (chkThrottleZero.Checked && Math.Abs(frame.Throttle) < 1e-6) reason = "속도 0";
+                else if (chkMissingImage.Checked && !File.Exists(frame.ImagePath)) reason = "이미지 누락";
+                else if (chkAbnormalAngle.Checked && abnormal.Contains(i)) reason = "비정상 조향각";
+
+                if (reason != null && MoveToTrash(i, reason)) moved++;
+            }
+
+            RebuildTrashList();
+            AddLog($"필터 적용: 범위 {lo}~{hi}에서 {moved}개 프레임을 휴지통으로 이동했습니다.");
+            if (moved == 0)
+            {
+                MessageBox.Show("조건에 해당하는 프레임이 없습니다.", "필터 적용", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+        }
+
+        // 비정상 조향각(이상치) 프레임 인덱스를 반환한다. (정규화 범위 [-1, 1] 초과)
+        private HashSet<int> DetectAbnormalAngleFrames(int lo, int hi)
+        {
+            HashSet<int> result = new HashSet<int>();
+            for (int i = lo; i <= hi; i++)
+            {
+                if (tubFrames[i].Deleted) continue;
+                if (Math.Abs(tubFrames[i].Angle) > 1.0) result.Add(i);
+            }
+            return result;
         }
 
         // ==========================================
