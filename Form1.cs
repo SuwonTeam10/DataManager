@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
@@ -21,6 +22,9 @@ namespace DataManager
         private ICE.ICommandExecutor _executor;
         private string modelPath = "";
         private string testImagePath = "";
+        private string latestTestImagePath = "";
+        private double? latestTestRealAngle;
+        private double? latestTestPredictAngle;
         private string loggedInUser = "";
         private System.Windows.Forms.Timer playTimer;
         private bool _isUpdatingRadio = false;
@@ -110,6 +114,7 @@ namespace DataManager
             lvTimeline.ShowItemToolTips = true;
 
             InitializeGraphControls();
+            picTestImage.SizeMode = PictureBoxSizeMode.Zoom;
         }
 
         private void Form1_Load(object sender, EventArgs e)
@@ -470,6 +475,7 @@ namespace DataManager
                 if (dlg.ShowDialog() == DialogResult.OK)
                 {
                     testImagePath = dlg.SelectedPath;
+                    ShowTestImagePreview(FindFirstTestImagePath());
                     MessageBox.Show($"테스트 이미지 폴더가 선택되었습니다:\n{testImagePath}", "선택 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
                     txtLog.AppendText(Environment.NewLine + $"[Info] 선택된 테스트 폴더: {testImagePath}");
                 }
@@ -503,12 +509,180 @@ namespace DataManager
             }
 
             txtLog.AppendText(Environment.NewLine + $"[Test] {Path.GetFileName(modelPath)} 예측 시작...");
+            ResetModelTestResult();
+            ShowTestImagePreview(FindFirstTestImagePath());
 
             bool useVenv = chkUseVenv != null ? chkUseVenv.Checked : true;
             _executor.ExecuteTest(configPath, modelPath, useVenv, (log) =>
             {
-                this.Invoke(new Action(() => { if (!string.IsNullOrEmpty(log)) txtLog.AppendText(Environment.NewLine + log); }));
+                this.Invoke(new Action(() => HandleModelTestLog(log)));
             });
+        }
+
+        private void ResetModelTestResult()
+        {
+            // 모델 테스트 시작 전 이전 결과를 지워서 새 로그 값만 보이게 한다.
+            latestTestImagePath = "";
+            latestTestRealAngle = null;
+            latestTestPredictAngle = null;
+            lblRealAngle2.Text = "-";
+            lblPredictAngle2.Text = "-";
+            lblErrorValue2.Text = "-";
+            lblTrainStatus2.Text = "테스트 중";
+            lblTrainStatus2.ForeColor = Color.DarkOrange;
+        }
+
+        private void HandleModelTestLog(string logText)
+        {
+            if (string.IsNullOrWhiteSpace(logText)) return;
+
+            txtLog.AppendText(Environment.NewLine + logText);
+
+            string? imagePath = TryFindImagePathFromLog(logText);
+            if (!string.IsNullOrWhiteSpace(imagePath))
+            {
+                ShowTestImagePreview(imagePath);
+            }
+
+            if (TryExtractLogValue(logText, new[]
+                {
+                    @"(?:real|actual|label|target|user/angle|실제\s*조향각|실제)\s*[:=]\s*(-?\d+(?:\.\d+)?)",
+                    @"^\s*angle\s*[:=]\s*(-?\d+(?:\.\d+)?)"
+                }, out double realAngle))
+            {
+                latestTestRealAngle = realAngle;
+                lblRealAngle2.Text = realAngle.ToString("0.000");
+            }
+
+            if (TryExtractLogValue(logText, new[]
+                {
+                    @"(?:predict(?:ed)?|prediction|pred|pilot/angle|예측\s*조향각|예측)\s*[:=]\s*(-?\d+(?:\.\d+)?)"
+                }, out double predictAngle))
+            {
+                latestTestPredictAngle = predictAngle;
+                lblPredictAngle2.Text = predictAngle.ToString("0.000");
+            }
+
+            if (TryExtractLogValue(logText, new[]
+                {
+                    @"(?:error|loss|diff|오차)\s*[:=]\s*(-?\d+(?:\.\d+)?)"
+                }, out double errorValue))
+            {
+                lblErrorValue2.Text = Math.Abs(errorValue).ToString("0.000");
+            }
+            else if (latestTestRealAngle.HasValue && latestTestPredictAngle.HasValue)
+            {
+                lblErrorValue2.Text = Math.Abs(latestTestRealAngle.Value - latestTestPredictAngle.Value).ToString("0.000");
+            }
+
+            if (logText.Contains("Finished", StringComparison.OrdinalIgnoreCase)
+                || logText.Contains("complete", StringComparison.OrdinalIgnoreCase)
+                || logText.Contains("완료", StringComparison.OrdinalIgnoreCase))
+            {
+                lblTrainStatus2.Text = "테스트 완료";
+                lblTrainStatus2.ForeColor = Color.Green;
+            }
+            else if (logText.Contains("Error", StringComparison.OrdinalIgnoreCase)
+                || logText.Contains("Exception", StringComparison.OrdinalIgnoreCase)
+                || logText.Contains("Traceback", StringComparison.OrdinalIgnoreCase))
+            {
+                lblTrainStatus2.Text = "오류";
+                lblTrainStatus2.ForeColor = Color.Red;
+            }
+        }
+
+        private string? FindFirstTestImagePath()
+        {
+            if (string.IsNullOrWhiteSpace(testImagePath) || !Directory.Exists(testImagePath)) return null;
+
+            try
+            {
+                return Directory.EnumerateFiles(testImagePath, "*.*", SearchOption.AllDirectories)
+                    .FirstOrDefault(IsImageFile);
+            }
+            catch (IOException)
+            {
+                return null;
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return null;
+            }
+        }
+
+        private string? TryFindImagePathFromLog(string logText)
+        {
+            Match match = Regex.Match(logText, @"(?<path>[^\s""']+\.(?:jpg|jpeg|png|bmp))", RegexOptions.IgnoreCase);
+            if (!match.Success) return null;
+
+            string rawPath = match.Groups["path"].Value.Trim();
+            if (File.Exists(rawPath)) return rawPath;
+
+            string normalizedPath = rawPath.Replace('/', Path.DirectorySeparatorChar);
+            if (File.Exists(normalizedPath)) return normalizedPath;
+
+            if (!string.IsNullOrWhiteSpace(testImagePath))
+            {
+                string byName = Path.Combine(testImagePath, Path.GetFileName(normalizedPath));
+                if (File.Exists(byName)) return byName;
+
+                if (Directory.Exists(testImagePath))
+                {
+                    try
+                    {
+                        return Directory.EnumerateFiles(testImagePath, Path.GetFileName(normalizedPath), SearchOption.AllDirectories)
+                            .FirstOrDefault();
+                    }
+                    catch (IOException)
+                    {
+                        return null;
+                    }
+                    catch (UnauthorizedAccessException)
+                    {
+                        return null;
+                    }
+                }
+            }
+
+            return null;
+        }
+
+        private void ShowTestImagePreview(string? imagePath)
+        {
+            if (string.IsNullOrWhiteSpace(imagePath) || !File.Exists(imagePath)) return;
+            if (string.Equals(latestTestImagePath, imagePath, StringComparison.OrdinalIgnoreCase)) return;
+
+            Image? oldImage = picTestImage.Image;
+            picTestImage.Image = LoadImage(imagePath);
+            oldImage?.Dispose();
+            latestTestImagePath = imagePath;
+        }
+
+        private static bool TryExtractLogValue(string logText, IEnumerable<string> patterns, out double value)
+        {
+            foreach (string pattern in patterns)
+            {
+                Match match = Regex.Match(logText, pattern, RegexOptions.IgnoreCase);
+                if (match.Success && TryParseLogDouble(match.Groups[1].Value, out value))
+                {
+                    return true;
+                }
+            }
+
+            value = 0;
+            return false;
+        }
+
+        private static bool TryParseLogDouble(string text, out double value)
+        {
+            return double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out value)
+                || double.TryParse(text, NumberStyles.Float, CultureInfo.CurrentCulture, out value);
+        }
+
+        private static bool IsImageFile(string path)
+        {
+            string extension = Path.GetExtension(path).ToLowerInvariant();
+            return extension is ".jpg" or ".jpeg" or ".png" or ".bmp";
         }
 
         // ==========================================
