@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
@@ -31,8 +32,11 @@ namespace DataManager
         private readonly HashSet<int> missingImageFrames = new();
         private readonly ImageList timelineImages = new();
         private const int TimelineVisibleCount = 20;
+        private const int PlaybackBaseIntervalMs = 100;
+        private const int PlaybackMinimumIntervalMs = 50;
         private int currentTimelineStart = -1;
         private bool isUpdatingTimelineSelection;
+        private int playbackFrameStep = 1;
 
         // 데이터 정리(필터/삭제) 대상 범위. -1은 미지정.
         private int rangeStart = -1;
@@ -40,6 +44,16 @@ namespace DataManager
 
         // 자동 재생 성능을 위한 표시용 이미지 LRU 캐시(메모리 상한 적용). 캐시가 Bitmap 소유권을 가진다.
         private readonly FrameImageCache frameImageCache;
+
+        // 그래프 탭 컨트롤은 디자이너 충돌을 줄이기 위해 런타임에 생성한다.
+        private readonly PictureBox picDataGraph = new();
+        private readonly Button btnReloadGraph = new();
+        private readonly CheckBox chkGraphAngle = new();
+        private readonly CheckBox chkGraphThrottle = new();
+        private readonly Label lblGraphSummary = new();
+        private readonly Label lblGraphHover = new();
+        private Rectangle graphPlotBounds = Rectangle.Empty;
+        private List<TubFrame> graphVisibleFrames = new();
         // ==========================================
         // 1. 초기화 및 생성자
         // ==========================================
@@ -73,6 +87,9 @@ namespace DataManager
             btnPrev.Click += btnPrev_Click;
             btnNext.Click += btnNext_Click;
             btnLast.Click += btnLast_Click;
+            cmbPlaySpeed.SelectedIndexChanged += cmbPlaySpeed_SelectedIndexChanged;
+            tabMain.SelectedIndexChanged += tabMain_SelectedIndexChanged;
+            Resize += (_, _) => RedrawGraphAfterLayout();
 
             // 데이터 정리(범위 지정/필터/삭제/휴지통) 이벤트 연결
             btnSetLeft.Click += btnSetLeft_Click;
@@ -91,6 +108,8 @@ namespace DataManager
             lvTimeline.HideSelection = false;
             lvTimeline.MultiSelect = false;
             lvTimeline.ShowItemToolTips = true;
+
+            InitializeGraphControls();
         }
 
         private void Form1_Load(object sender, EventArgs e)
@@ -107,7 +126,10 @@ namespace DataManager
             }
 
             // 기본 재생속도 1x로 설정
-            cmbPlaySpeed.SelectedIndex = 0;
+            if (cmbPlaySpeed.SelectedIndex < 0) cmbPlaySpeed.SelectedIndex = 0;
+            ApplyPlaybackSpeed();
+            UpdatePlaybackControlsVisual(false);
+            UpdateAutoPlayLoopVisual();
         }
 
         // 상단 메뉴바 자동 생성기 (UI/UX 패치)
@@ -496,13 +518,7 @@ namespace DataManager
         {
             try
             {
-                if (tubFrames.Count == 0) return;
-                if (playTimer.Enabled) playTimer.Stop();
-                else
-                {
-                    if (trackFrame.Value == trackFrame.Maximum) trackFrame.Value = 0;
-                    playTimer.Start();
-                }
+                SetPlaybackState(!playTimer.Enabled);
             }
             catch (Exception ex)
             {
@@ -512,9 +528,24 @@ namespace DataManager
 
         private void PlayTimer_Tick(object? sender, EventArgs e)
         {
-            // 다음 유효(미삭제) 프레임으로 직접 이동. 슬라이더 값만 바꾸면 화면이 갱신되지 않으므로 ShowFrame을 호출한다.
-            int next = NextActiveIndex(trackFrame.Value);
-            if (next < 0) { playTimer.Stop(); return; }
+            // 재생 중에는 트랙바 값만 바꾸지 않고 ShowFrame을 호출해서 이미지/라벨/목록 선택까지 같이 갱신한다.
+            int next = AdvanceActiveIndex(trackFrame.Value, playbackFrameStep);
+            if (next < 0)
+            {
+                if (chkAutoPlay.Checked)
+                {
+                    int firstActive = FirstActiveIndex();
+                    if (firstActive >= 0)
+                    {
+                        ShowFrame(firstActive);
+                        return;
+                    }
+                }
+
+                SetPlaybackState(false);
+                return;
+            }
+
             ShowFrame(next);
         }
 
@@ -546,6 +577,8 @@ namespace DataManager
 
         private async Task LoadTubAsync(string selectedTubPath)
         {
+            SetPlaybackState(false);
+
             // 신버전 Tub은 catalog_*.catalog, 구버전 Tub은 record_*.json 파일을 사용한다.
             // 사용자가 data 폴더를 선택해도 내부 tub 폴더를 찾을 수 있도록 하위 폴더까지 검색한다.
             string[] catalogFiles = Directory.GetFiles(selectedTubPath, "catalog_*.catalog", SearchOption.AllDirectories)
@@ -601,6 +634,7 @@ namespace DataManager
                 ResetTubView();
 
                 if (tubFrames.Count > 0) ShowFrame(0);
+                RenderTubGraph();
                 foreach (string error in result.Errors) AddLog(error);
                 AddLog($"Load Tub 완료: {tubFrames.Count}개 프레임 ({(isOldRecordTub ? "구버전 record JSON" : "catalog")} 형식)");
 
@@ -700,6 +734,7 @@ namespace DataManager
                         FrameNumber = GetIntValue(root, "_index", fallbackFrameNumber),
                         ImageFileName = imageFileName,
                         ImagePath = FindImagePath(tubBasePath, imageBasePath, imageLookupCache, ref imageLookup, imageFileName),
+                        SourceDataPath = recordFile,
                         Angle = GetDoubleValue(root, "user/angle"),
                         Throttle = GetDoubleValue(root, "user/throttle")
                     };
@@ -729,6 +764,7 @@ namespace DataManager
             trackFrame.Minimum = 0;
             trackFrame.Maximum = Math.Max(0, tubFrames.Count - 1);
             trackFrame.Value = 0;
+            if (tubFrames.Count == 0) UpdateFrameInfoLabels(null, -1);
 
             try
             {
@@ -791,9 +827,25 @@ namespace DataManager
 
             if (!File.Exists(frame.ImagePath)) missingImageFrames.Add(index);
 
-            lblFrame.Text = $"프레임: {frame.FrameNumber:D6}";
-            lblAngle.Text = $"조향각: {frame.Angle:0.00}";
-            lblThrottle.Text = $"속도: {frame.Throttle:0.00}";
+            UpdateFrameInfoLabels(frame, index);
+        }
+
+        private void UpdateFrameInfoLabels(TubFrame? frame, int index)
+        {
+            // 디자이너가 만든 제목 라벨은 고정하고, 실제 값 라벨만 갱신한다.
+            if (frame == null || index < 0 || tubFrames.Count == 0)
+            {
+                lblFrame2.Text = "000000";
+                lblAngle2.Text = "0.00";
+                lblThrottle2.Text = "0.00";
+                lblCurrentFrame2.Text = "0 / 0";
+                return;
+            }
+
+            lblFrame2.Text = frame.FrameNumber.ToString("D6");
+            lblAngle2.Text = frame.Angle.ToString("0.00");
+            lblThrottle2.Text = frame.Throttle.ToString("0.00");
+            lblCurrentFrame2.Text = $"{index + 1:N0} / {tubFrames.Count:N0}";
         }
 
         private static string GetImageBasePath(string selectedTubPath)
@@ -919,6 +971,265 @@ namespace DataManager
             return double.TryParse(value.ToString(), out result) ? result : 0;
         }
 
+        private void InitializeGraphControls()
+        {
+            tabGraph.Controls.Clear();
+
+            TableLayoutPanel graphLayout = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 1,
+                RowCount = 2,
+                Padding = new Padding(12)
+            };
+            graphLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
+            graphLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+            FlowLayoutPanel graphToolbar = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                FlowDirection = FlowDirection.LeftToRight,
+                WrapContents = false,
+                AutoScroll = true,
+                Padding = new Padding(0, 4, 0, 4)
+            };
+
+            btnReloadGraph.Text = "그래프 새로고침";
+            btnReloadGraph.Size = new Size(150, 30);
+            btnReloadGraph.Click += (_, _) => RenderTubGraph();
+
+            chkGraphAngle.Text = "조향각";
+            chkGraphAngle.Checked = true;
+            chkGraphAngle.AutoSize = true;
+            chkGraphAngle.Margin = new Padding(14, 7, 8, 0);
+            chkGraphAngle.CheckedChanged += (_, _) => RenderTubGraph();
+
+            chkGraphThrottle.Text = "속도";
+            chkGraphThrottle.Checked = true;
+            chkGraphThrottle.AutoSize = true;
+            chkGraphThrottle.Margin = new Padding(8, 7, 20, 0);
+            chkGraphThrottle.CheckedChanged += (_, _) => RenderTubGraph();
+
+            lblGraphSummary.AutoSize = true;
+            lblGraphSummary.Margin = new Padding(12, 8, 0, 0);
+            lblGraphSummary.Text = "Tub 데이터를 불러오면 그래프가 표시됩니다.";
+
+            graphToolbar.Controls.Add(btnReloadGraph);
+            graphToolbar.Controls.Add(chkGraphAngle);
+            graphToolbar.Controls.Add(chkGraphThrottle);
+            graphToolbar.Controls.Add(lblGraphSummary);
+
+            picDataGraph.Dock = DockStyle.Fill;
+            picDataGraph.BackColor = Color.White;
+            picDataGraph.BorderStyle = BorderStyle.FixedSingle;
+            picDataGraph.Margin = new Padding(0);
+            picDataGraph.SizeMode = PictureBoxSizeMode.StretchImage;
+            picDataGraph.Resize += (_, _) => RedrawGraphAfterLayout();
+            picDataGraph.MouseMove += picDataGraph_MouseMove;
+            picDataGraph.MouseLeave += (_, _) => lblGraphHover.Visible = false;
+
+            // 그래프 위에 마우스를 올렸을 때 현재 프레임 값을 작은 정보창으로 표시한다.
+            lblGraphHover.AutoSize = true;
+            lblGraphHover.BackColor = Color.FromArgb(40, 40, 40);
+            lblGraphHover.ForeColor = Color.White;
+            lblGraphHover.Font = new Font(SystemFonts.DefaultFont.FontFamily, 9, FontStyle.Bold);
+            lblGraphHover.Padding = new Padding(8, 6, 8, 6);
+            lblGraphHover.BorderStyle = BorderStyle.FixedSingle;
+            lblGraphHover.Visible = false;
+            picDataGraph.Controls.Add(lblGraphHover);
+            lblGraphHover.BringToFront();
+
+            graphLayout.Controls.Add(graphToolbar, 0, 0);
+            graphLayout.Controls.Add(picDataGraph, 0, 1);
+            tabGraph.Controls.Add(graphLayout);
+            RedrawGraphAfterLayout();
+        }
+
+        private void tabMain_SelectedIndexChanged(object? sender, EventArgs e)
+        {
+            RedrawGraphAfterLayout();
+        }
+
+        private void RedrawGraphAfterLayout()
+        {
+            if (tabMain.SelectedTab != tabGraph) return;
+            BeginInvoke(new Action(RenderTubGraph));
+        }
+
+        private void RenderTubGraph()
+        {
+            if (picDataGraph.ClientSize.Width <= 0 || picDataGraph.ClientSize.Height <= 0) return;
+
+            Bitmap bitmap = new Bitmap(picDataGraph.ClientSize.Width, picDataGraph.ClientSize.Height);
+            using Graphics graphics = Graphics.FromImage(bitmap);
+            graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            graphics.Clear(Color.White);
+
+            List<TubFrame> visibleFrames = tubFrames.Where(frame => !frame.Deleted).ToList();
+            if (visibleFrames.Count == 0)
+            {
+                graphPlotBounds = Rectangle.Empty;
+                graphVisibleFrames = new List<TubFrame>();
+                lblGraphHover.Visible = false;
+                DrawCenteredGraphMessage(graphics, bitmap.Size, "표시할 Tub 데이터가 없습니다.");
+                SetGraphImage(bitmap);
+                lblGraphSummary.Text = "프레임 0개";
+                return;
+            }
+
+            Rectangle plot = new Rectangle(64, 24, Math.Max(10, bitmap.Width - 128), Math.Max(10, bitmap.Height - 72));
+            graphPlotBounds = plot;
+            graphVisibleFrames = visibleFrames;
+            DrawGraphFrame(graphics, plot);
+
+            // 프레임 수가 많아도 그래프 폭만큼만 샘플링해서 UI 렉을 줄인다.
+            if (chkGraphAngle.Checked)
+            {
+                DrawGraphSeries(graphics, plot, visibleFrames, frame => frame.Angle, -1.0, 1.0, Color.RoyalBlue);
+            }
+
+            if (chkGraphThrottle.Checked)
+            {
+                DrawGraphSeries(graphics, plot, visibleFrames, frame => frame.Throttle, 0.0, 1.0, Color.SeaGreen);
+            }
+
+            DrawGraphLegend(graphics, plot);
+            DrawGraphXAxis(graphics, plot, visibleFrames);
+            SetGraphImage(bitmap);
+
+            double avgAngle = visibleFrames.Average(frame => frame.Angle);
+            double avgThrottle = visibleFrames.Average(frame => frame.Throttle);
+            lblGraphSummary.Text = $"프레임 {visibleFrames.Count:N0}개  |  평균 조향각 {avgAngle:0.000}  |  평균 속도 {avgThrottle:0.000}";
+        }
+
+        private void SetGraphImage(Bitmap bitmap)
+        {
+            Image? oldImage = picDataGraph.Image;
+            picDataGraph.Image = bitmap;
+            oldImage?.Dispose();
+        }
+
+        private static void DrawGraphFrame(Graphics graphics, Rectangle plot)
+        {
+            using Pen axisPen = new Pen(Color.FromArgb(80, 80, 80));
+            using Pen gridPen = new Pen(Color.FromArgb(225, 225, 225));
+            using Brush textBrush = new SolidBrush(Color.FromArgb(70, 70, 70));
+            using Font labelFont = new Font(SystemFonts.DefaultFont.FontFamily, 8);
+
+            graphics.DrawRectangle(axisPen, plot);
+
+            for (int i = 0; i <= 4; i++)
+            {
+                int y = plot.Top + (plot.Height * i / 4);
+                graphics.DrawLine(gridPen, plot.Left, y, plot.Right, y);
+
+                double angleValue = 1.0 - i * 0.5;
+                double throttleValue = 1.0 - i * 0.25;
+                graphics.DrawString(angleValue.ToString("0.00"), labelFont, textBrush, 8, y - 7);
+                graphics.DrawString(throttleValue.ToString("0.00"), labelFont, textBrush, plot.Right + 10, y - 7);
+            }
+
+            graphics.DrawString("조향각", labelFont, Brushes.RoyalBlue, 12, plot.Top - 18);
+            graphics.DrawString("속도", labelFont, Brushes.SeaGreen, plot.Right + 10, plot.Top - 18);
+        }
+
+        private static void DrawGraphSeries(
+            Graphics graphics,
+            Rectangle plot,
+            List<TubFrame> frames,
+            Func<TubFrame, double> valueSelector,
+            double minValue,
+            double maxValue,
+            Color color)
+        {
+            if (frames.Count == 0) return;
+
+            using Pen pen = new Pen(color, 2);
+            int sampleCount = Math.Min(Math.Max(1, plot.Width), frames.Count);
+            PointF[] points = new PointF[sampleCount];
+
+            for (int i = 0; i < sampleCount; i++)
+            {
+                int frameIndex = sampleCount == 1
+                    ? 0
+                    : (int)Math.Round(i * (frames.Count - 1) / (double)(sampleCount - 1));
+
+                double value = Math.Clamp(valueSelector(frames[frameIndex]), minValue, maxValue);
+                float x = sampleCount == 1
+                    ? plot.Left
+                    : plot.Left + (float)(i * plot.Width / (double)(sampleCount - 1));
+                float y = plot.Bottom - (float)((value - minValue) / (maxValue - minValue) * plot.Height);
+                points[i] = new PointF(x, y);
+            }
+
+            if (points.Length == 1)
+            {
+                using Brush pointBrush = new SolidBrush(color);
+                graphics.FillEllipse(pointBrush, points[0].X - 3, points[0].Y - 3, 6, 6);
+                return;
+            }
+
+            graphics.DrawLines(pen, points);
+        }
+
+        private static void DrawGraphLegend(Graphics graphics, Rectangle plot)
+        {
+            using Font labelFont = new Font(SystemFonts.DefaultFont.FontFamily, 8);
+            int x = plot.Left + 12;
+            int y = plot.Top - 14;
+
+            using Pen anglePen = new Pen(Color.RoyalBlue, 3);
+            using Pen throttlePen = new Pen(Color.SeaGreen, 3);
+            graphics.DrawLine(anglePen, x, y, x + 24, y);
+            graphics.DrawString("조향각", labelFont, Brushes.Black, x + 30, y - 8);
+            graphics.DrawLine(throttlePen, x + 112, y, x + 136, y);
+            graphics.DrawString("속도", labelFont, Brushes.Black, x + 142, y - 8);
+        }
+
+        private static void DrawGraphXAxis(Graphics graphics, Rectangle plot, List<TubFrame> frames)
+        {
+            using Font labelFont = new Font(SystemFonts.DefaultFont.FontFamily, 8);
+            using Brush textBrush = new SolidBrush(Color.FromArgb(70, 70, 70));
+
+            string first = $"프레임 {frames.First().FrameNumber:D6}";
+            string last = $"프레임 {frames.Last().FrameNumber:D6}";
+            graphics.DrawString(first, labelFont, textBrush, plot.Left, plot.Bottom + 10);
+
+            SizeF lastSize = graphics.MeasureString(last, labelFont);
+            graphics.DrawString(last, labelFont, textBrush, plot.Right - lastSize.Width, plot.Bottom + 10);
+        }
+
+        private void picDataGraph_MouseMove(object? sender, MouseEventArgs e)
+        {
+            if (graphVisibleFrames.Count == 0 || graphPlotBounds == Rectangle.Empty || !graphPlotBounds.Contains(e.Location))
+            {
+                lblGraphHover.Visible = false;
+                return;
+            }
+
+            double ratio = (e.X - graphPlotBounds.Left) / (double)Math.Max(1, graphPlotBounds.Width);
+            int frameIndex = (int)Math.Round(ratio * (graphVisibleFrames.Count - 1));
+            frameIndex = Math.Clamp(frameIndex, 0, graphVisibleFrames.Count - 1);
+
+            TubFrame frame = graphVisibleFrames[frameIndex];
+            lblGraphHover.Text = $"프레임 {frame.FrameNumber:D6}\n조향각 {frame.Angle:0.000}\n속도 {frame.Throttle:0.000}";
+
+            int x = Math.Min(e.X + 14, picDataGraph.ClientSize.Width - lblGraphHover.Width - 8);
+            int y = Math.Min(e.Y + 14, picDataGraph.ClientSize.Height - lblGraphHover.Height - 8);
+            lblGraphHover.Location = new Point(Math.Max(8, x), Math.Max(8, y));
+            lblGraphHover.Visible = true;
+            lblGraphHover.BringToFront();
+        }
+
+        private static void DrawCenteredGraphMessage(Graphics graphics, Size size, string message)
+        {
+            using Font font = new Font(SystemFonts.DefaultFont.FontFamily, 11, FontStyle.Bold);
+            SizeF textSize = graphics.MeasureString(message, font);
+            float x = (size.Width - textSize.Width) / 2;
+            float y = (size.Height - textSize.Height) / 2;
+            graphics.DrawString(message, font, Brushes.DimGray, x, y);
+        }
+
         private void AddLog(string message) => txtLog.AppendText(Environment.NewLine + message);
         private void lstFrames_SelectedIndexChanged(object sender, EventArgs e) => ShowFrame(lstFrames.SelectedIndex);
         private void lvTimeline_SelectedIndexChanged(object sender, EventArgs e) { if (!isUpdatingTimelineSelection && lvTimeline.SelectedItems.Count > 0 && lvTimeline.SelectedItems[0].Tag is int index) ShowFrame(index); }
@@ -934,6 +1245,22 @@ namespace DataManager
             for (int i = from + 1; i < tubFrames.Count; i++)
                 if (!tubFrames[i].Deleted) return i;
             return -1;
+        }
+
+        private int AdvanceActiveIndex(int from, int frameStep)
+        {
+            // 고배속에서는 UI 타이머를 너무 촘촘하게 돌리지 않고, 한 번에 여러 유효 프레임을 진행해 렉을 줄인다.
+            int current = from;
+            int steps = Math.Max(1, frameStep);
+
+            for (int i = 0; i < steps; i++)
+            {
+                int next = NextActiveIndex(current);
+                if (next < 0) return i == 0 ? -1 : current;
+                current = next;
+            }
+
+            return current;
         }
 
         private int PrevActiveIndex(int from)
@@ -1074,6 +1401,7 @@ namespace DataManager
             }
 
             RebuildTrashList();
+            RenderTubGraph();
             AddLog($"필터 적용: 범위 {lo}~{hi}에서 {moved}개 프레임을 휴지통으로 이동했습니다.");
             if (moved == 0)
             {
@@ -1166,6 +1494,7 @@ namespace DataManager
             }
 
             RebuildTrashList();
+            RenderTubGraph();
             AddLog($"{moved}개 프레임을 휴지통으로 이동했습니다.");
         }
 
@@ -1180,6 +1509,7 @@ namespace DataManager
             List<TrashEntry> selected = lstTrash.SelectedItems.Cast<TrashEntry>().ToList();
             foreach (TrashEntry entry in selected) RestoreFromTrash(entry.Frame);
             RebuildTrashList();
+            RenderTubGraph();
             AddLog($"{selected.Count}개 프레임을 복원했습니다.");
         }
 
@@ -1201,7 +1531,8 @@ namespace DataManager
             DialogResult res = MessageBox.Show(
                 $"휴지통의 {deleted.Count}개 프레임을 최종 적용합니다.\n\n" +
                 "· 이미지는 tub 폴더 하위 [deleted] 폴더로 이동합니다.\n" +
-                "· catalog 파일은 백업 후 해당 기록을 제거합니다.\n\n계속하시겠습니까?",
+                "· catalog 파일은 백업 후 해당 기록을 제거합니다.\n" +
+                "· 구버전 record JSON 파일은 [deleted] 폴더로 이동합니다.\n\n계속하시겠습니까?",
                 "휴지통 비우기 (안전 모드)", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
             if (res == DialogResult.No) return;
 
@@ -1231,19 +1562,33 @@ namespace DataManager
                     File.WriteAllLines(catalogFile, keptLines);
                 }
 
-                // 2) 이미지 파일을 deleted 폴더로 이동
+                // 2) 구버전 Tub의 record_*.json 파일을 deleted 폴더로 이동한다.
+                int movedRecords = 0;
+                HashSet<string> recordFiles = deleted
+                    .Select(f => f.SourceDataPath)
+                    .Where(path => IsOldRecordFile(path) && File.Exists(path))
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+                foreach (string recordFile in recordFiles)
+                {
+                    string dest = GetDeletedFilePath(deletedDir, recordFile);
+                    File.Move(recordFile, dest);
+                    movedRecords++;
+                }
+
+                // 3) 이미지 파일을 deleted 폴더로 이동
                 int movedImages = 0;
                 foreach (TubFrame f in deleted)
                 {
                     if (File.Exists(f.ImagePath))
                     {
-                        string dest = Path.Combine(deletedDir, Path.GetFileName(f.ImagePath));
-                        File.Move(f.ImagePath, dest, true);
+                        string dest = GetDeletedFilePath(deletedDir, f.ImagePath);
+                        File.Move(f.ImagePath, dest);
                         movedImages++;
                     }
                 }
 
-                // 3) 메모리 목록에서 제거 후 뷰 재구성
+                // 4) 메모리 목록에서 제거 후 뷰 재구성
                 tubFrames.RemoveAll(f => f.Deleted);
                 missingImageFrames.Clear();
                 picFrame.Image = null;
@@ -1251,9 +1596,10 @@ namespace DataManager
                 ResetTubView();
                 lstTrash.Items.Clear();
                 if (tubFrames.Count > 0) ShowFrame(0);
+                RenderTubGraph();
 
-                AddLog($"휴지통 비우기 완료: 기록 {deleted.Count}건 제거, 이미지 {movedImages}개 이동 (백업 위치: {deletedDir}).");
-                MessageBox.Show($"휴지통을 비웠습니다.\n\n제거된 기록: {deleted.Count}건\n이동된 이미지: {movedImages}개\n백업 위치: {deletedDir}", "휴지통 비우기 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                AddLog($"휴지통 비우기 완료: 기록 {deleted.Count}건 제거, record {movedRecords}개 이동, 이미지 {movedImages}개 이동 (백업 위치: {deletedDir}).");
+                MessageBox.Show($"휴지통을 비웠습니다.\n\n제거된 기록: {deleted.Count}건\n이동된 record JSON: {movedRecords}개\n이동된 이미지: {movedImages}개\n백업 위치: {deletedDir}", "휴지통 비우기 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
             catch (Exception ex)
             {
@@ -1277,6 +1623,31 @@ namespace DataManager
             }
         }
 
+        private static bool IsOldRecordFile(string path)
+        {
+            // 구버전 Donkeycar Tub의 record JSON만 실제 파일 이동 대상으로 본다.
+            return !string.IsNullOrWhiteSpace(path)
+                && Path.GetFileName(path).StartsWith("record_", StringComparison.OrdinalIgnoreCase)
+                && string.Equals(Path.GetExtension(path), ".json", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string GetDeletedFilePath(string deletedDir, string sourcePath)
+        {
+            // 복구할 수 있도록 deleted 폴더에 원본 파일명을 유지하되, 이름이 겹치면 번호를 붙인다.
+            string fileName = Path.GetFileName(sourcePath);
+            string dest = Path.Combine(deletedDir, fileName);
+            if (!File.Exists(dest)) return dest;
+
+            string name = Path.GetFileNameWithoutExtension(fileName);
+            string extension = Path.GetExtension(fileName);
+
+            for (int i = 1; ; i++)
+            {
+                string candidate = Path.Combine(deletedDir, $"{name}_{i}{extension}");
+                if (!File.Exists(candidate)) return candidate;
+            }
+        }
+
         // ==========================================
         // 내부 클래스
         // ==========================================
@@ -1285,6 +1656,7 @@ namespace DataManager
             public int FrameNumber { get; set; }
             public string ImageFileName { get; set; } = "";
             public string ImagePath { get; set; } = "";
+            public string SourceDataPath { get; set; } = "";
             public double Angle { get; set; }
             public double Throttle { get; set; }
             public bool Deleted { get; set; }
@@ -1361,20 +1733,72 @@ namespace DataManager
 
         }
 
+        private void cmbPlaySpeed_SelectedIndexChanged(object? sender, EventArgs e)
+        {
+            ApplyPlaybackSpeed();
+        }
+
+        private void SetPlaybackState(bool shouldPlay)
+        {
+            bool isPlaying = shouldPlay && StartPlayback();
+            if (!isPlaying) StopPlayback();
+            UpdatePlaybackControlsVisual(isPlaying);
+        }
+
+        private bool StartPlayback()
+        {
+            if (tubFrames.Count == 0) return false;
+
+            int firstActive = FirstActiveIndex();
+            if (firstActive < 0) return false;
+
+            // 마지막 프레임에서 재생 버튼을 누르면 처음 유효 프레임부터 다시 시작한다.
+            if (NextActiveIndex(trackFrame.Value) < 0)
+            {
+                ShowFrame(firstActive);
+            }
+
+            ApplyPlaybackSpeed();
+            playTimer.Start();
+            return true;
+        }
+
+        private void StopPlayback()
+        {
+            playTimer.Stop();
+        }
+
+        private void ApplyPlaybackSpeed()
+        {
+            int speed = GetSelectedPlaybackSpeed();
+            double targetInterval = PlaybackBaseIntervalMs / (double)speed;
+
+            playTimer.Interval = Math.Max(PlaybackMinimumIntervalMs, (int)Math.Round(targetInterval));
+            playbackFrameStep = Math.Max(1, (int)Math.Ceiling(playTimer.Interval / targetInterval));
+        }
+
+        private int GetSelectedPlaybackSpeed()
+        {
+            string speedText = cmbPlaySpeed.SelectedItem?.ToString() ?? "1x";
+            speedText = speedText.Trim().TrimEnd('x', 'X');
+            return int.TryParse(speedText, out int speed) ? Math.Clamp(speed, 1, 8) : 1;
+        }
+
+        private void UpdatePlaybackControlsVisual(bool isPlaying)
+        {
+            btnPlayStop.Text = isPlaying ? "정지" : "재생";
+            btnPlayStop.Image = isPlaying ? Properties.Resources.icons8_stop_30 : Properties.Resources.icons8_play_30;
+        }
+
+        private void UpdateAutoPlayLoopVisual()
+        {
+            chkAutoPlay.BackColor = chkAutoPlay.Checked ? Color.FromArgb(59, 130, 246) : Color.White;
+            chkAutoPlay.ForeColor = chkAutoPlay.Checked ? Color.White : Color.Black;
+        }
+
         private void chkAutoPlay_CheckedChanged(object sender, EventArgs e)
         {
-            if (chkAutoPlay.Checked)
-            {
-                chkAutoPlay.BackColor =
-                    Color.FromArgb(59, 130, 246);
-
-                chkAutoPlay.ForeColor = Color.White;
-            }
-            else
-            {
-                chkAutoPlay.BackColor = Color.White;
-                chkAutoPlay.ForeColor = Color.Black;
-            }
+            UpdateAutoPlayLoopVisual();
         }
     }
 }
