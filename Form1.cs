@@ -147,44 +147,42 @@ namespace DataManager
         private void CreateTopMenu()
         {
             MenuStrip menuStrip = new MenuStrip();
-            menuStrip.BackColor = Color.WhiteSmoke; // 배경색을 약간 회색으로 주어 메뉴바 영역이 잘 보임
-            menuStrip.Padding = new Padding(5, 5, 5, 5); // 여백
+            menuStrip.BackColor = Color.WhiteSmoke;
+            menuStrip.Padding = new Padding(5, 5, 5, 5);
             this.MainMenuStrip = menuStrip;
             this.Controls.Add(menuStrip);
 
-            menuStrip.BringToFront(); // 다른 UI(프레임 목록 등) 뒤에 가려지지 않고 무조건 맨 위로 오게 강제 설정!
+            menuStrip.BringToFront();
 
-            // 1. Donkeycar 사용 설명서 메뉴
+            // 1. Donkeycar 사용 설명서 메뉴 
             ToolStripMenuItem menuManual = new ToolStripMenuItem("📖 Donkeycar 사용 설명서");
-            menuManual.DropDownItems.Add("1. 좌측 [서버 연결 설정]에서 [원격] 선택 후 로그인");
-            menuManual.DropDownItems.Add("2. [설정 파일 열기] 클릭 후 기준 폴더 자동 세팅");
-            menuManual.DropDownItems.Add("3. [Tub 데이터 열기]로 윈도우로 다운받은 주행 데이터 불러오기");
-            menuManual.DropDownItems.Add("4. [학습] 버튼을 클릭하여 AI 모델 생성");
-            menuManual.DropDownItems.Add("5. 생성된 모델과 테스트 폴더를 선택해 [모델 테스트] 진행");
+            menuManual.DropDownItems.Add("1. [서버 연결 설정]에서 로컬/원격 선택 후 접속");
+            menuManual.DropDownItems.Add("2. [설정 파일 열기] 클릭하여 mycar 폴더(작업 기준점) 설정");
+            menuManual.DropDownItems.Add("3. [Tub 데이터 열기]로 주행 데이터(data 폴더) 불러오기");
+            menuManual.DropDownItems.Add("4. [데이터 정리] 탭에서 불필요한 데이터(속도 0 등) 필터링 및 휴지통 비우기");
+            menuManual.DropDownItems.Add("5. [학습/테스트] 탭에서 [학습 시작] 클릭 (완료 시 models/mypilot.h5 자동 저장)");
+            menuManual.DropDownItems.Add("6. [모델 선택] -> [테스트 이미지 선택] 후 [모델 테스트 실행]으로 검증");
             menuManual.MouseEnter += (s, e) => menuManual.ShowDropDown();
 
             // 2. 단축키 메뉴
             ToolStripMenuItem menuHotkeys = new ToolStripMenuItem("⌨️ 단축키 안내");
-            menuHotkeys.DropDownItems.Add("Space Bar : 자동 재생 / 정지 토글");
-            menuHotkeys.DropDownItems.Add("← / → 방향키 : 프레임 1칸씩 이동");
+            menuHotkeys.DropDownItems.Add("Space Bar : 자동 재생 / 정지 토글 (예정)");
+            menuHotkeys.DropDownItems.Add("← / → 방향키 : 프레임 1칸씩 이동 (예정)");
             menuHotkeys.MouseEnter += (s, e) => menuHotkeys.ShowDropDown();
 
-            // 3. 우측 상단 로그인 프로필 메뉴 (잘림 방지 및 디테일 추가)
+            // 3. 우측 상단 로그인 프로필 메뉴
             menuProfile = new ToolStripMenuItem("👤 로컬 모드 (로그아웃 상태)");
             menuProfile.Alignment = ToolStripItemAlignment.Right;
             menuProfile.Font = new Font("맑은 고딕", 9, FontStyle.Bold);
-
-            // 화면 잘림 방지: 오른쪽 끝에 있으므로 메뉴가 왼쪽 아래로 펼쳐지도록 방향 강제
             menuProfile.DropDownDirection = ToolStripDropDownDirection.BelowLeft;
 
-            // 프로필 하위 메뉴 (인성님 아이디어 적용)
             ToolStripMenuItem infoRole = new ToolStripMenuItem("상태: 로컬 환경 대기 중");
-            infoRole.Enabled = false; // 클릭 안되는 정보 표시용
+            infoRole.Enabled = false;
 
             ToolStripMenuItem infoTrain = new ToolStripMenuItem("오늘 학습 시도: 0회");
             infoTrain.Enabled = false;
 
-            ToolStripSeparator separator = new ToolStripSeparator(); // 구분선
+            ToolStripSeparator separator = new ToolStripSeparator();
 
             ToolStripMenuItem menuLogout = new ToolStripMenuItem("🛑 원격 서버 로그아웃");
             menuLogout.Click += menuLogout_Click;
@@ -402,34 +400,37 @@ namespace DataManager
         private void UpdateChartRealTime(string logText)
         {
             if (string.IsNullOrEmpty(logText)) return;
+
+            //  1. 로그 클리너: 파이썬의 무의미한 진행률 ==== 및 깨진 문자 렌더링 무시 (UI 렉 방지)
+            if (logText.Contains('\r') || logText.Contains('\b') || logText.Count(c => c == '=') > 10 || logText.Contains(""))
+            {
+                return;
+            }
+
             txtLog.AppendText(logText + Environment.NewLine);
 
-            // 1. 에러 발생 시 알림
+            // 2. 에러 발생 시 알림
             if (logText.Contains("[Errno 2]") || logText.Contains("Error") || logText.Contains("Exception"))
             {
                 MessageBox.Show($"학습 중 파이썬 오류가 발생했습니다.\n로그 창을 확인해주세요.\n\n내용: {logText}", "학습 오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return;
             }
 
-            //  2. 로그 정리 및 안내 팝업
+            // 3. 로그 정리 및 안내 팝업 (저장 경로 및 다음 단계 상세 안내)
             if (logText.Contains("Saved model") || logText.Contains("Finished") || logText.Contains("Stopping early") || logText.ToLower().Contains("model saved"))
             {
-                // UI 정리 (진행률 바 0으로 초기화)
-                if (progressBarTrain != null)
-                {
-                    progressBarTrain.Value = 0;
-                }
+                if (progressBarTrain != null) progressBarTrain.Value = progressBarTrain.Maximum;
+                if (lblProgressPercent != null) lblProgressPercent.Text = "100%"; // 완료 시 100% 텍스트 강제 적용
 
-                // 로그 창에 구분선과 안내 멘트 추가
                 txtLog.AppendText(Environment.NewLine + "--------------------------------------------------");
                 txtLog.AppendText(Environment.NewLine + "✅ [학습 완료] AI 모델 생성이 끝났습니다.");
+                txtLog.AppendText(Environment.NewLine + $"📁 자동 저장 위치: {configPath}/models/mypilot.h5");
                 txtLog.AppendText(Environment.NewLine + "--------------------------------------------------" + Environment.NewLine);
 
-                // 팝업 알림 (다음 행동 지침 포함)
-                MessageBox.Show("🎉 AI 모델 학습이 무사히 완료되었습니다!\n\n[다음 단계]\n1. 하단의 '모델 선택'을 눌러 방금 학습된 모델(mypilot.h5)을 선택하세요.\n2. '테스트 이미지 선택'을 누르고 주행 데이터 폴더를 고르세요.\n3. '모델 테스트' 버튼을 눌러 AI가 예측 조향각을 잘 뽑아내는지 확인해보세요!", "학습 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show($"🎉 AI 모델 학습이 무사히 완료되었습니다!\n\n[자동 저장 위치]\n{configPath}/models/mypilot.h5\n\n[다음 단계 안내]\n1. 좌측의 [모델 선택] 버튼을 누르세요. (자동으로 세팅됩니다.)\n2. [테스트 이미지 선택]을 누르고 주행 데이터 폴더를 고르세요.\n3. [모델 테스트 실행] 버튼을 눌러 AI가 예측 조향각을 잘 뽑아내는지 확인해보세요!", "학습 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
 
-            // 3. Loss 값 추출 (그래프용 - 현재는 주석 처리됨)
+            // 4. Loss 값 추출 (그래프용 - 현재는 주석 처리됨)
             Match matchLoss = Regex.Match(logText, @"loss:\s*([0-9]*\.?[0-9]+)");
             if (matchLoss.Success)
             {
@@ -437,8 +438,7 @@ namespace DataManager
                 // chartLoss.Series["Loss"].Points.AddY(lossValue); 
             }
 
-            // 진행률 바 순간이동 버그 수정
-            // 앞쪽에 정확히 'Epoch'라는 단어가 있는 진짜 진행률만 캐치
+            // 5. 진행률 바 및 % 텍스트 정상화 (Epoch n/m 형태 감지)
             Match epochMatch = Regex.Match(logText, @"Epoch\s+(\d+)/(\d+)");
             if (epochMatch.Success && progressBarTrain != null)
             {
@@ -446,6 +446,13 @@ namespace DataManager
                 int total = int.Parse(epochMatch.Groups[2].Value);
                 progressBarTrain.Maximum = total;
                 progressBarTrain.Value = current <= total ? current : total;
+
+                // ★ 퍼센트 라벨 업데이트 로직 추가!
+                if (lblProgressPercent != null)
+                {
+                    int percent = (int)((double)current / total * 100);
+                    lblProgressPercent.Text = $"{percent}%";
+                }
             }
         }
 
@@ -519,7 +526,7 @@ namespace DataManager
             ShowTestImagePreview(FindFirstTestImagePath());
 
             bool useVenv = chkUseVenv != null ? chkUseVenv.Checked : true;
-            _executor.ExecuteTest(configPath, modelPath, useVenv, (log) =>
+            _executor.ExecuteTest(configPath, modelPath, testImagePath, useVenv, (log) =>
             {
                 this.Invoke(new Action(() => HandleModelTestLog(log)));
             });
@@ -2131,6 +2138,11 @@ namespace DataManager
         private void chkAutoPlay_CheckedChanged(object sender, EventArgs e)
         {
             UpdateAutoPlayLoopVisual();
+        }
+
+        private void picFrame_Click(object sender, EventArgs e)
+        {
+
         }
     }
 }
