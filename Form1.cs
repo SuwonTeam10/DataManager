@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
@@ -21,6 +22,12 @@ namespace DataManager
         private ICE.ICommandExecutor _executor;
         private string modelPath = "";
         private string testImagePath = "";
+        private string latestTestImagePath = "";
+        private double? latestTestRealAngle;
+        private double? latestTestPredictAngle;
+        private int currentFrameIndex = -1;
+        private readonly Dictionary<int, double> predictedAnglesByFrame = new();
+        private readonly Dictionary<string, double> predictedAnglesByImageName = new(StringComparer.OrdinalIgnoreCase);
         private string loggedInUser = "";
         private System.Windows.Forms.Timer playTimer;
         private bool _isUpdatingRadio = false;
@@ -89,6 +96,9 @@ namespace DataManager
             btnLast.Click += btnLast_Click;
             cmbPlaySpeed.SelectedIndexChanged += cmbPlaySpeed_SelectedIndexChanged;
             tabMain.SelectedIndexChanged += tabMain_SelectedIndexChanged;
+            picFrame.Paint += picFrame_Paint;
+            chkShowRealAngle.CheckedChanged += (_, _) => picFrame.Invalidate();
+            chkShowPredictAngle.CheckedChanged += (_, _) => picFrame.Invalidate();
             Resize += (_, _) => RedrawGraphAfterLayout();
 
             // 데이터 정리(범위 지정/필터/삭제/휴지통) 이벤트 연결
@@ -110,6 +120,7 @@ namespace DataManager
             lvTimeline.ShowItemToolTips = true;
 
             InitializeGraphControls();
+            picTestImage.SizeMode = PictureBoxSizeMode.Zoom;
         }
 
         private void Form1_Load(object sender, EventArgs e)
@@ -470,6 +481,7 @@ namespace DataManager
                 if (dlg.ShowDialog() == DialogResult.OK)
                 {
                     testImagePath = dlg.SelectedPath;
+                    ShowTestImagePreview(FindFirstTestImagePath());
                     MessageBox.Show($"테스트 이미지 폴더가 선택되었습니다:\n{testImagePath}", "선택 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
                     txtLog.AppendText(Environment.NewLine + $"[Info] 선택된 테스트 폴더: {testImagePath}");
                 }
@@ -503,12 +515,330 @@ namespace DataManager
             }
 
             txtLog.AppendText(Environment.NewLine + $"[Test] {Path.GetFileName(modelPath)} 예측 시작...");
+            ResetModelTestResult();
+            ShowTestImagePreview(FindFirstTestImagePath());
 
             bool useVenv = chkUseVenv != null ? chkUseVenv.Checked : true;
             _executor.ExecuteTest(configPath, modelPath, useVenv, (log) =>
             {
-                this.Invoke(new Action(() => { if (!string.IsNullOrEmpty(log)) txtLog.AppendText(Environment.NewLine + log); }));
+                this.Invoke(new Action(() => HandleModelTestLog(log)));
             });
+        }
+
+        private void ResetModelTestResult()
+        {
+            // 모델 테스트 시작 전 이전 결과를 지워서 새 로그 값만 보이게 한다.
+            latestTestImagePath = "";
+            latestTestRealAngle = null;
+            latestTestPredictAngle = null;
+            predictedAnglesByFrame.Clear();
+            predictedAnglesByImageName.Clear();
+            lblRealAngle2.Text = "-";
+            lblPredictAngle2.Text = "-";
+            lblErrorValue2.Text = "-";
+            lblTrainStatus2.Text = "테스트 중";
+            lblTrainStatus2.ForeColor = Color.DarkOrange;
+            picFrame.Invalidate();
+        }
+
+        private void HandleModelTestLog(string logText)
+        {
+            if (string.IsNullOrWhiteSpace(logText)) return;
+
+            txtLog.AppendText(Environment.NewLine + logText);
+
+            string? imagePath = TryFindImagePathFromLog(logText);
+            if (!string.IsNullOrWhiteSpace(imagePath))
+            {
+                ShowTestImagePreview(imagePath);
+            }
+
+            if (TryExtractLogValue(logText, new[]
+                {
+                    @"(?:real|actual|label|target|user/angle|실제\s*조향각|실제)\s*[:=]\s*(-?\d+(?:\.\d+)?)",
+                    @"^\s*angle\s*[:=]\s*(-?\d+(?:\.\d+)?)"
+                }, out double realAngle))
+            {
+                latestTestRealAngle = realAngle;
+                lblRealAngle2.Text = realAngle.ToString("0.000");
+            }
+
+            if (TryExtractLogValue(logText, new[]
+                {
+                    @"(?:predict(?:ed)?|prediction|pred|pilot/angle|예측\s*조향각|예측)\s*[:=]\s*(-?\d+(?:\.\d+)?)"
+                }, out double predictAngle))
+            {
+                latestTestPredictAngle = predictAngle;
+                lblPredictAngle2.Text = predictAngle.ToString("0.000");
+                StorePredictedAngleForImage(imagePath ?? latestTestImagePath, predictAngle);
+                picFrame.Invalidate();
+            }
+
+            if (TryExtractLogValue(logText, new[]
+                {
+                    @"(?:error|loss|diff|오차)\s*[:=]\s*(-?\d+(?:\.\d+)?)"
+                }, out double errorValue))
+            {
+                lblErrorValue2.Text = Math.Abs(errorValue).ToString("0.000");
+            }
+            else if (latestTestRealAngle.HasValue && latestTestPredictAngle.HasValue)
+            {
+                lblErrorValue2.Text = Math.Abs(latestTestRealAngle.Value - latestTestPredictAngle.Value).ToString("0.000");
+            }
+
+            if (logText.Contains("Finished", StringComparison.OrdinalIgnoreCase)
+                || logText.Contains("complete", StringComparison.OrdinalIgnoreCase)
+                || logText.Contains("완료", StringComparison.OrdinalIgnoreCase))
+            {
+                lblTrainStatus2.Text = "테스트 완료";
+                lblTrainStatus2.ForeColor = Color.Green;
+            }
+            else if (logText.Contains("Error", StringComparison.OrdinalIgnoreCase)
+                || logText.Contains("Exception", StringComparison.OrdinalIgnoreCase)
+                || logText.Contains("Traceback", StringComparison.OrdinalIgnoreCase))
+            {
+                lblTrainStatus2.Text = "오류";
+                lblTrainStatus2.ForeColor = Color.Red;
+            }
+        }
+
+        private string? FindFirstTestImagePath()
+        {
+            if (string.IsNullOrWhiteSpace(testImagePath) || !Directory.Exists(testImagePath)) return null;
+
+            try
+            {
+                return Directory.EnumerateFiles(testImagePath, "*.*", SearchOption.AllDirectories)
+                    .FirstOrDefault(IsImageFile);
+            }
+            catch (IOException)
+            {
+                return null;
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return null;
+            }
+        }
+
+        private string? TryFindImagePathFromLog(string logText)
+        {
+            Match match = Regex.Match(logText, @"(?<path>[^\s""']+\.(?:jpg|jpeg|png|bmp))", RegexOptions.IgnoreCase);
+            if (!match.Success) return null;
+
+            string rawPath = match.Groups["path"].Value.Trim();
+            if (File.Exists(rawPath)) return rawPath;
+
+            string normalizedPath = rawPath.Replace('/', Path.DirectorySeparatorChar);
+            if (File.Exists(normalizedPath)) return normalizedPath;
+
+            if (!string.IsNullOrWhiteSpace(testImagePath))
+            {
+                string byName = Path.Combine(testImagePath, Path.GetFileName(normalizedPath));
+                if (File.Exists(byName)) return byName;
+
+                if (Directory.Exists(testImagePath))
+                {
+                    try
+                    {
+                        return Directory.EnumerateFiles(testImagePath, Path.GetFileName(normalizedPath), SearchOption.AllDirectories)
+                            .FirstOrDefault();
+                    }
+                    catch (IOException)
+                    {
+                        return null;
+                    }
+                    catch (UnauthorizedAccessException)
+                    {
+                        return null;
+                    }
+                }
+            }
+
+            return null;
+        }
+
+        private void ShowTestImagePreview(string? imagePath)
+        {
+            if (string.IsNullOrWhiteSpace(imagePath) || !File.Exists(imagePath)) return;
+            if (string.Equals(latestTestImagePath, imagePath, StringComparison.OrdinalIgnoreCase)) return;
+
+            Image? oldImage = picTestImage.Image;
+            picTestImage.Image = LoadImage(imagePath);
+            oldImage?.Dispose();
+            latestTestImagePath = imagePath;
+        }
+
+        private static bool TryExtractLogValue(string logText, IEnumerable<string> patterns, out double value)
+        {
+            foreach (string pattern in patterns)
+            {
+                Match match = Regex.Match(logText, pattern, RegexOptions.IgnoreCase);
+                if (match.Success && TryParseLogDouble(match.Groups[1].Value, out value))
+                {
+                    return true;
+                }
+            }
+
+            value = 0;
+            return false;
+        }
+
+        private static bool TryParseLogDouble(string text, out double value)
+        {
+            return double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out value)
+                || double.TryParse(text, NumberStyles.Float, CultureInfo.CurrentCulture, out value);
+        }
+
+        private static bool IsImageFile(string path)
+        {
+            string extension = Path.GetExtension(path).ToLowerInvariant();
+            return extension is ".jpg" or ".jpeg" or ".png" or ".bmp";
+        }
+
+        private void StorePredictedAngleForImage(string? imagePath, double predictAngle)
+        {
+            // 테스트 로그의 이미지 파일명과 예측 조향각을 연결해 두고, 같은 프레임을 볼 때 오버레이로 그린다.
+            if (string.IsNullOrWhiteSpace(imagePath)) return;
+
+            string imageName = Path.GetFileName(imagePath);
+            if (!string.IsNullOrWhiteSpace(imageName))
+            {
+                predictedAnglesByImageName[imageName] = predictAngle;
+            }
+
+            if (TryFindTubFrameIndexByImagePath(imagePath, out int frameIndex))
+            {
+                predictedAnglesByFrame[frameIndex] = predictAngle;
+            }
+        }
+
+        private bool TryFindTubFrameIndexByImagePath(string imagePath, out int frameIndex)
+        {
+            string imageName = Path.GetFileName(imagePath);
+            for (int i = 0; i < tubFrames.Count; i++)
+            {
+                TubFrame frame = tubFrames[i];
+                if (string.Equals(frame.ImagePath, imagePath, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(Path.GetFileName(frame.ImagePath), imageName, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(Path.GetFileName(frame.ImageFileName), imageName, StringComparison.OrdinalIgnoreCase))
+                {
+                    frameIndex = i;
+                    return true;
+                }
+            }
+
+            frameIndex = -1;
+            return false;
+        }
+
+        private bool TryGetPredictedAngleForFrame(int frameIndex, TubFrame frame, out double predictAngle)
+        {
+            if (predictedAnglesByFrame.TryGetValue(frameIndex, out predictAngle)) return true;
+
+            string imagePathName = Path.GetFileName(frame.ImagePath);
+            if (!string.IsNullOrWhiteSpace(imagePathName)
+                && predictedAnglesByImageName.TryGetValue(imagePathName, out predictAngle))
+            {
+                return true;
+            }
+
+            string catalogImageName = Path.GetFileName(frame.ImageFileName);
+            return !string.IsNullOrWhiteSpace(catalogImageName)
+                && predictedAnglesByImageName.TryGetValue(catalogImageName, out predictAngle);
+        }
+
+        private void picFrame_Paint(object? sender, PaintEventArgs e)
+        {
+            if (picFrame.Image == null || currentFrameIndex < 0 || currentFrameIndex >= tubFrames.Count) return;
+
+            TubFrame frame = tubFrames[currentFrameIndex];
+            Rectangle imageBounds = GetZoomedImageBounds(picFrame);
+            if (imageBounds.Width <= 0 || imageBounds.Height <= 0) return;
+
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            e.Graphics.SetClip(imageBounds);
+
+            if (chkShowRealAngle.Checked)
+            {
+                DrawSteeringOverlayLine(e.Graphics, imageBounds, frame.Angle, Color.LimeGreen, "실제");
+            }
+
+            if (chkShowPredictAngle.Checked && TryGetPredictedAngleForFrame(currentFrameIndex, frame, out double predictAngle))
+            {
+                DrawSteeringOverlayLine(e.Graphics, imageBounds, predictAngle, Color.DeepSkyBlue, "예측");
+            }
+
+            e.Graphics.ResetClip();
+        }
+
+        private static Rectangle GetZoomedImageBounds(PictureBox pictureBox)
+        {
+            Image? image = pictureBox.Image;
+            if (image == null || pictureBox.ClientSize.Width <= 0 || pictureBox.ClientSize.Height <= 0)
+            {
+                return Rectangle.Empty;
+            }
+
+            double imageRatio = image.Width / (double)image.Height;
+            double boxRatio = pictureBox.ClientSize.Width / (double)pictureBox.ClientSize.Height;
+
+            int width;
+            int height;
+            if (imageRatio > boxRatio)
+            {
+                width = pictureBox.ClientSize.Width;
+                height = (int)Math.Round(width / imageRatio);
+            }
+            else
+            {
+                height = pictureBox.ClientSize.Height;
+                width = (int)Math.Round(height * imageRatio);
+            }
+
+            int x = (pictureBox.ClientSize.Width - width) / 2;
+            int y = (pictureBox.ClientSize.Height - height) / 2;
+            return new Rectangle(x, y, width, height);
+        }
+
+        private static void DrawSteeringOverlayLine(Graphics graphics, Rectangle imageBounds, double angle, Color color, string label)
+        {
+            double clampedAngle = Math.Clamp(angle, -1.0, 1.0);
+            PointF start = new PointF(imageBounds.Left + imageBounds.Width / 2f, imageBounds.Bottom - Math.Max(12, imageBounds.Height * 0.12f));
+            PointF end = new PointF(
+                start.X + (float)(clampedAngle * imageBounds.Width * 0.42),
+                imageBounds.Top + imageBounds.Height * 0.32f);
+
+            using Pen shadowPen = new Pen(Color.FromArgb(160, 0, 0, 0), 6)
+            {
+                StartCap = LineCap.Round,
+                EndCap = LineCap.Round
+            };
+            using Pen linePen = new Pen(color, 3)
+            {
+                StartCap = LineCap.Round,
+                EndCap = LineCap.ArrowAnchor
+            };
+
+            graphics.DrawLine(shadowPen, start, end);
+            graphics.DrawLine(linePen, start, end);
+
+            using Brush pointBrush = new SolidBrush(color);
+            graphics.FillEllipse(pointBrush, start.X - 5, start.Y - 5, 10, 10);
+
+            string text = $"{label} {angle:0.00}";
+            using Font font = new Font(SystemFonts.DefaultFont.FontFamily, 9, FontStyle.Bold);
+            SizeF textSize = graphics.MeasureString(text, font);
+            RectangleF labelBounds = new RectangleF(
+                Math.Clamp(end.X + 8, imageBounds.Left + 4, imageBounds.Right - textSize.Width - 10),
+                Math.Clamp(end.Y - textSize.Height - 4, imageBounds.Top + 4, imageBounds.Bottom - textSize.Height - 4),
+                textSize.Width + 6,
+                textSize.Height + 4);
+
+            using Brush labelBack = new SolidBrush(Color.FromArgb(180, 0, 0, 0));
+            using Brush labelText = new SolidBrush(Color.White);
+            graphics.FillRectangle(labelBack, labelBounds);
+            graphics.DrawString(text, font, labelText, labelBounds.Left + 3, labelBounds.Top + 2);
         }
 
         // ==========================================
@@ -824,10 +1154,12 @@ namespace DataManager
 
             // 캐시가 소유한 이미지를 표시한다. (캐시가 Dispose를 책임지므로 여기서 Dispose하지 않는다.)
             picFrame.Image = frameImageCache.Get(frame.ImagePath);
+            currentFrameIndex = index;
 
             if (!File.Exists(frame.ImagePath)) missingImageFrames.Add(index);
 
             UpdateFrameInfoLabels(frame, index);
+            picFrame.Invalidate();
         }
 
         private void UpdateFrameInfoLabels(TubFrame? frame, int index)
