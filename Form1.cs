@@ -5,6 +5,7 @@ using System.Drawing.Drawing2D;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
@@ -25,6 +26,7 @@ namespace DataManager
         private string latestTestImagePath = "";
         private double? latestTestRealAngle;
         private double? latestTestPredictAngle;
+        private readonly Dictionary<string, double> predictedAnglesByImageKey = new(StringComparer.OrdinalIgnoreCase);
         private string loggedInUser = "";
         private System.Windows.Forms.Timer playTimer;
         private bool _isUpdatingRadio = false;
@@ -35,10 +37,16 @@ namespace DataManager
         private readonly List<TubFrame> tubFrames = new();
         private readonly HashSet<int> missingImageFrames = new();
         private readonly ImageList timelineImages = new();
-        private const int TimelineVisibleCount = 20;
+        private const int TimelineMinimumVisibleCount = 20;
+        private const int TimelineMaximumVisibleCount = 60;
+        private const int TimelineThumbWidth = 48;
+        private const int TimelineThumbHeight = 36;
+        private const int TimelineIconSpacingX = 56;
+        private const int TimelineIconSpacingY = 44;
         private const int PlaybackBaseIntervalMs = 100;
         private const int PlaybackMinimumIntervalMs = 50;
         private int currentTimelineStart = -1;
+        private int currentTimelineVisibleCount = -1;
         private bool isUpdatingTimelineSelection;
         private int playbackFrameStep = 1;
 
@@ -94,6 +102,9 @@ namespace DataManager
             cmbPlaySpeed.SelectedIndexChanged += cmbPlaySpeed_SelectedIndexChanged;
             tabMain.SelectedIndexChanged += tabMain_SelectedIndexChanged;
             Resize += (_, _) => RedrawGraphAfterLayout();
+            picFrame.Paint += picFrame_Paint;
+            chkShowRealAngle.CheckedChanged += (_, _) => picFrame.Invalidate();
+            chkShowPredictAngle.CheckedChanged += (_, _) => picFrame.Invalidate();
 
             // 데이터 정리(범위 지정/필터/삭제/휴지통) 이벤트 연결
             btnSetLeft.Click += btnSetLeft_Click;
@@ -105,13 +116,20 @@ namespace DataManager
             lstTrash.SelectionMode = SelectionMode.MultiExtended;
 
             // 타임라인 썸네일 이미지 리스트 설정
-            timelineImages.ImageSize = new Size(36, 27);
+            timelineImages.ImageSize = new Size(TimelineThumbWidth, TimelineThumbHeight);
             timelineImages.ColorDepth = ColorDepth.Depth32Bit;
             lvTimeline.LargeImageList = timelineImages;
             lvTimeline.View = View.LargeIcon;
+            lvTimeline.Alignment = ListViewAlignment.Left;
+            lvTimeline.AutoArrange = true;
+            lvTimeline.LabelWrap = false;
+            lvTimeline.Scrollable = false;
             lvTimeline.HideSelection = false;
             lvTimeline.MultiSelect = false;
             lvTimeline.ShowItemToolTips = true;
+            lvTimeline.HandleCreated += (_, _) => ApplyTimelineIconSpacing();
+            lvTimeline.Resize += (_, _) => ReloadTimelineForCurrentFrame();
+            ApplyTimelineIconSpacing();
 
             InitializeGraphControls();
             picTestImage.SizeMode = PictureBoxSizeMode.Zoom;
@@ -532,6 +550,7 @@ namespace DataManager
             latestTestImagePath = "";
             latestTestRealAngle = null;
             latestTestPredictAngle = null;
+            predictedAnglesByImageKey.Clear();
             lblRealAngle2.Text = "-";
             lblPredictAngle2.Text = "-";
             lblErrorValue2.Text = "-";
@@ -545,6 +564,7 @@ namespace DataManager
 
             txtLog.AppendText(Environment.NewLine + logText);
 
+            string? imageReference = TryFindImageReferenceFromLog(logText);
             string? imagePath = TryFindImagePathFromLog(logText);
             if (!string.IsNullOrWhiteSpace(imagePath))
             {
@@ -568,6 +588,8 @@ namespace DataManager
             {
                 latestTestPredictAngle = predictAngle;
                 lblPredictAngle2.Text = predictAngle.ToString("0.000");
+                StorePredictedAngleForImage(imagePath ?? imageReference ?? latestTestImagePath, predictAngle);
+                picFrame.Invalidate();
             }
 
             if (TryExtractLogValue(logText, new[]
@@ -619,10 +641,8 @@ namespace DataManager
 
         private string? TryFindImagePathFromLog(string logText)
         {
-            Match match = Regex.Match(logText, @"(?<path>[^\s""']+\.(?:jpg|jpeg|png|bmp))", RegexOptions.IgnoreCase);
-            if (!match.Success) return null;
-
-            string rawPath = match.Groups["path"].Value.Trim();
+            string? rawPath = TryFindImageReferenceFromLog(logText);
+            if (string.IsNullOrWhiteSpace(rawPath)) return null;
             if (File.Exists(rawPath)) return rawPath;
 
             string normalizedPath = rawPath.Replace('/', Path.DirectorySeparatorChar);
@@ -652,6 +672,45 @@ namespace DataManager
             }
 
             return null;
+        }
+
+        private static string? TryFindImageReferenceFromLog(string logText)
+        {
+            Match match = Regex.Match(logText, @"(?<path>[^\s""']+\.(?:jpg|jpeg|png|bmp))", RegexOptions.IgnoreCase);
+            return match.Success ? match.Groups["path"].Value.Trim() : null;
+        }
+
+        private void StorePredictedAngleForImage(string? imagePath, double predictAngle)
+        {
+            foreach (string key in GetImagePredictionKeys(imagePath))
+            {
+                predictedAnglesByImageKey[key] = predictAngle;
+            }
+        }
+
+        private bool TryGetPredictedAngleForFrame(TubFrame frame, out double predictAngle)
+        {
+            foreach (string key in GetImagePredictionKeys(frame.ImagePath).Concat(GetImagePredictionKeys(frame.ImageFileName)))
+            {
+                if (predictedAnglesByImageKey.TryGetValue(key, out predictAngle))
+                {
+                    return true;
+                }
+            }
+
+            predictAngle = 0;
+            return false;
+        }
+
+        private static IEnumerable<string> GetImagePredictionKeys(string? imagePath)
+        {
+            if (string.IsNullOrWhiteSpace(imagePath)) yield break;
+
+            string normalized = imagePath.Trim().Replace('/', Path.DirectorySeparatorChar);
+            yield return normalized;
+
+            string fileName = Path.GetFileName(normalized);
+            if (!string.IsNullOrWhiteSpace(fileName)) yield return fileName;
         }
 
         private void ShowTestImagePreview(string? imagePath)
@@ -958,17 +1017,19 @@ namespace DataManager
 
         private void UpdateTimelineForFrame(int frameIndex)
         {
-            int timelineStart = (frameIndex / TimelineVisibleCount) * TimelineVisibleCount;
-            if (timelineStart == currentTimelineStart) return;
+            int visibleCount = GetTimelineVisibleCount();
+            int timelineStart = (frameIndex / visibleCount) * visibleCount;
+            if (timelineStart == currentTimelineStart && visibleCount == currentTimelineVisibleCount) return;
 
             currentTimelineStart = timelineStart;
+            currentTimelineVisibleCount = visibleCount;
             lvTimeline.BeginUpdate();
             lvTimeline.Items.Clear();
             timelineImages.Images.Clear();
 
             try
             {
-                int timelineEnd = Math.Min(tubFrames.Count, timelineStart + TimelineVisibleCount);
+                int timelineEnd = Math.Min(tubFrames.Count, timelineStart + visibleCount);
                 for (int i = timelineStart; i < timelineEnd; i++)
                 {
                     TubFrame frame = tubFrames[i];
@@ -978,6 +1039,24 @@ namespace DataManager
                 }
             }
             finally { lvTimeline.EndUpdate(); }
+        }
+
+        private int GetTimelineVisibleCount()
+        {
+            int availableWidth = Math.Max(0, lvTimeline.ClientSize.Width - 8);
+            int countByWidth = availableWidth / TimelineIconSpacingX;
+            return Math.Clamp(countByWidth, TimelineMinimumVisibleCount, TimelineMaximumVisibleCount);
+        }
+
+        private void ReloadTimelineForCurrentFrame()
+        {
+            ApplyTimelineIconSpacing();
+            if (tubFrames.Count == 0) return;
+
+            currentTimelineStart = -1;
+            currentTimelineVisibleCount = -1;
+            int frameIndex = Math.Min(trackFrame.Value, tubFrames.Count - 1);
+            UpdateTimelineForFrame(frameIndex);
         }
 
         private void ShowFrame(int index)
@@ -1009,6 +1088,84 @@ namespace DataManager
             if (!File.Exists(frame.ImagePath)) missingImageFrames.Add(index);
 
             UpdateFrameInfoLabels(frame, index);
+            picFrame.Invalidate();
+        }
+
+        private void picFrame_Paint(object? sender, PaintEventArgs e)
+        {
+            if (picFrame.Image == null || trackFrame.Value < 0 || trackFrame.Value >= tubFrames.Count) return;
+
+            Rectangle imageRect = GetZoomedImageRectangle(picFrame);
+            if (imageRect.Width <= 0 || imageRect.Height <= 0) return;
+
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+
+            TubFrame frame = tubFrames[trackFrame.Value];
+            if (chkShowRealAngle.Checked)
+            {
+                DrawSteeringAngleLine(e.Graphics, imageRect, frame.Angle, Color.LimeGreen, "실제");
+            }
+
+            if (chkShowPredictAngle.Checked && TryGetPredictedAngleForFrame(frame, out double framePredictAngle))
+            {
+                DrawSteeringAngleLine(e.Graphics, imageRect, framePredictAngle, Color.DeepSkyBlue, "예측");
+            }
+        }
+
+        private static Rectangle GetZoomedImageRectangle(PictureBox pictureBox)
+        {
+            if (pictureBox.Image == null) return Rectangle.Empty;
+
+            float imageRatio = (float)pictureBox.Image.Width / pictureBox.Image.Height;
+            float boxRatio = (float)pictureBox.ClientSize.Width / pictureBox.ClientSize.Height;
+
+            if (imageRatio > boxRatio)
+            {
+                int width = pictureBox.ClientSize.Width;
+                int height = (int)(width / imageRatio);
+                int top = (pictureBox.ClientSize.Height - height) / 2;
+                return new Rectangle(0, top, width, height);
+            }
+            else
+            {
+                int height = pictureBox.ClientSize.Height;
+                int width = (int)(height * imageRatio);
+                int left = (pictureBox.ClientSize.Width - width) / 2;
+                return new Rectangle(left, 0, width, height);
+            }
+        }
+
+        private static void DrawSteeringAngleLine(Graphics graphics, Rectangle imageRect, double angle, Color color, string label)
+        {
+            double clampedAngle = Math.Clamp(angle, -1.0, 1.0);
+            PointF start = new PointF(imageRect.Left + imageRect.Width / 2f, imageRect.Bottom - imageRect.Height * 0.12f);
+            float lineLength = imageRect.Height * 0.45f;
+            float endX = start.X + (float)(clampedAngle * imageRect.Width * 0.35);
+            float endY = start.Y - lineLength;
+            PointF end = new PointF(endX, endY);
+
+            using Pen shadowPen = new Pen(Color.FromArgb(150, Color.Black), 7)
+            {
+                StartCap = LineCap.Round,
+                EndCap = LineCap.Round
+            };
+            using Pen linePen = new Pen(color, 4)
+            {
+                StartCap = LineCap.Round,
+                EndCap = LineCap.Round
+            };
+
+            graphics.DrawLine(shadowPen, start, end);
+            graphics.DrawLine(linePen, start, end);
+
+            using Brush textBack = new SolidBrush(Color.FromArgb(170, Color.Black));
+            using Brush textBrush = new SolidBrush(Color.White);
+            using Font font = new Font("나눔고딕", 9F, FontStyle.Bold);
+            string text = $"{label} {angle:0.000}";
+            SizeF textSize = graphics.MeasureString(text, font);
+            RectangleF labelRect = new RectangleF(end.X + 8, end.Y - textSize.Height / 2, textSize.Width + 8, textSize.Height + 4);
+            graphics.FillRectangle(textBack, labelRect);
+            graphics.DrawString(text, font, textBrush, labelRect.Left + 4, labelRect.Top + 2);
         }
 
         private void UpdateFrameInfoLabels(TubFrame? frame, int index)
@@ -1120,17 +1277,35 @@ namespace DataManager
         {
             if (!File.Exists(imagePath))
             {
-                Bitmap missing = new Bitmap(36, 27);
+                Bitmap missing = new Bitmap(TimelineThumbWidth, TimelineThumbHeight);
                 using Graphics graphics = Graphics.FromImage(missing);
                 graphics.Clear(Color.Black);
                 using Pen pen = new Pen(Color.DarkGray);
-                graphics.DrawRectangle(pen, 0, 0, 35, 26);
+                graphics.DrawRectangle(pen, 0, 0, TimelineThumbWidth - 1, TimelineThumbHeight - 1);
                 return missing;
             }
             using FileStream stream = new FileStream(imagePath, FileMode.Open, FileAccess.Read);
             using Image source = Image.FromStream(stream);
-            return new Bitmap(source, new Size(36, 27));
+            return new Bitmap(source, new Size(TimelineThumbWidth, TimelineThumbHeight));
         }
+
+        // ListView 기본 큰 아이콘 간격이 넓어서 썸네일이 한 줄에 촘촘히 보이도록 직접 조정한다.
+        private void ApplyTimelineIconSpacing()
+        {
+            if (!lvTimeline.IsHandleCreated) return;
+            SendMessage(lvTimeline.Handle, LvmSetIconSpacing, IntPtr.Zero, MakeLParam(TimelineIconSpacingX, TimelineIconSpacingY));
+        }
+
+        private static IntPtr MakeLParam(int lowWord, int highWord)
+        {
+            return (IntPtr)((highWord << 16) | (lowWord & 0xffff));
+        }
+
+        private const int LvmFirst = 0x1000;
+        private const int LvmSetIconSpacing = LvmFirst + 53;
+
+        [DllImport("user32.dll", CharSet = CharSet.Auto)]
+        private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
 
         private static string GetStringValue(JsonElement root, string propertyName)
         {
