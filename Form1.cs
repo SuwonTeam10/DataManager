@@ -31,8 +31,11 @@ namespace DataManager
         private readonly HashSet<int> missingImageFrames = new();
         private readonly ImageList timelineImages = new();
         private const int TimelineVisibleCount = 20;
+        private const int PlaybackBaseIntervalMs = 100;
+        private const int PlaybackMinimumIntervalMs = 50;
         private int currentTimelineStart = -1;
         private bool isUpdatingTimelineSelection;
+        private int playbackFrameStep = 1;
 
         // 데이터 정리(필터/삭제) 대상 범위. -1은 미지정.
         private int rangeStart = -1;
@@ -73,6 +76,7 @@ namespace DataManager
             btnPrev.Click += btnPrev_Click;
             btnNext.Click += btnNext_Click;
             btnLast.Click += btnLast_Click;
+            cmbPlaySpeed.SelectedIndexChanged += cmbPlaySpeed_SelectedIndexChanged;
 
             // 데이터 정리(범위 지정/필터/삭제/휴지통) 이벤트 연결
             btnSetLeft.Click += btnSetLeft_Click;
@@ -107,7 +111,10 @@ namespace DataManager
             }
 
             // 기본 재생속도 1x로 설정
-            cmbPlaySpeed.SelectedIndex = 0;
+            if (cmbPlaySpeed.SelectedIndex < 0) cmbPlaySpeed.SelectedIndex = 0;
+            ApplyPlaybackSpeed();
+            UpdatePlaybackControlsVisual(false);
+            UpdateAutoPlayLoopVisual();
         }
 
         // 상단 메뉴바 자동 생성기 (UI/UX 패치)
@@ -496,13 +503,7 @@ namespace DataManager
         {
             try
             {
-                if (tubFrames.Count == 0) return;
-                if (playTimer.Enabled) playTimer.Stop();
-                else
-                {
-                    if (trackFrame.Value == trackFrame.Maximum) trackFrame.Value = 0;
-                    playTimer.Start();
-                }
+                SetPlaybackState(!playTimer.Enabled);
             }
             catch (Exception ex)
             {
@@ -512,9 +513,24 @@ namespace DataManager
 
         private void PlayTimer_Tick(object? sender, EventArgs e)
         {
-            // 다음 유효(미삭제) 프레임으로 직접 이동. 슬라이더 값만 바꾸면 화면이 갱신되지 않으므로 ShowFrame을 호출한다.
-            int next = NextActiveIndex(trackFrame.Value);
-            if (next < 0) { playTimer.Stop(); return; }
+            // 재생 중에는 트랙바 값만 바꾸지 않고 ShowFrame을 호출해서 이미지/라벨/목록 선택까지 같이 갱신한다.
+            int next = AdvanceActiveIndex(trackFrame.Value, playbackFrameStep);
+            if (next < 0)
+            {
+                if (chkAutoPlay.Checked)
+                {
+                    int firstActive = FirstActiveIndex();
+                    if (firstActive >= 0)
+                    {
+                        ShowFrame(firstActive);
+                        return;
+                    }
+                }
+
+                SetPlaybackState(false);
+                return;
+            }
+
             ShowFrame(next);
         }
 
@@ -546,6 +562,8 @@ namespace DataManager
 
         private async Task LoadTubAsync(string selectedTubPath)
         {
+            SetPlaybackState(false);
+
             // 신버전 Tub은 catalog_*.catalog, 구버전 Tub은 record_*.json 파일을 사용한다.
             // 사용자가 data 폴더를 선택해도 내부 tub 폴더를 찾을 수 있도록 하위 폴더까지 검색한다.
             string[] catalogFiles = Directory.GetFiles(selectedTubPath, "catalog_*.catalog", SearchOption.AllDirectories)
@@ -934,6 +952,22 @@ namespace DataManager
             for (int i = from + 1; i < tubFrames.Count; i++)
                 if (!tubFrames[i].Deleted) return i;
             return -1;
+        }
+
+        private int AdvanceActiveIndex(int from, int frameStep)
+        {
+            // 고배속에서는 UI 타이머를 너무 촘촘하게 돌리지 않고, 한 번에 여러 유효 프레임을 진행해 렉을 줄인다.
+            int current = from;
+            int steps = Math.Max(1, frameStep);
+
+            for (int i = 0; i < steps; i++)
+            {
+                int next = NextActiveIndex(current);
+                if (next < 0) return i == 0 ? -1 : current;
+                current = next;
+            }
+
+            return current;
         }
 
         private int PrevActiveIndex(int from)
@@ -1361,20 +1395,72 @@ namespace DataManager
 
         }
 
+        private void cmbPlaySpeed_SelectedIndexChanged(object? sender, EventArgs e)
+        {
+            ApplyPlaybackSpeed();
+        }
+
+        private void SetPlaybackState(bool shouldPlay)
+        {
+            bool isPlaying = shouldPlay && StartPlayback();
+            if (!isPlaying) StopPlayback();
+            UpdatePlaybackControlsVisual(isPlaying);
+        }
+
+        private bool StartPlayback()
+        {
+            if (tubFrames.Count == 0) return false;
+
+            int firstActive = FirstActiveIndex();
+            if (firstActive < 0) return false;
+
+            // 마지막 프레임에서 재생 버튼을 누르면 처음 유효 프레임부터 다시 시작한다.
+            if (NextActiveIndex(trackFrame.Value) < 0)
+            {
+                ShowFrame(firstActive);
+            }
+
+            ApplyPlaybackSpeed();
+            playTimer.Start();
+            return true;
+        }
+
+        private void StopPlayback()
+        {
+            playTimer.Stop();
+        }
+
+        private void ApplyPlaybackSpeed()
+        {
+            int speed = GetSelectedPlaybackSpeed();
+            double targetInterval = PlaybackBaseIntervalMs / (double)speed;
+
+            playTimer.Interval = Math.Max(PlaybackMinimumIntervalMs, (int)Math.Round(targetInterval));
+            playbackFrameStep = Math.Max(1, (int)Math.Ceiling(playTimer.Interval / targetInterval));
+        }
+
+        private int GetSelectedPlaybackSpeed()
+        {
+            string speedText = cmbPlaySpeed.SelectedItem?.ToString() ?? "1x";
+            speedText = speedText.Trim().TrimEnd('x', 'X');
+            return int.TryParse(speedText, out int speed) ? Math.Clamp(speed, 1, 8) : 1;
+        }
+
+        private void UpdatePlaybackControlsVisual(bool isPlaying)
+        {
+            btnPlayStop.Text = isPlaying ? "정지" : "재생";
+            btnPlayStop.Image = isPlaying ? Properties.Resources.icons8_stop_30 : Properties.Resources.icons8_play_30;
+        }
+
+        private void UpdateAutoPlayLoopVisual()
+        {
+            chkAutoPlay.BackColor = chkAutoPlay.Checked ? Color.FromArgb(59, 130, 246) : Color.White;
+            chkAutoPlay.ForeColor = chkAutoPlay.Checked ? Color.White : Color.Black;
+        }
+
         private void chkAutoPlay_CheckedChanged(object sender, EventArgs e)
         {
-            if (chkAutoPlay.Checked)
-            {
-                chkAutoPlay.BackColor =
-                    Color.FromArgb(59, 130, 246);
-
-                chkAutoPlay.ForeColor = Color.White;
-            }
-            else
-            {
-                chkAutoPlay.BackColor = Color.White;
-                chkAutoPlay.ForeColor = Color.Black;
-            }
+            UpdateAutoPlayLoopVisual();
         }
     }
 }
