@@ -32,9 +32,14 @@ namespace DataManager
         private readonly ImageList timelineImages = new();
         private const int TimelineVisibleCount = 20;
         private int currentTimelineStart = -1;
-        private int missingImageScanVersion;
         private bool isUpdatingTimelineSelection;
 
+        // 데이터 정리(필터/삭제) 대상 범위. -1은 미지정.
+        private int rangeStart = -1;
+        private int rangeEnd = -1;
+
+        // 자동 재생 성능을 위한 표시용 이미지 LRU 캐시(메모리 상한 적용). 캐시가 Bitmap 소유권을 가진다.
+        private readonly FrameImageCache frameImageCache;
         // ==========================================
         // 1. 초기화 및 생성자
         // ==========================================
@@ -53,6 +58,9 @@ namespace DataManager
             playTimer.Interval = 100; // 0.1초 간격
             playTimer.Tick += PlayTimer_Tick;
 
+            // 표시용 이미지 캐시 초기화 (최근 64프레임 유지)
+            frameImageCache = new FrameImageCache(64, LoadImage);
+
             // 상단 메뉴바 동적 생성
             CreateTopMenu();
 
@@ -65,7 +73,15 @@ namespace DataManager
             btnPrev.Click += btnPrev_Click;
             btnNext.Click += btnNext_Click;
             btnLast.Click += btnLast_Click;
+
+            // 데이터 정리(범위 지정/필터/삭제/휴지통) 이벤트 연결
+            btnSetLeft.Click += btnSetLeft_Click;
+            btnSetRight.Click += btnSetRight_Click;
             btnFilter.Click += btnFilter_Click;
+            btnDelete.Click += btnDelete_Click;
+            btnRestore.Click += btnRestore_Click;
+            btnEmptyTrash.Click += btnEmptyTrash_Click;
+            lstTrash.SelectionMode = SelectionMode.MultiExtended;
 
             // 타임라인 썸네일 이미지 리스트 설정
             timelineImages.ImageSize = new Size(36, 27);
@@ -494,15 +510,18 @@ namespace DataManager
             }
         }
 
-        private void PlayTimer_Tick(object sender, EventArgs e)
+        private void PlayTimer_Tick(object? sender, EventArgs e)
         {
-            if (trackFrame.Value < trackFrame.Maximum) trackFrame.Value++;
-            else playTimer.Stop();
+            // 다음 유효(미삭제) 프레임으로 직접 이동. 슬라이더 값만 바꾸면 화면이 갱신되지 않으므로 ShowFrame을 호출한다.
+            int next = NextActiveIndex(trackFrame.Value);
+            if (next < 0) { playTimer.Stop(); return; }
+            ShowFrame(next);
         }
 
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
             if (_executor != null) _executor.Stop();
+            frameImageCache.Clear();
             base.OnFormClosing(e);
         }
 
@@ -561,13 +580,15 @@ namespace DataManager
 
             tubFrames.Clear();
             missingImageFrames.Clear();
-            missingImageScanVersion++;
             currentTimelineStart = -1;
             lstTrash.Items.Clear();
             lstFrames.Items.Clear();
             lvTimeline.Items.Clear();
-            picFrame.Image?.Dispose();
             picFrame.Image = null;
+            frameImageCache.Clear();
+            rangeStart = -1;
+            rangeEnd = -1;
+            UpdateRangeLabel();
 
             try
             {
@@ -581,14 +602,9 @@ namespace DataManager
 
                 if (tubFrames.Count > 0) ShowFrame(0);
                 foreach (string error in result.Errors) AddLog(error);
-
-                // 1. 팀원의 상세 로그 메시지 적용
                 AddLog($"Load Tub 완료: {tubFrames.Count}개 프레임 ({(isOldRecordTub ? "구버전 record JSON" : "catalog")} 형식)");
 
-                // 2. 팀원의 누락 이미지 백그라운드 검사 로직 적용
-                _ = CheckMissingImagesAsync();
-
-                // 3. 인성님의 친절한 순차적 안내 팝업창 적용
+                // 순차적 안내 팝업창
                 MessageBox.Show($"주행 데이터 {tubFrames.Count}장을 성공적으로 불러왔습니다!\n\n[다음 단계 안내]\n1. 화면 하단의 슬라이더를 움직여 비정상적인 주행 사진이 있는지 확인하세요.\n2. 필요하다면 데이터 필터링/삭제 기능을 이용해 정리하세요.\n3. 정리가 완료되었다면 좌측 하단의 [학습] 버튼을 눌러 AI 훈련을 시작하세요.", "데이터 로드 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
             catch (Exception ex)
@@ -770,137 +786,14 @@ namespace DataManager
                 isUpdatingTimelineSelection = false;
             }
 
-            picFrame.Image?.Dispose();
-            picFrame.Image = LoadImage(frame.ImagePath);
+            // 캐시가 소유한 이미지를 표시한다. (캐시가 Dispose를 책임지므로 여기서 Dispose하지 않는다.)
+            picFrame.Image = frameImageCache.Get(frame.ImagePath);
 
-            if (!File.Exists(frame.ImagePath) && missingImageFrames.Add(index))
-            {
-                lstTrash.Items.Add($"{frame}: missing image");
-            }
+            if (!File.Exists(frame.ImagePath)) missingImageFrames.Add(index);
 
             lblFrame.Text = $"프레임: {frame.FrameNumber:D6}";
             lblAngle.Text = $"조향각: {frame.Angle:0.00}";
             lblThrottle.Text = $"속도: {frame.Throttle:0.00}";
-        }
-
-        private async Task CheckMissingImagesAsync()
-        {
-            // Load Tub 직후 UI를 먼저 보여주고, 이미지 누락 검사는 백그라운드에서 천천히 수행한다.
-            int scanVersion = missingImageScanVersion;
-            List<TubFrame> framesSnapshot = tubFrames.ToList();
-
-            for (int i = 0; i < framesSnapshot.Count; i++)
-            {
-                int frameIndex = i;
-                TubFrame frame = framesSnapshot[i];
-                bool isMissing = await Task.Run(() => !File.Exists(frame.ImagePath));
-
-                if (scanVersion != missingImageScanVersion || frameIndex >= tubFrames.Count || !ReferenceEquals(frame, tubFrames[frameIndex]))
-                {
-                    return;
-                }
-
-                if (isMissing && missingImageFrames.Add(frameIndex))
-                {
-                    lstTrash.Items.Add($"{frame}: missing image");
-                }
-
-                if (frameIndex % 50 == 0)
-                {
-                    await Task.Yield();
-                }
-            }
-        }
-
-        private async void btnFilter_Click(object sender, EventArgs e)
-        {
-            // 체크박스로 선택한 조건에 맞는 프레임을 찾아 삭제 후보 목록(lstTrash)에 표시한다.
-            if (tubFrames.Count == 0)
-            {
-                MessageBox.Show("먼저 Tub 데이터를 불러오세요.", "필터 적용", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                return;
-            }
-
-            if (!chkThrottleZero.Checked && !chkMissingImage.Checked && !chkAbnormalAngle.Checked)
-            {
-                MessageBox.Show("적용할 필터 조건을 선택하세요.", "필터 적용", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                return;
-            }
-
-            btnFilter.Enabled = false;
-            UseWaitCursor = true;
-            lstTrash.Items.Clear();
-
-            try
-            {
-                bool filterThrottleZero = chkThrottleZero.Checked;
-                bool filterMissingImage = chkMissingImage.Checked;
-                bool filterAbnormalAngle = chkAbnormalAngle.Checked;
-                List<TubFrame> framesSnapshot = tubFrames.ToList();
-                HashSet<int> missingImageFramesSnapshot = missingImageFrames.ToHashSet();
-
-                List<string> filterResults = await Task.Run(() =>
-                    BuildFilterResults(framesSnapshot, missingImageFramesSnapshot, filterThrottleZero, filterMissingImage, filterAbnormalAngle));
-
-                lstTrash.Items.AddRange(filterResults.Cast<object>().ToArray());
-                AddLog($"필터 적용 완료: {filterResults.Count}개 프레임");
-            }
-            finally
-            {
-                UseWaitCursor = false;
-                btnFilter.Enabled = true;
-            }
-        }
-
-        private static List<string> BuildFilterResults(
-            List<TubFrame> frames,
-            HashSet<int> missingImageFramesSnapshot,
-            bool filterThrottleZero,
-            bool filterMissingImage,
-            bool filterAbnormalAngle)
-        {
-            // 실제 삭제는 하지 않고, 조건에 해당하는 프레임과 사유만 계산한다.
-            List<string> filterResults = new();
-
-            for (int i = 0; i < frames.Count; i++)
-            {
-                TubFrame frame = frames[i];
-                List<string> reasons = new();
-
-                if (filterThrottleZero && IsThrottleZero(frame.Throttle))
-                {
-                    reasons.Add("throttle = 0");
-                }
-
-                if (filterMissingImage && missingImageFramesSnapshot.Contains(i))
-                {
-                    reasons.Add("missing image");
-                }
-
-                if (filterAbnormalAngle && IsAbnormalAngle(frame.Angle))
-                {
-                    reasons.Add("abnormal angle");
-                }
-
-                if (reasons.Count > 0)
-                {
-                    filterResults.Add($"{frame}: {string.Join(", ", reasons)}");
-                }
-            }
-
-            return filterResults;
-        }
-
-        private static bool IsThrottleZero(double throttle)
-        {
-            // 부동소수점 오차를 고려해 0에 매우 가까운 값도 정지 데이터로 판단한다.
-            return Math.Abs(throttle) < 0.000001;
-        }
-
-        private static bool IsAbnormalAngle(double angle)
-        {
-            // Donkeycar 조향값은 일반적으로 -1.0 ~ 1.0 범위를 사용하므로 이 범위를 벗어나면 비정상으로 본다.
-            return double.IsNaN(angle) || double.IsInfinity(angle) || angle < -1.0 || angle > 1.0;
         }
 
         private static string GetImageBasePath(string selectedTubPath)
@@ -1030,15 +923,359 @@ namespace DataManager
         private void lstFrames_SelectedIndexChanged(object sender, EventArgs e) => ShowFrame(lstFrames.SelectedIndex);
         private void lvTimeline_SelectedIndexChanged(object sender, EventArgs e) { if (!isUpdatingTimelineSelection && lvTimeline.SelectedItems.Count > 0 && lvTimeline.SelectedItems[0].Tag is int index) ShowFrame(index); }
         private void trackFrame_Scroll(object sender, EventArgs e) => ShowFrame(trackFrame.Value);
-        private void btnFirst_Click(object sender, EventArgs e) => ShowFrame(0);
-        private void btnPrev_Click(object sender, EventArgs e) => ShowFrame(Math.Max(0, trackFrame.Value - 1));
-        private void btnNext_Click(object sender, EventArgs e) => ShowFrame(Math.Min(tubFrames.Count - 1, trackFrame.Value + 1));
-        private void btnLast_Click(object sender, EventArgs e) => ShowFrame(tubFrames.Count - 1);
+        private void btnFirst_Click(object? sender, EventArgs e) { int i = FirstActiveIndex(); if (i >= 0) ShowFrame(i); }
+        private void btnPrev_Click(object? sender, EventArgs e) { int i = PrevActiveIndex(trackFrame.Value); if (i >= 0) ShowFrame(i); }
+        private void btnNext_Click(object? sender, EventArgs e) { int i = NextActiveIndex(trackFrame.Value); if (i >= 0) ShowFrame(i); }
+        private void btnLast_Click(object? sender, EventArgs e) { int i = LastActiveIndex(); if (i >= 0) ShowFrame(i); }
+
+        // 삭제된 프레임을 건너뛰는 탐색 도우미
+        private int NextActiveIndex(int from)
+        {
+            for (int i = from + 1; i < tubFrames.Count; i++)
+                if (!tubFrames[i].Deleted) return i;
+            return -1;
+        }
+
+        private int PrevActiveIndex(int from)
+        {
+            for (int i = from - 1; i >= 0; i--)
+                if (!tubFrames[i].Deleted) return i;
+            return -1;
+        }
+
+        private int FirstActiveIndex()
+        {
+            for (int i = 0; i < tubFrames.Count; i++)
+                if (!tubFrames[i].Deleted) return i;
+            return -1;
+        }
+
+        private int LastActiveIndex()
+        {
+            for (int i = tubFrames.Count - 1; i >= 0; i--)
+                if (!tubFrames[i].Deleted) return i;
+            return -1;
+        }
 
         // 안 쓰는 빈 이벤트 모음 (에러 방지용)
         private void lblConfigPath_Click(object sender, EventArgs e) { }
         private void groupTubNavigator_Enter(object sender, EventArgs e) { }
         private void lvTimeline_SelectedIndexChanged_1(object sender, EventArgs e) { }
+
+        // ==========================================
+        // 5. 데이터 정리: 휴지통(삭제 상태) 관리
+        // ==========================================
+        // 프레임을 휴지통으로 이동(소프트 삭제). 실제 파일은 휴지통 비우기 시점까지 유지한다.
+        private bool MoveToTrash(int index, string reason)
+        {
+            if (index < 0 || index >= tubFrames.Count) return false;
+            TubFrame frame = tubFrames[index];
+            if (frame.Deleted) return false;
+            frame.Deleted = true;
+            frame.DeleteReason = reason;
+            RefreshFrameListItem(index);
+            return true;
+        }
+
+        // 휴지통에서 프레임을 되살린다(삭제 상태 해제).
+        private void RestoreFromTrash(TubFrame frame)
+        {
+            if (!frame.Deleted) return;
+            frame.Deleted = false;
+            frame.DeleteReason = "";
+            RefreshFrameListItem(tubFrames.IndexOf(frame));
+        }
+
+        // 현재 삭제 상태인 프레임들로 휴지통 목록을 다시 구성한다.
+        private void RebuildTrashList()
+        {
+            lstTrash.BeginUpdate();
+            lstTrash.Items.Clear();
+            foreach (TubFrame frame in tubFrames)
+            {
+                if (frame.Deleted) lstTrash.Items.Add(new TrashEntry(frame));
+            }
+            lstTrash.EndUpdate();
+        }
+
+        // ListBox 항목의 표시 문자열(삭제 표시)을 갱신하기 위해 동일 항목을 재대입한다.
+        // 항목 값만 교체하므로 선택 인덱스는 바뀌지 않아 SelectedIndexChanged가 발생하지 않는다.
+        private void RefreshFrameListItem(int index)
+        {
+            if (index < 0 || index >= lstFrames.Items.Count) return;
+            lstFrames.Items[index] = tubFrames[index];
+        }
+
+        // ==========================================
+        // 6. 데이터 필터링 (범위 지정 + 조건 필터)
+        // ==========================================
+        private void btnSetLeft_Click(object? sender, EventArgs e)
+        {
+            if (tubFrames.Count == 0) return;
+            rangeStart = trackFrame.Value;
+            UpdateRangeLabel();
+        }
+
+        private void btnSetRight_Click(object? sender, EventArgs e)
+        {
+            if (tubFrames.Count == 0) return;
+            rangeEnd = trackFrame.Value;
+            UpdateRangeLabel();
+        }
+
+        private void UpdateRangeLabel()
+        {
+            string left = rangeStart >= 0 ? rangeStart.ToString() : "-";
+            string right = rangeEnd >= 0 ? rangeEnd.ToString() : "-";
+            lblRange.Text = $"범위: {left} ~ {right}";
+        }
+
+        // 지정된 범위를 [lo, hi]로 정규화한다. 범위가 전혀 지정되지 않았으면 전체 구간을 반환한다.
+        private (int lo, int hi) GetEffectiveRange()
+        {
+            if (rangeStart < 0 && rangeEnd < 0) return (0, tubFrames.Count - 1);
+            int a = rangeStart < 0 ? rangeEnd : rangeStart;
+            int b = rangeEnd < 0 ? rangeStart : rangeEnd;
+            int lo = Math.Max(0, Math.Min(a, b));
+            int hi = Math.Min(tubFrames.Count - 1, Math.Max(a, b));
+            return (lo, hi);
+        }
+
+        private void btnFilter_Click(object? sender, EventArgs e)
+        {
+            if (tubFrames.Count == 0)
+            {
+                MessageBox.Show("먼저 Tub 데이터를 불러오세요.", "필터 적용", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            if (!chkThrottleZero.Checked && !chkMissingImage.Checked && !chkAbnormalAngle.Checked)
+            {
+                MessageBox.Show("적용할 필터 조건을 하나 이상 선택하세요.", "필터 적용", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            (int lo, int hi) = GetEffectiveRange();
+
+            // 비정상 조향각은 이상치 탐지 알고리즘으로 후보를 미리 산출한다.
+            HashSet<int> abnormal = chkAbnormalAngle.Checked ? DetectAbnormalAngleFrames(lo, hi) : new HashSet<int>();
+
+            int moved = 0;
+            for (int i = lo; i <= hi; i++)
+            {
+                TubFrame frame = tubFrames[i];
+                if (frame.Deleted) continue;
+
+                string? reason = null;
+                if (chkThrottleZero.Checked && Math.Abs(frame.Throttle) < 1e-6) reason = "속도 0";
+                else if (chkMissingImage.Checked && !File.Exists(frame.ImagePath)) reason = "이미지 누락";
+                else if (chkAbnormalAngle.Checked && abnormal.Contains(i)) reason = "비정상 조향각";
+
+                if (reason != null && MoveToTrash(i, reason)) moved++;
+            }
+
+            RebuildTrashList();
+            AddLog($"필터 적용: 범위 {lo}~{hi}에서 {moved}개 프레임을 휴지통으로 이동했습니다.");
+            if (moved == 0)
+            {
+                MessageBox.Show("조건에 해당하는 프레임이 없습니다.", "필터 적용", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+        }
+
+        // 비정상 조향각(이상치) 프레임 인덱스를 반환한다.
+        // 판정 기준(셋 중 하나라도 해당 시 이상치):
+        //   (1) 정규화 범위 [-1, 1] 초과
+        //   (2) 통계적 이상치: 대상 구간 평균/표준편차 기준 z-score > 3.0
+        //   (3) 급변: 직전 유효 프레임 대비 조향각 변화량 |Δ| > 0.8
+        private HashSet<int> DetectAbnormalAngleFrames(int lo, int hi)
+        {
+            const double rangeLimit = 1.0;
+            const double zThreshold = 3.0;
+            const double jumpThreshold = 0.8;
+
+            HashSet<int> result = new HashSet<int>();
+
+            // 대상 구간의 미삭제 프레임만 수집
+            List<int> active = new List<int>();
+            for (int i = lo; i <= hi; i++)
+            {
+                if (!tubFrames[i].Deleted) active.Add(i);
+            }
+            if (active.Count == 0) return result;
+
+            // 평균/표준편차(표본) 계산
+            double sum = 0;
+            foreach (int i in active) sum += tubFrames[i].Angle;
+            double mean = sum / active.Count;
+
+            double sqSum = 0;
+            foreach (int i in active)
+            {
+                double d = tubFrames[i].Angle - mean;
+                sqSum += d * d;
+            }
+            double std = active.Count > 1 ? Math.Sqrt(sqSum / (active.Count - 1)) : 0;
+
+            // 이상치 판정
+            for (int k = 0; k < active.Count; k++)
+            {
+                int idx = active[k];
+                double angle = tubFrames[idx].Angle;
+
+                bool outlier = Math.Abs(angle) > rangeLimit;
+                if (!outlier && std > 1e-9 && Math.Abs(angle - mean) / std > zThreshold) outlier = true;
+                // 급변(스파이크): 직전·직후 유효 프레임 모두와 임계 이상 차이날 때만 판정(복귀 프레임 오검출 방지)
+                if (!outlier && k > 0 && k < active.Count - 1)
+                {
+                    double prev = tubFrames[active[k - 1]].Angle;
+                    double next = tubFrames[active[k + 1]].Angle;
+                    if (Math.Abs(angle - prev) > jumpThreshold && Math.Abs(angle - next) > jumpThreshold) outlier = true;
+                }
+
+                if (outlier) result.Add(idx);
+            }
+            return result;
+        }
+
+        // ==========================================
+        // 7. 데이터 삭제 / 복원 / 휴지통 비우기
+        // ==========================================
+        private void btnDelete_Click(object? sender, EventArgs e)
+        {
+            if (tubFrames.Count == 0) return;
+
+            int moved = 0;
+            if (rangeStart >= 0 || rangeEnd >= 0)
+            {
+                (int lo, int hi) = GetEffectiveRange();
+                DialogResult res = MessageBox.Show($"범위 {lo}~{hi}의 프레임을 휴지통으로 이동하시겠습니까?", "삭제", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+                if (res == DialogResult.No) return;
+                for (int i = lo; i <= hi; i++)
+                {
+                    if (MoveToTrash(i, "수동 삭제")) moved++;
+                }
+            }
+            else
+            {
+                int index = lstFrames.SelectedIndex;
+                if (index < 0)
+                {
+                    MessageBox.Show("삭제할 프레임을 목록에서 선택하거나 [시작 지정]/[끝 지정]으로 범위를 정하세요.", "삭제", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
+                if (MoveToTrash(index, "수동 삭제")) moved++;
+            }
+
+            RebuildTrashList();
+            AddLog($"{moved}개 프레임을 휴지통으로 이동했습니다.");
+        }
+
+        private void btnRestore_Click(object? sender, EventArgs e)
+        {
+            if (lstTrash.SelectedItems.Count == 0)
+            {
+                MessageBox.Show("복원할 항목을 휴지통 목록에서 선택하세요.", "복원", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            List<TrashEntry> selected = lstTrash.SelectedItems.Cast<TrashEntry>().ToList();
+            foreach (TrashEntry entry in selected) RestoreFromTrash(entry.Frame);
+            RebuildTrashList();
+            AddLog($"{selected.Count}개 프레임을 복원했습니다.");
+        }
+
+        // 안전 모드: 이미지는 deleted 폴더로 이동하고 catalog는 백업 후 해당 기록만 제거(되돌릴 수 있도록 보존).
+        private void btnEmptyTrash_Click(object? sender, EventArgs e)
+        {
+            List<TubFrame> deleted = tubFrames.Where(f => f.Deleted).ToList();
+            if (deleted.Count == 0)
+            {
+                MessageBox.Show("휴지통이 비어 있습니다.", "휴지통 비우기", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            if (string.IsNullOrWhiteSpace(tubPath))
+            {
+                MessageBox.Show("Tub 폴더 정보가 없습니다.", "휴지통 비우기", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            DialogResult res = MessageBox.Show(
+                $"휴지통의 {deleted.Count}개 프레임을 최종 적용합니다.\n\n" +
+                "· 이미지는 tub 폴더 하위 [deleted] 폴더로 이동합니다.\n" +
+                "· catalog 파일은 백업 후 해당 기록을 제거합니다.\n\n계속하시겠습니까?",
+                "휴지통 비우기 (안전 모드)", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+            if (res == DialogResult.No) return;
+
+            try
+            {
+                string deletedDir = Path.Combine(tubPath, "deleted");
+                Directory.CreateDirectory(deletedDir);
+
+                // 1) tub 폴더의 catalog 파일들을 훑어 삭제 대상 이미지 기록을 제외하고 재작성한다.
+                //    (프레임의 원본 catalog를 따로 저장하지 않으므로 이미지 파일명으로 직접 찾는다. 변경된 catalog만 1회 백업)
+                HashSet<string> removeImages = new HashSet<string>(deleted.Select(f => f.ImageFileName));
+                foreach (string catalogFile in Directory.GetFiles(tubPath, "catalog_*.catalog", SearchOption.AllDirectories))
+                {
+                    bool removedAny = false;
+                    List<string> keptLines = new List<string>();
+                    foreach (string line in File.ReadLines(catalogFile))
+                    {
+                        if (string.IsNullOrWhiteSpace(line)) continue;
+                        string? imageName = TryGetImageName(line);
+                        if (imageName != null && removeImages.Contains(imageName)) { removedAny = true; continue; }
+                        keptLines.Add(line);
+                    }
+                    if (!removedAny) continue;
+
+                    string backupPath = Path.Combine(deletedDir, Path.GetFileName(catalogFile) + ".backup");
+                    if (!File.Exists(backupPath)) File.Copy(catalogFile, backupPath);
+                    File.WriteAllLines(catalogFile, keptLines);
+                }
+
+                // 2) 이미지 파일을 deleted 폴더로 이동
+                int movedImages = 0;
+                foreach (TubFrame f in deleted)
+                {
+                    if (File.Exists(f.ImagePath))
+                    {
+                        string dest = Path.Combine(deletedDir, Path.GetFileName(f.ImagePath));
+                        File.Move(f.ImagePath, dest, true);
+                        movedImages++;
+                    }
+                }
+
+                // 3) 메모리 목록에서 제거 후 뷰 재구성
+                tubFrames.RemoveAll(f => f.Deleted);
+                missingImageFrames.Clear();
+                picFrame.Image = null;
+                frameImageCache.Clear();
+                ResetTubView();
+                lstTrash.Items.Clear();
+                if (tubFrames.Count > 0) ShowFrame(0);
+
+                AddLog($"휴지통 비우기 완료: 기록 {deleted.Count}건 제거, 이미지 {movedImages}개 이동 (백업 위치: {deletedDir}).");
+                MessageBox.Show($"휴지통을 비웠습니다.\n\n제거된 기록: {deleted.Count}건\n이동된 이미지: {movedImages}개\n백업 위치: {deletedDir}", "휴지통 비우기 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"휴지통 비우기 중 오류가 발생했습니다.\n\n[오류내용]: {ex.Message}", "휴지통 비우기 오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                AddLog($"휴지통 비우기 오류: {ex.Message}");
+            }
+        }
+
+        // catalog 한 줄(JSON)에서 cam/image_array 값을 추출한다. 실패 시 null.
+        private static string? TryGetImageName(string line)
+        {
+            try
+            {
+                using JsonDocument document = JsonDocument.Parse(line);
+                string name = GetStringValue(document.RootElement, "cam/image_array");
+                return string.IsNullOrWhiteSpace(name) ? null : name;
+            }
+            catch (JsonException)
+            {
+                return null;
+            }
+        }
 
         // ==========================================
         // 내부 클래스
@@ -1050,7 +1287,9 @@ namespace DataManager
             public string ImagePath { get; set; } = "";
             public double Angle { get; set; }
             public double Throttle { get; set; }
-            public override string ToString() => $"Frame {FrameNumber:D6}";
+            public bool Deleted { get; set; }
+            public string DeleteReason { get; set; } = "";
+            public override string ToString() => Deleted ? $"Frame {FrameNumber:D6} [삭제됨]" : $"Frame {FrameNumber:D6}";
         }
 
         private sealed class TubLoadResult
@@ -1058,6 +1297,58 @@ namespace DataManager
             public List<TubFrame> Frames { get; } = new();
             public List<string> MissingImages { get; } = new();
             public List<string> Errors { get; } = new();
+        }
+
+        // 휴지통 목록(lstTrash)에 표시되는 삭제 프레임 항목. 복원 시 원본 프레임으로 역매핑한다.
+        private sealed class TrashEntry
+        {
+            public TubFrame Frame { get; }
+            public TrashEntry(TubFrame frame) => Frame = frame;
+            public override string ToString() => $"Frame {Frame.FrameNumber:D6} · {Frame.DeleteReason}";
+        }
+
+        // 표시용 이미지 LRU 캐시. 용량을 초과하면 가장 오래 전 사용한 이미지를 Dispose하여 메모리를 제한한다.
+        private sealed class FrameImageCache
+        {
+            private readonly int capacity;
+            private readonly Func<string, Image> loader;
+            private readonly Dictionary<string, Image> map = new();
+            private readonly LinkedList<string> order = new(); // 앞쪽이 최근 사용
+
+            public FrameImageCache(int capacity, Func<string, Image> loader)
+            {
+                this.capacity = Math.Max(1, capacity);
+                this.loader = loader;
+            }
+
+            public Image Get(string key)
+            {
+                if (map.TryGetValue(key, out Image? cached))
+                {
+                    order.Remove(key);
+                    order.AddFirst(key);
+                    return cached;
+                }
+
+                Image image = loader(key);
+                map[key] = image;
+                order.AddFirst(key);
+
+                while (order.Count > capacity)
+                {
+                    string oldest = order.Last!.Value;
+                    order.RemoveLast();
+                    if (map.Remove(oldest, out Image? evicted)) evicted.Dispose();
+                }
+                return image;
+            }
+
+            public void Clear()
+            {
+                foreach (Image image in map.Values) image.Dispose();
+                map.Clear();
+                order.Clear();
+            }
         }
 
         private void panel1_Paint(object sender, PaintEventArgs e)
