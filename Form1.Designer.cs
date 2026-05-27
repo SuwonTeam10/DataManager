@@ -359,12 +359,12 @@
             // 
             // lvTimeline
             // 
-            lvTimeline.Anchor = AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
-            lvTimeline.Location = new Point(0, 29);
+            lvTimeline.Dock = DockStyle.Fill;
+            lvTimeline.Location = new Point(4, 35);
             lvTimeline.Margin = new Padding(4);
             lvTimeline.MultiSelect = false;
             lvTimeline.Name = "lvTimeline";
-            lvTimeline.Size = new Size(2397, 61);
+            lvTimeline.Size = new Size(2389, 59);
             lvTimeline.TabIndex = 0;
             lvTimeline.UseCompatibleStateImageBehavior = false;
             lvTimeline.SelectedIndexChanged += lvTimeline_SelectedIndexChanged;
