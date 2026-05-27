@@ -764,6 +764,7 @@ namespace DataManager
             trackFrame.Minimum = 0;
             trackFrame.Maximum = Math.Max(0, tubFrames.Count - 1);
             trackFrame.Value = 0;
+            if (tubFrames.Count == 0) UpdateFrameInfoLabels(null, -1);
 
             try
             {
@@ -826,9 +827,25 @@ namespace DataManager
 
             if (!File.Exists(frame.ImagePath)) missingImageFrames.Add(index);
 
-            lblFrame.Text = $"프레임: {frame.FrameNumber:D6}";
-            lblAngle.Text = $"조향각: {frame.Angle:0.00}";
-            lblThrottle.Text = $"속도: {frame.Throttle:0.00}";
+            UpdateFrameInfoLabels(frame, index);
+        }
+
+        private void UpdateFrameInfoLabels(TubFrame? frame, int index)
+        {
+            // 디자이너가 만든 제목 라벨은 고정하고, 실제 값 라벨만 갱신한다.
+            if (frame == null || index < 0 || tubFrames.Count == 0)
+            {
+                lblFrame2.Text = "000000";
+                lblAngle2.Text = "0.00";
+                lblThrottle2.Text = "0.00";
+                lblCurrentFrame2.Text = "0 / 0";
+                return;
+            }
+
+            lblFrame2.Text = frame.FrameNumber.ToString("D6");
+            lblAngle2.Text = frame.Angle.ToString("0.00");
+            lblThrottle2.Text = frame.Throttle.ToString("0.00");
+            lblCurrentFrame2.Text = $"{index + 1:N0} / {tubFrames.Count:N0}";
         }
 
         private static string GetImageBasePath(string selectedTubPath)
