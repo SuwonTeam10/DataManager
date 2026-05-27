@@ -25,9 +25,6 @@ namespace DataManager
         private string latestTestImagePath = "";
         private double? latestTestRealAngle;
         private double? latestTestPredictAngle;
-        private int currentFrameIndex = -1;
-        private readonly Dictionary<int, double> predictedAnglesByFrame = new();
-        private readonly Dictionary<string, double> predictedAnglesByImageName = new(StringComparer.OrdinalIgnoreCase);
         private string loggedInUser = "";
         private System.Windows.Forms.Timer playTimer;
         private bool _isUpdatingRadio = false;
@@ -96,9 +93,6 @@ namespace DataManager
             btnLast.Click += btnLast_Click;
             cmbPlaySpeed.SelectedIndexChanged += cmbPlaySpeed_SelectedIndexChanged;
             tabMain.SelectedIndexChanged += tabMain_SelectedIndexChanged;
-            picFrame.Paint += picFrame_Paint;
-            chkShowRealAngle.CheckedChanged += (_, _) => picFrame.Invalidate();
-            chkShowPredictAngle.CheckedChanged += (_, _) => picFrame.Invalidate();
             Resize += (_, _) => RedrawGraphAfterLayout();
 
             // 데이터 정리(범위 지정/필터/삭제/휴지통) 이벤트 연결
@@ -531,14 +525,11 @@ namespace DataManager
             latestTestImagePath = "";
             latestTestRealAngle = null;
             latestTestPredictAngle = null;
-            predictedAnglesByFrame.Clear();
-            predictedAnglesByImageName.Clear();
             lblRealAngle2.Text = "-";
             lblPredictAngle2.Text = "-";
             lblErrorValue2.Text = "-";
             lblTrainStatus2.Text = "테스트 중";
             lblTrainStatus2.ForeColor = Color.DarkOrange;
-            picFrame.Invalidate();
         }
 
         private void HandleModelTestLog(string logText)
@@ -570,8 +561,6 @@ namespace DataManager
             {
                 latestTestPredictAngle = predictAngle;
                 lblPredictAngle2.Text = predictAngle.ToString("0.000");
-                StorePredictedAngleForImage(imagePath ?? latestTestImagePath, predictAngle);
-                picFrame.Invalidate();
             }
 
             if (TryExtractLogValue(logText, new[]
@@ -694,151 +683,6 @@ namespace DataManager
         {
             string extension = Path.GetExtension(path).ToLowerInvariant();
             return extension is ".jpg" or ".jpeg" or ".png" or ".bmp";
-        }
-
-        private void StorePredictedAngleForImage(string? imagePath, double predictAngle)
-        {
-            // 테스트 로그의 이미지 파일명과 예측 조향각을 연결해 두고, 같은 프레임을 볼 때 오버레이로 그린다.
-            if (string.IsNullOrWhiteSpace(imagePath)) return;
-
-            string imageName = Path.GetFileName(imagePath);
-            if (!string.IsNullOrWhiteSpace(imageName))
-            {
-                predictedAnglesByImageName[imageName] = predictAngle;
-            }
-
-            if (TryFindTubFrameIndexByImagePath(imagePath, out int frameIndex))
-            {
-                predictedAnglesByFrame[frameIndex] = predictAngle;
-            }
-        }
-
-        private bool TryFindTubFrameIndexByImagePath(string imagePath, out int frameIndex)
-        {
-            string imageName = Path.GetFileName(imagePath);
-            for (int i = 0; i < tubFrames.Count; i++)
-            {
-                TubFrame frame = tubFrames[i];
-                if (string.Equals(frame.ImagePath, imagePath, StringComparison.OrdinalIgnoreCase)
-                    || string.Equals(Path.GetFileName(frame.ImagePath), imageName, StringComparison.OrdinalIgnoreCase)
-                    || string.Equals(Path.GetFileName(frame.ImageFileName), imageName, StringComparison.OrdinalIgnoreCase))
-                {
-                    frameIndex = i;
-                    return true;
-                }
-            }
-
-            frameIndex = -1;
-            return false;
-        }
-
-        private bool TryGetPredictedAngleForFrame(int frameIndex, TubFrame frame, out double predictAngle)
-        {
-            if (predictedAnglesByFrame.TryGetValue(frameIndex, out predictAngle)) return true;
-
-            string imagePathName = Path.GetFileName(frame.ImagePath);
-            if (!string.IsNullOrWhiteSpace(imagePathName)
-                && predictedAnglesByImageName.TryGetValue(imagePathName, out predictAngle))
-            {
-                return true;
-            }
-
-            string catalogImageName = Path.GetFileName(frame.ImageFileName);
-            return !string.IsNullOrWhiteSpace(catalogImageName)
-                && predictedAnglesByImageName.TryGetValue(catalogImageName, out predictAngle);
-        }
-
-        private void picFrame_Paint(object? sender, PaintEventArgs e)
-        {
-            if (picFrame.Image == null || currentFrameIndex < 0 || currentFrameIndex >= tubFrames.Count) return;
-
-            TubFrame frame = tubFrames[currentFrameIndex];
-            Rectangle imageBounds = GetZoomedImageBounds(picFrame);
-            if (imageBounds.Width <= 0 || imageBounds.Height <= 0) return;
-
-            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-            e.Graphics.SetClip(imageBounds);
-
-            if (chkShowRealAngle.Checked)
-            {
-                DrawSteeringOverlayLine(e.Graphics, imageBounds, frame.Angle, Color.LimeGreen, "실제");
-            }
-
-            if (chkShowPredictAngle.Checked && TryGetPredictedAngleForFrame(currentFrameIndex, frame, out double predictAngle))
-            {
-                DrawSteeringOverlayLine(e.Graphics, imageBounds, predictAngle, Color.DeepSkyBlue, "예측");
-            }
-
-            e.Graphics.ResetClip();
-        }
-
-        private static Rectangle GetZoomedImageBounds(PictureBox pictureBox)
-        {
-            Image? image = pictureBox.Image;
-            if (image == null || pictureBox.ClientSize.Width <= 0 || pictureBox.ClientSize.Height <= 0)
-            {
-                return Rectangle.Empty;
-            }
-
-            double imageRatio = image.Width / (double)image.Height;
-            double boxRatio = pictureBox.ClientSize.Width / (double)pictureBox.ClientSize.Height;
-
-            int width;
-            int height;
-            if (imageRatio > boxRatio)
-            {
-                width = pictureBox.ClientSize.Width;
-                height = (int)Math.Round(width / imageRatio);
-            }
-            else
-            {
-                height = pictureBox.ClientSize.Height;
-                width = (int)Math.Round(height * imageRatio);
-            }
-
-            int x = (pictureBox.ClientSize.Width - width) / 2;
-            int y = (pictureBox.ClientSize.Height - height) / 2;
-            return new Rectangle(x, y, width, height);
-        }
-
-        private static void DrawSteeringOverlayLine(Graphics graphics, Rectangle imageBounds, double angle, Color color, string label)
-        {
-            double clampedAngle = Math.Clamp(angle, -1.0, 1.0);
-            PointF start = new PointF(imageBounds.Left + imageBounds.Width / 2f, imageBounds.Bottom - Math.Max(12, imageBounds.Height * 0.12f));
-            PointF end = new PointF(
-                start.X + (float)(clampedAngle * imageBounds.Width * 0.42),
-                imageBounds.Top + imageBounds.Height * 0.32f);
-
-            using Pen shadowPen = new Pen(Color.FromArgb(160, 0, 0, 0), 6)
-            {
-                StartCap = LineCap.Round,
-                EndCap = LineCap.Round
-            };
-            using Pen linePen = new Pen(color, 3)
-            {
-                StartCap = LineCap.Round,
-                EndCap = LineCap.ArrowAnchor
-            };
-
-            graphics.DrawLine(shadowPen, start, end);
-            graphics.DrawLine(linePen, start, end);
-
-            using Brush pointBrush = new SolidBrush(color);
-            graphics.FillEllipse(pointBrush, start.X - 5, start.Y - 5, 10, 10);
-
-            string text = $"{label} {angle:0.00}";
-            using Font font = new Font(SystemFonts.DefaultFont.FontFamily, 9, FontStyle.Bold);
-            SizeF textSize = graphics.MeasureString(text, font);
-            RectangleF labelBounds = new RectangleF(
-                Math.Clamp(end.X + 8, imageBounds.Left + 4, imageBounds.Right - textSize.Width - 10),
-                Math.Clamp(end.Y - textSize.Height - 4, imageBounds.Top + 4, imageBounds.Bottom - textSize.Height - 4),
-                textSize.Width + 6,
-                textSize.Height + 4);
-
-            using Brush labelBack = new SolidBrush(Color.FromArgb(180, 0, 0, 0));
-            using Brush labelText = new SolidBrush(Color.White);
-            graphics.FillRectangle(labelBack, labelBounds);
-            graphics.DrawString(text, font, labelText, labelBounds.Left + 3, labelBounds.Top + 2);
         }
 
         // ==========================================
@@ -1154,12 +998,10 @@ namespace DataManager
 
             // 캐시가 소유한 이미지를 표시한다. (캐시가 Dispose를 책임지므로 여기서 Dispose하지 않는다.)
             picFrame.Image = frameImageCache.Get(frame.ImagePath);
-            currentFrameIndex = index;
 
             if (!File.Exists(frame.ImagePath)) missingImageFrames.Add(index);
 
             UpdateFrameInfoLabels(frame, index);
-            picFrame.Invalidate();
         }
 
         private void UpdateFrameInfoLabels(TubFrame? frame, int index)
