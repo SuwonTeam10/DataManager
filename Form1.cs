@@ -2132,5 +2132,10 @@ namespace DataManager
         {
             UpdateAutoPlayLoopVisual();
         }
+
+        private void picFrame_Click(object sender, EventArgs e)
+        {
+
+        }
     }
 }

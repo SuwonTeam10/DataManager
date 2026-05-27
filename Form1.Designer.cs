@@ -170,7 +170,7 @@
             btnLoadTub.Padding = new Padding(10, 0, 0, 0);
             btnLoadTub.Size = new Size(244, 54);
             btnLoadTub.TabIndex = 2;
-            btnLoadTub.Text = " Tub 데이터 열기";
+            btnLoadTub.Text = "     Tub 데이터 열기";
             btnLoadTub.UseVisualStyleBackColor = true;
             btnLoadTub.Click += btnLoadTub_Click;
             // 
@@ -231,6 +231,7 @@
             // 
             // panel3
             // 
+            panel3.Anchor = AnchorStyles.Left | AnchorStyles.Right;
             panel3.BackColor = Color.Silver;
             panel3.Location = new Point(3, 179);
             panel3.Margin = new Padding(2);
@@ -286,6 +287,7 @@
             // 
             // chkShowPredictAngle
             // 
+            chkShowPredictAngle.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
             chkShowPredictAngle.AutoSize = true;
             chkShowPredictAngle.Font = new Font("나눔고딕", 10.125F);
             chkShowPredictAngle.Location = new Point(27, 227);
@@ -298,6 +300,7 @@
             // 
             // chkShowRealAngle
             // 
+            chkShowRealAngle.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
             chkShowRealAngle.AutoSize = true;
             chkShowRealAngle.Font = new Font("나눔고딕", 10.125F);
             chkShowRealAngle.Location = new Point(27, 191);
@@ -362,7 +365,7 @@
             lvTimeline.Size = new Size(1168, 75);
             lvTimeline.TabIndex = 0;
             lvTimeline.UseCompatibleStateImageBehavior = false;
-            lvTimeline.SelectedIndexChanged += lvTimeline_SelectedIndexChanged_1;
+            lvTimeline.SelectedIndexChanged += lvTimeline_SelectedIndexChanged;
             // 
             // tabMain
             // 
@@ -549,7 +552,7 @@
             // 
             // btnFilter
             // 
-            btnFilter.Font = new Font("나눔고딕", 12F, FontStyle.Regular, GraphicsUnit.Point, 129);
+            btnFilter.Font = new Font("나눔고딕", 10.875F, FontStyle.Regular, GraphicsUnit.Point, 129);
             btnFilter.Image = Properties.Resources.icons8_filter_48;
             btnFilter.ImageAlign = ContentAlignment.MiddleLeft;
             btnFilter.Location = new Point(397, 28);
@@ -797,6 +800,7 @@
             // 
             // btnTrain
             // 
+            btnTrain.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
             btnTrain.BackColor = Color.DodgerBlue;
             btnTrain.Font = new Font("Microsoft Sans Serif", 8.999999F, FontStyle.Bold, GraphicsUnit.Point, 129);
             btnTrain.ForeColor = Color.White;
@@ -808,7 +812,7 @@
             btnTrain.Padding = new Padding(10, 0, 0, 0);
             btnTrain.Size = new Size(123, 33);
             btnTrain.TabIndex = 11;
-            btnTrain.Text = "학습 시작";
+            btnTrain.Text = "   학습 시작";
             btnTrain.UseVisualStyleBackColor = false;
             btnTrain.Click += btnTrain_Click;
             // 
@@ -826,7 +830,7 @@
             btnStopTask.Padding = new Padding(10, 0, 0, 0);
             btnStopTask.Size = new Size(123, 33);
             btnStopTask.TabIndex = 25;
-            btnStopTask.Text = "학습 중지";
+            btnStopTask.Text = "   학습 중지";
             btnStopTask.UseVisualStyleBackColor = false;
             // 
             // grpTestImage
@@ -942,7 +946,7 @@
             btnLoadConfig.Padding = new Padding(10, 0, 0, 0);
             btnLoadConfig.Size = new Size(244, 60);
             btnLoadConfig.TabIndex = 0;
-            btnLoadConfig.Text = "설정 파일 열기";
+            btnLoadConfig.Text = "    설정 파일 열기";
             btnLoadConfig.UseVisualStyleBackColor = true;
             btnLoadConfig.Click += btnLoadConfig_Click;
             // 
@@ -993,10 +997,11 @@
             picFrame.SizeMode = PictureBoxSizeMode.Zoom;
             picFrame.TabIndex = 0;
             picFrame.TabStop = false;
+            picFrame.Click += picFrame_Click;
             // 
             // btnFirst
             // 
-            btnFirst.Anchor = AnchorStyles.Bottom;
+            btnFirst.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
             btnFirst.Font = new Font("Microsoft Sans Serif", 12F, FontStyle.Bold, GraphicsUnit.Point, 0);
             btnFirst.Location = new Point(38, 119);
             btnFirst.Margin = new Padding(3, 2, 3, 2);
@@ -1008,7 +1013,7 @@
             // 
             // btnPrev
             // 
-            btnPrev.Anchor = AnchorStyles.Bottom;
+            btnPrev.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
             btnPrev.Font = new Font("Microsoft Sans Serif", 12F, FontStyle.Bold, GraphicsUnit.Point, 0);
             btnPrev.Location = new Point(128, 119);
             btnPrev.Margin = new Padding(3, 2, 3, 2);
@@ -1038,7 +1043,7 @@
             // 
             // btnNext
             // 
-            btnNext.Anchor = AnchorStyles.Bottom;
+            btnNext.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
             btnNext.Font = new Font("Microsoft Sans Serif", 12F, FontStyle.Bold, GraphicsUnit.Point, 0);
             btnNext.Location = new Point(411, 119);
             btnNext.Margin = new Padding(3, 2, 3, 2);
@@ -1050,7 +1055,7 @@
             // 
             // btnLast
             // 
-            btnLast.Anchor = AnchorStyles.Bottom;
+            btnLast.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
             btnLast.Font = new Font("Microsoft Sans Serif", 12F, FontStyle.Bold, GraphicsUnit.Point, 0);
             btnLast.Location = new Point(500, 119);
             btnLast.Margin = new Padding(3, 2, 3, 2);
@@ -1124,7 +1129,7 @@
             // 
             // chkAutoPlay
             // 
-            chkAutoPlay.Anchor = AnchorStyles.Bottom;
+            chkAutoPlay.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
             chkAutoPlay.Appearance = Appearance.Button;
             chkAutoPlay.FlatStyle = FlatStyle.Flat;
             chkAutoPlay.Font = new Font("맑은 고딕", 7.875F, FontStyle.Regular, GraphicsUnit.Point, 129);
@@ -1140,7 +1145,7 @@
             // 
             // lblSpeed
             // 
-            lblSpeed.Anchor = AnchorStyles.Bottom;
+            lblSpeed.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
             lblSpeed.AutoSize = true;
             lblSpeed.Font = new Font("나눔고딕", 7.875F, FontStyle.Regular, GraphicsUnit.Point, 129);
             lblSpeed.Location = new Point(603, 112);
@@ -1152,7 +1157,7 @@
             // 
             // cmbPlaySpeed
             // 
-            cmbPlaySpeed.Anchor = AnchorStyles.Bottom;
+            cmbPlaySpeed.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
             cmbPlaySpeed.DropDownStyle = ComboBoxStyle.DropDownList;
             cmbPlaySpeed.FlatStyle = FlatStyle.Flat;
             cmbPlaySpeed.FormattingEnabled = true;
@@ -1213,7 +1218,7 @@
             btnDisconnect.Padding = new Padding(6, 0, 0, 0);
             btnDisconnect.Size = new Size(112, 34);
             btnDisconnect.TabIndex = 32;
-            btnDisconnect.Text = "연결 끊기";
+            btnDisconnect.Text = "   연결 끊기";
             btnDisconnect.TextAlign = ContentAlignment.MiddleRight;
             btnDisconnect.UseVisualStyleBackColor = true;
             // 
