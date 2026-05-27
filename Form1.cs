@@ -718,6 +718,7 @@ namespace DataManager
                         FrameNumber = GetIntValue(root, "_index", fallbackFrameNumber),
                         ImageFileName = imageFileName,
                         ImagePath = FindImagePath(tubBasePath, imageBasePath, imageLookupCache, ref imageLookup, imageFileName),
+                        SourceDataPath = recordFile,
                         Angle = GetDoubleValue(root, "user/angle"),
                         Throttle = GetDoubleValue(root, "user/throttle")
                     };
@@ -1235,7 +1236,8 @@ namespace DataManager
             DialogResult res = MessageBox.Show(
                 $"휴지통의 {deleted.Count}개 프레임을 최종 적용합니다.\n\n" +
                 "· 이미지는 tub 폴더 하위 [deleted] 폴더로 이동합니다.\n" +
-                "· catalog 파일은 백업 후 해당 기록을 제거합니다.\n\n계속하시겠습니까?",
+                "· catalog 파일은 백업 후 해당 기록을 제거합니다.\n" +
+                "· 구버전 record JSON 파일은 [deleted] 폴더로 이동합니다.\n\n계속하시겠습니까?",
                 "휴지통 비우기 (안전 모드)", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
             if (res == DialogResult.No) return;
 
@@ -1265,19 +1267,33 @@ namespace DataManager
                     File.WriteAllLines(catalogFile, keptLines);
                 }
 
-                // 2) 이미지 파일을 deleted 폴더로 이동
+                // 2) 구버전 Tub의 record_*.json 파일을 deleted 폴더로 이동한다.
+                int movedRecords = 0;
+                HashSet<string> recordFiles = deleted
+                    .Select(f => f.SourceDataPath)
+                    .Where(path => IsOldRecordFile(path) && File.Exists(path))
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+                foreach (string recordFile in recordFiles)
+                {
+                    string dest = GetDeletedFilePath(deletedDir, recordFile);
+                    File.Move(recordFile, dest);
+                    movedRecords++;
+                }
+
+                // 3) 이미지 파일을 deleted 폴더로 이동
                 int movedImages = 0;
                 foreach (TubFrame f in deleted)
                 {
                     if (File.Exists(f.ImagePath))
                     {
-                        string dest = Path.Combine(deletedDir, Path.GetFileName(f.ImagePath));
-                        File.Move(f.ImagePath, dest, true);
+                        string dest = GetDeletedFilePath(deletedDir, f.ImagePath);
+                        File.Move(f.ImagePath, dest);
                         movedImages++;
                     }
                 }
 
-                // 3) 메모리 목록에서 제거 후 뷰 재구성
+                // 4) 메모리 목록에서 제거 후 뷰 재구성
                 tubFrames.RemoveAll(f => f.Deleted);
                 missingImageFrames.Clear();
                 picFrame.Image = null;
@@ -1286,8 +1302,8 @@ namespace DataManager
                 lstTrash.Items.Clear();
                 if (tubFrames.Count > 0) ShowFrame(0);
 
-                AddLog($"휴지통 비우기 완료: 기록 {deleted.Count}건 제거, 이미지 {movedImages}개 이동 (백업 위치: {deletedDir}).");
-                MessageBox.Show($"휴지통을 비웠습니다.\n\n제거된 기록: {deleted.Count}건\n이동된 이미지: {movedImages}개\n백업 위치: {deletedDir}", "휴지통 비우기 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                AddLog($"휴지통 비우기 완료: 기록 {deleted.Count}건 제거, record {movedRecords}개 이동, 이미지 {movedImages}개 이동 (백업 위치: {deletedDir}).");
+                MessageBox.Show($"휴지통을 비웠습니다.\n\n제거된 기록: {deleted.Count}건\n이동된 record JSON: {movedRecords}개\n이동된 이미지: {movedImages}개\n백업 위치: {deletedDir}", "휴지통 비우기 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
             catch (Exception ex)
             {
@@ -1311,6 +1327,31 @@ namespace DataManager
             }
         }
 
+        private static bool IsOldRecordFile(string path)
+        {
+            // 구버전 Donkeycar Tub의 record JSON만 실제 파일 이동 대상으로 본다.
+            return !string.IsNullOrWhiteSpace(path)
+                && Path.GetFileName(path).StartsWith("record_", StringComparison.OrdinalIgnoreCase)
+                && string.Equals(Path.GetExtension(path), ".json", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string GetDeletedFilePath(string deletedDir, string sourcePath)
+        {
+            // 복구할 수 있도록 deleted 폴더에 원본 파일명을 유지하되, 이름이 겹치면 번호를 붙인다.
+            string fileName = Path.GetFileName(sourcePath);
+            string dest = Path.Combine(deletedDir, fileName);
+            if (!File.Exists(dest)) return dest;
+
+            string name = Path.GetFileNameWithoutExtension(fileName);
+            string extension = Path.GetExtension(fileName);
+
+            for (int i = 1; ; i++)
+            {
+                string candidate = Path.Combine(deletedDir, $"{name}_{i}{extension}");
+                if (!File.Exists(candidate)) return candidate;
+            }
+        }
+
         // ==========================================
         // 내부 클래스
         // ==========================================
@@ -1319,6 +1360,7 @@ namespace DataManager
             public int FrameNumber { get; set; }
             public string ImageFileName { get; set; } = "";
             public string ImagePath { get; set; } = "";
+            public string SourceDataPath { get; set; } = "";
             public double Angle { get; set; }
             public double Throttle { get; set; }
             public bool Deleted { get; set; }
