@@ -49,6 +49,8 @@ namespace DataManager
         private int currentTimelineVisibleCount = -1;
         private bool isUpdatingTimelineSelection;
         private int playbackFrameStep = 1;
+        private int tubNavigatorBaseHeight;
+        private int frameListBaseHeight;
 
         // 데이터 정리(필터/삭제) 대상 범위. -1은 미지정.
         private int rangeStart = -1;
@@ -101,7 +103,11 @@ namespace DataManager
             btnLast.Click += btnLast_Click;
             cmbPlaySpeed.SelectedIndexChanged += cmbPlaySpeed_SelectedIndexChanged;
             tabMain.SelectedIndexChanged += tabMain_SelectedIndexChanged;
-            Resize += (_, _) => RedrawGraphAfterLayout();
+            Resize += (_, _) =>
+            {
+                ArrangeTimelineAndTabs();
+                RedrawGraphAfterLayout();
+            };
             picFrame.Paint += picFrame_Paint;
             chkShowRealAngle.CheckedChanged += (_, _) => picFrame.Invalidate();
             chkShowPredictAngle.CheckedChanged += (_, _) => picFrame.Invalidate();
@@ -133,6 +139,22 @@ namespace DataManager
 
             InitializeGraphControls();
             picTestImage.SizeMode = PictureBoxSizeMode.Zoom;
+            tubNavigatorBaseHeight = groupTubNavigator.Height;
+            frameListBaseHeight = groupFrameList.Height;
+            ArrangeTimelineAndTabs();
+        }
+
+        private void ArrangeTimelineAndTabs()
+        {
+            if (tubNavigatorBaseHeight <= 0 || frameListBaseHeight <= 0) return;
+
+            groupTubNavigator.Height = tubNavigatorBaseHeight;
+            groupFrameList.Height = frameListBaseHeight;
+
+            int gap = 8;
+            groupTimeline.Top = groupTubNavigator.Bottom + gap;
+            tabMain.Top = groupTimeline.Bottom + gap;
+            tabMain.Height = Math.Max(120, ClientSize.Height - tabMain.Top - gap);
         }
 
         private void Form1_Load(object sender, EventArgs e)
