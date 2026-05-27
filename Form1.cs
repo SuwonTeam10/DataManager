@@ -2,8 +2,10 @@
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
@@ -21,6 +23,10 @@ namespace DataManager
         private ICE.ICommandExecutor _executor;
         private string modelPath = "";
         private string testImagePath = "";
+        private string latestTestImagePath = "";
+        private double? latestTestRealAngle;
+        private double? latestTestPredictAngle;
+        private readonly Dictionary<string, double> predictedAnglesByImageKey = new(StringComparer.OrdinalIgnoreCase);
         private string loggedInUser = "";
         private System.Windows.Forms.Timer playTimer;
         private bool _isUpdatingRadio = false;
@@ -31,12 +37,20 @@ namespace DataManager
         private readonly List<TubFrame> tubFrames = new();
         private readonly HashSet<int> missingImageFrames = new();
         private readonly ImageList timelineImages = new();
-        private const int TimelineVisibleCount = 20;
+        private const int TimelineMinimumVisibleCount = 20;
+        private const int TimelineMaximumVisibleCount = 60;
+        private const int TimelineThumbWidth = 48;
+        private const int TimelineThumbHeight = 36;
+        private const int TimelineIconSpacingX = 56;
+        private const int TimelineIconSpacingY = 44;
         private const int PlaybackBaseIntervalMs = 100;
         private const int PlaybackMinimumIntervalMs = 50;
         private int currentTimelineStart = -1;
+        private int currentTimelineVisibleCount = -1;
         private bool isUpdatingTimelineSelection;
         private int playbackFrameStep = 1;
+        private int tubNavigatorBaseHeight;
+        private int frameListBaseHeight;
 
         // 데이터 정리(필터/삭제) 대상 범위. -1은 미지정.
         private int rangeStart = -1;
@@ -89,7 +103,14 @@ namespace DataManager
             btnLast.Click += btnLast_Click;
             cmbPlaySpeed.SelectedIndexChanged += cmbPlaySpeed_SelectedIndexChanged;
             tabMain.SelectedIndexChanged += tabMain_SelectedIndexChanged;
-            Resize += (_, _) => RedrawGraphAfterLayout();
+            Resize += (_, _) =>
+            {
+                ArrangeTimelineAndTabs();
+                RedrawGraphAfterLayout();
+            };
+            picFrame.Paint += picFrame_Paint;
+            chkShowRealAngle.CheckedChanged += (_, _) => picFrame.Invalidate();
+            chkShowPredictAngle.CheckedChanged += (_, _) => picFrame.Invalidate();
 
             // 데이터 정리(범위 지정/필터/삭제/휴지통) 이벤트 연결
             btnSetLeft.Click += btnSetLeft_Click;
@@ -101,15 +122,39 @@ namespace DataManager
             lstTrash.SelectionMode = SelectionMode.MultiExtended;
 
             // 타임라인 썸네일 이미지 리스트 설정
-            timelineImages.ImageSize = new Size(36, 27);
+            timelineImages.ImageSize = new Size(TimelineThumbWidth, TimelineThumbHeight);
             timelineImages.ColorDepth = ColorDepth.Depth32Bit;
             lvTimeline.LargeImageList = timelineImages;
             lvTimeline.View = View.LargeIcon;
+            lvTimeline.Alignment = ListViewAlignment.Left;
+            lvTimeline.AutoArrange = true;
+            lvTimeline.LabelWrap = false;
+            lvTimeline.Scrollable = false;
             lvTimeline.HideSelection = false;
             lvTimeline.MultiSelect = false;
             lvTimeline.ShowItemToolTips = true;
+            lvTimeline.HandleCreated += (_, _) => ApplyTimelineIconSpacing();
+            lvTimeline.Resize += (_, _) => ReloadTimelineForCurrentFrame();
+            ApplyTimelineIconSpacing();
 
             InitializeGraphControls();
+            picTestImage.SizeMode = PictureBoxSizeMode.Zoom;
+            tubNavigatorBaseHeight = groupTubNavigator.Height;
+            frameListBaseHeight = groupFrameList.Height;
+            ArrangeTimelineAndTabs();
+        }
+
+        private void ArrangeTimelineAndTabs()
+        {
+            if (tubNavigatorBaseHeight <= 0 || frameListBaseHeight <= 0) return;
+
+            groupTubNavigator.Height = tubNavigatorBaseHeight;
+            groupFrameList.Height = frameListBaseHeight;
+
+            int gap = 8;
+            groupTimeline.Top = groupTubNavigator.Bottom + gap;
+            tabMain.Top = groupTimeline.Bottom + gap;
+            tabMain.Height = Math.Max(120, ClientSize.Height - tabMain.Top - gap);
         }
 
         private void Form1_Load(object sender, EventArgs e)
@@ -136,44 +181,42 @@ namespace DataManager
         private void CreateTopMenu()
         {
             MenuStrip menuStrip = new MenuStrip();
-            menuStrip.BackColor = Color.WhiteSmoke; // 배경색을 약간 회색으로 주어 메뉴바 영역이 잘 보임
-            menuStrip.Padding = new Padding(5, 5, 5, 5); // 여백
+            menuStrip.BackColor = Color.WhiteSmoke;
+            menuStrip.Padding = new Padding(5, 5, 5, 5);
             this.MainMenuStrip = menuStrip;
             this.Controls.Add(menuStrip);
 
-            menuStrip.BringToFront(); // 다른 UI(프레임 목록 등) 뒤에 가려지지 않고 무조건 맨 위로 오게 강제 설정!
+            menuStrip.BringToFront();
 
-            // 1. Donkeycar 사용 설명서 메뉴
+            // 1. Donkeycar 사용 설명서 메뉴 
             ToolStripMenuItem menuManual = new ToolStripMenuItem("📖 Donkeycar 사용 설명서");
-            menuManual.DropDownItems.Add("1. 좌측 [서버 연결 설정]에서 [원격] 선택 후 로그인");
-            menuManual.DropDownItems.Add("2. [설정 파일 열기] 클릭 후 기준 폴더 자동 세팅");
-            menuManual.DropDownItems.Add("3. [Tub 데이터 열기]로 윈도우로 다운받은 주행 데이터 불러오기");
-            menuManual.DropDownItems.Add("4. [학습] 버튼을 클릭하여 AI 모델 생성");
-            menuManual.DropDownItems.Add("5. 생성된 모델과 테스트 폴더를 선택해 [모델 테스트] 진행");
+            menuManual.DropDownItems.Add("1. [서버 연결 설정]에서 로컬/원격 선택 후 접속");
+            menuManual.DropDownItems.Add("2. [설정 파일 열기] 클릭하여 mycar 폴더(작업 기준점) 설정");
+            menuManual.DropDownItems.Add("3. [Tub 데이터 열기]로 주행 데이터(data 폴더) 불러오기");
+            menuManual.DropDownItems.Add("4. [데이터 정리] 탭에서 불필요한 데이터(속도 0 등) 필터링 및 휴지통 비우기");
+            menuManual.DropDownItems.Add("5. [학습/테스트] 탭에서 [학습 시작] 클릭 (완료 시 models/mypilot.h5 자동 저장)");
+            menuManual.DropDownItems.Add("6. [모델 선택] -> [테스트 이미지 선택] 후 [모델 테스트 실행]으로 검증");
             menuManual.MouseEnter += (s, e) => menuManual.ShowDropDown();
 
             // 2. 단축키 메뉴
             ToolStripMenuItem menuHotkeys = new ToolStripMenuItem("⌨️ 단축키 안내");
-            menuHotkeys.DropDownItems.Add("Space Bar : 자동 재생 / 정지 토글");
-            menuHotkeys.DropDownItems.Add("← / → 방향키 : 프레임 1칸씩 이동");
+            menuHotkeys.DropDownItems.Add("Space Bar : 자동 재생 / 정지 토글 (예정)");
+            menuHotkeys.DropDownItems.Add("← / → 방향키 : 프레임 1칸씩 이동 (예정)");
             menuHotkeys.MouseEnter += (s, e) => menuHotkeys.ShowDropDown();
 
-            // 3. 우측 상단 로그인 프로필 메뉴 (잘림 방지 및 디테일 추가)
+            // 3. 우측 상단 로그인 프로필 메뉴
             menuProfile = new ToolStripMenuItem("👤 로컬 모드 (로그아웃 상태)");
             menuProfile.Alignment = ToolStripItemAlignment.Right;
             menuProfile.Font = new Font("맑은 고딕", 9, FontStyle.Bold);
-
-            // 화면 잘림 방지: 오른쪽 끝에 있으므로 메뉴가 왼쪽 아래로 펼쳐지도록 방향 강제
             menuProfile.DropDownDirection = ToolStripDropDownDirection.BelowLeft;
 
-            // 프로필 하위 메뉴 (인성님 아이디어 적용)
             ToolStripMenuItem infoRole = new ToolStripMenuItem("상태: 로컬 환경 대기 중");
-            infoRole.Enabled = false; // 클릭 안되는 정보 표시용
+            infoRole.Enabled = false;
 
             ToolStripMenuItem infoTrain = new ToolStripMenuItem("오늘 학습 시도: 0회");
             infoTrain.Enabled = false;
 
-            ToolStripSeparator separator = new ToolStripSeparator(); // 구분선
+            ToolStripSeparator separator = new ToolStripSeparator();
 
             ToolStripMenuItem menuLogout = new ToolStripMenuItem("🛑 원격 서버 로그아웃");
             menuLogout.Click += menuLogout_Click;
@@ -391,34 +434,37 @@ namespace DataManager
         private void UpdateChartRealTime(string logText)
         {
             if (string.IsNullOrEmpty(logText)) return;
+
+            //  1. 로그 클리너: 파이썬의 무의미한 진행률 ==== 및 깨진 문자 렌더링 무시 (UI 렉 방지)
+            if (logText.Contains('\r') || logText.Contains('\b') || logText.Count(c => c == '=') > 10 || logText.Contains(""))
+            {
+                return;
+            }
+
             txtLog.AppendText(logText + Environment.NewLine);
 
-            // 1. 에러 발생 시 알림
+            // 2. 에러 발생 시 알림
             if (logText.Contains("[Errno 2]") || logText.Contains("Error") || logText.Contains("Exception"))
             {
                 MessageBox.Show($"학습 중 파이썬 오류가 발생했습니다.\n로그 창을 확인해주세요.\n\n내용: {logText}", "학습 오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return;
             }
 
-            //  2. 로그 정리 및 안내 팝업
+            // 3. 로그 정리 및 안내 팝업 (저장 경로 및 다음 단계 상세 안내)
             if (logText.Contains("Saved model") || logText.Contains("Finished") || logText.Contains("Stopping early") || logText.ToLower().Contains("model saved"))
             {
-                // UI 정리 (진행률 바 0으로 초기화)
-                if (progressBarTrain != null)
-                {
-                    progressBarTrain.Value = 0;
-                }
+                if (progressBarTrain != null) progressBarTrain.Value = progressBarTrain.Maximum;
+                if (lblProgressPercent != null) lblProgressPercent.Text = "100%"; // 완료 시 100% 텍스트 강제 적용
 
-                // 로그 창에 구분선과 안내 멘트 추가
                 txtLog.AppendText(Environment.NewLine + "--------------------------------------------------");
                 txtLog.AppendText(Environment.NewLine + "✅ [학습 완료] AI 모델 생성이 끝났습니다.");
+                txtLog.AppendText(Environment.NewLine + $"📁 자동 저장 위치: {configPath}/models/mypilot.h5");
                 txtLog.AppendText(Environment.NewLine + "--------------------------------------------------" + Environment.NewLine);
 
-                // 팝업 알림 (다음 행동 지침 포함)
-                MessageBox.Show("🎉 AI 모델 학습이 무사히 완료되었습니다!\n\n[다음 단계]\n1. 하단의 '모델 선택'을 눌러 방금 학습된 모델(mypilot.h5)을 선택하세요.\n2. '테스트 이미지 선택'을 누르고 주행 데이터 폴더를 고르세요.\n3. '모델 테스트' 버튼을 눌러 AI가 예측 조향각을 잘 뽑아내는지 확인해보세요!", "학습 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show($"🎉 AI 모델 학습이 무사히 완료되었습니다!\n\n[자동 저장 위치]\n{configPath}/models/mypilot.h5\n\n[다음 단계 안내]\n1. 좌측의 [모델 선택] 버튼을 누르세요. (자동으로 세팅됩니다.)\n2. [테스트 이미지 선택]을 누르고 주행 데이터 폴더를 고르세요.\n3. [모델 테스트 실행] 버튼을 눌러 AI가 예측 조향각을 잘 뽑아내는지 확인해보세요!", "학습 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
 
-            // 3. Loss 값 추출 (그래프용 - 현재는 주석 처리됨)
+            // 4. Loss 값 추출 (그래프용 - 현재는 주석 처리됨)
             Match matchLoss = Regex.Match(logText, @"loss:\s*([0-9]*\.?[0-9]+)");
             if (matchLoss.Success)
             {
@@ -426,8 +472,7 @@ namespace DataManager
                 // chartLoss.Series["Loss"].Points.AddY(lossValue); 
             }
 
-            // 진행률 바 순간이동 버그 수정
-            // 앞쪽에 정확히 'Epoch'라는 단어가 있는 진짜 진행률만 캐치
+            // 5. 진행률 바 및 % 텍스트 정상화 (Epoch n/m 형태 감지)
             Match epochMatch = Regex.Match(logText, @"Epoch\s+(\d+)/(\d+)");
             if (epochMatch.Success && progressBarTrain != null)
             {
@@ -435,6 +480,13 @@ namespace DataManager
                 int total = int.Parse(epochMatch.Groups[2].Value);
                 progressBarTrain.Maximum = total;
                 progressBarTrain.Value = current <= total ? current : total;
+
+                // ★ 퍼센트 라벨 업데이트 로직 추가!
+                if (lblProgressPercent != null)
+                {
+                    int percent = (int)((double)current / total * 100);
+                    lblProgressPercent.Text = $"{percent}%";
+                }
             }
         }
 
@@ -470,6 +522,7 @@ namespace DataManager
                 if (dlg.ShowDialog() == DialogResult.OK)
                 {
                     testImagePath = dlg.SelectedPath;
+                    ShowTestImagePreview(FindFirstTestImagePath());
                     MessageBox.Show($"테스트 이미지 폴더가 선택되었습니다:\n{testImagePath}", "선택 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
                     txtLog.AppendText(Environment.NewLine + $"[Info] 선택된 테스트 폴더: {testImagePath}");
                 }
@@ -503,12 +556,221 @@ namespace DataManager
             }
 
             txtLog.AppendText(Environment.NewLine + $"[Test] {Path.GetFileName(modelPath)} 예측 시작...");
+            ResetModelTestResult();
+            ShowTestImagePreview(FindFirstTestImagePath());
 
             bool useVenv = chkUseVenv != null ? chkUseVenv.Checked : true;
-            _executor.ExecuteTest(configPath, modelPath, useVenv, (log) =>
+            _executor.ExecuteTest(configPath, modelPath, testImagePath, useVenv, (log) =>
             {
-                this.Invoke(new Action(() => { if (!string.IsNullOrEmpty(log)) txtLog.AppendText(Environment.NewLine + log); }));
+                this.Invoke(new Action(() => HandleModelTestLog(log)));
             });
+        }
+
+        private void ResetModelTestResult()
+        {
+            // 모델 테스트 시작 전 이전 결과를 지워서 새 로그 값만 보이게 한다.
+            latestTestImagePath = "";
+            latestTestRealAngle = null;
+            latestTestPredictAngle = null;
+            predictedAnglesByImageKey.Clear();
+            lblRealAngle2.Text = "-";
+            lblPredictAngle2.Text = "-";
+            lblErrorValue2.Text = "-";
+            lblTrainStatus2.Text = "테스트 중";
+            lblTrainStatus2.ForeColor = Color.DarkOrange;
+        }
+
+        private void HandleModelTestLog(string logText)
+        {
+            if (string.IsNullOrWhiteSpace(logText)) return;
+
+            txtLog.AppendText(Environment.NewLine + logText);
+
+            string? imageReference = TryFindImageReferenceFromLog(logText);
+            string? imagePath = TryFindImagePathFromLog(logText);
+            if (!string.IsNullOrWhiteSpace(imagePath))
+            {
+                ShowTestImagePreview(imagePath);
+            }
+
+            if (TryExtractLogValue(logText, new[]
+                {
+                    @"(?:real|actual|label|target|user/angle|실제\s*조향각|실제)\s*[:=]\s*(-?\d+(?:\.\d+)?)",
+                    @"^\s*angle\s*[:=]\s*(-?\d+(?:\.\d+)?)"
+                }, out double realAngle))
+            {
+                latestTestRealAngle = realAngle;
+                lblRealAngle2.Text = realAngle.ToString("0.000");
+            }
+
+            if (TryExtractLogValue(logText, new[]
+                {
+                    @"(?:predict(?:ed)?|prediction|pred|pilot/angle|예측\s*조향각|예측)\s*[:=]\s*(-?\d+(?:\.\d+)?)"
+                }, out double predictAngle))
+            {
+                latestTestPredictAngle = predictAngle;
+                lblPredictAngle2.Text = predictAngle.ToString("0.000");
+                StorePredictedAngleForImage(imagePath ?? imageReference ?? latestTestImagePath, predictAngle);
+                picFrame.Invalidate();
+            }
+
+            if (TryExtractLogValue(logText, new[]
+                {
+                    @"(?:error|loss|diff|오차)\s*[:=]\s*(-?\d+(?:\.\d+)?)"
+                }, out double errorValue))
+            {
+                lblErrorValue2.Text = Math.Abs(errorValue).ToString("0.000");
+            }
+            else if (latestTestRealAngle.HasValue && latestTestPredictAngle.HasValue)
+            {
+                lblErrorValue2.Text = Math.Abs(latestTestRealAngle.Value - latestTestPredictAngle.Value).ToString("0.000");
+            }
+
+            if (logText.Contains("Finished", StringComparison.OrdinalIgnoreCase)
+                || logText.Contains("complete", StringComparison.OrdinalIgnoreCase)
+                || logText.Contains("완료", StringComparison.OrdinalIgnoreCase))
+            {
+                lblTrainStatus2.Text = "테스트 완료";
+                lblTrainStatus2.ForeColor = Color.Green;
+            }
+            else if (logText.Contains("Error", StringComparison.OrdinalIgnoreCase)
+                || logText.Contains("Exception", StringComparison.OrdinalIgnoreCase)
+                || logText.Contains("Traceback", StringComparison.OrdinalIgnoreCase))
+            {
+                lblTrainStatus2.Text = "오류";
+                lblTrainStatus2.ForeColor = Color.Red;
+            }
+        }
+
+        private string? FindFirstTestImagePath()
+        {
+            if (string.IsNullOrWhiteSpace(testImagePath) || !Directory.Exists(testImagePath)) return null;
+
+            try
+            {
+                return Directory.EnumerateFiles(testImagePath, "*.*", SearchOption.AllDirectories)
+                    .FirstOrDefault(IsImageFile);
+            }
+            catch (IOException)
+            {
+                return null;
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return null;
+            }
+        }
+
+        private string? TryFindImagePathFromLog(string logText)
+        {
+            string? rawPath = TryFindImageReferenceFromLog(logText);
+            if (string.IsNullOrWhiteSpace(rawPath)) return null;
+            if (File.Exists(rawPath)) return rawPath;
+
+            string normalizedPath = rawPath.Replace('/', Path.DirectorySeparatorChar);
+            if (File.Exists(normalizedPath)) return normalizedPath;
+
+            if (!string.IsNullOrWhiteSpace(testImagePath))
+            {
+                string byName = Path.Combine(testImagePath, Path.GetFileName(normalizedPath));
+                if (File.Exists(byName)) return byName;
+
+                if (Directory.Exists(testImagePath))
+                {
+                    try
+                    {
+                        return Directory.EnumerateFiles(testImagePath, Path.GetFileName(normalizedPath), SearchOption.AllDirectories)
+                            .FirstOrDefault();
+                    }
+                    catch (IOException)
+                    {
+                        return null;
+                    }
+                    catch (UnauthorizedAccessException)
+                    {
+                        return null;
+                    }
+                }
+            }
+
+            return null;
+        }
+
+        private static string? TryFindImageReferenceFromLog(string logText)
+        {
+            Match match = Regex.Match(logText, @"(?<path>[^\s""']+\.(?:jpg|jpeg|png|bmp))", RegexOptions.IgnoreCase);
+            return match.Success ? match.Groups["path"].Value.Trim() : null;
+        }
+
+        private void StorePredictedAngleForImage(string? imagePath, double predictAngle)
+        {
+            foreach (string key in GetImagePredictionKeys(imagePath))
+            {
+                predictedAnglesByImageKey[key] = predictAngle;
+            }
+        }
+
+        private bool TryGetPredictedAngleForFrame(TubFrame frame, out double predictAngle)
+        {
+            foreach (string key in GetImagePredictionKeys(frame.ImagePath).Concat(GetImagePredictionKeys(frame.ImageFileName)))
+            {
+                if (predictedAnglesByImageKey.TryGetValue(key, out predictAngle))
+                {
+                    return true;
+                }
+            }
+
+            predictAngle = 0;
+            return false;
+        }
+
+        private static IEnumerable<string> GetImagePredictionKeys(string? imagePath)
+        {
+            if (string.IsNullOrWhiteSpace(imagePath)) yield break;
+
+            string normalized = imagePath.Trim().Replace('/', Path.DirectorySeparatorChar);
+            yield return normalized;
+
+            string fileName = Path.GetFileName(normalized);
+            if (!string.IsNullOrWhiteSpace(fileName)) yield return fileName;
+        }
+
+        private void ShowTestImagePreview(string? imagePath)
+        {
+            if (string.IsNullOrWhiteSpace(imagePath) || !File.Exists(imagePath)) return;
+            if (string.Equals(latestTestImagePath, imagePath, StringComparison.OrdinalIgnoreCase)) return;
+
+            Image? oldImage = picTestImage.Image;
+            picTestImage.Image = LoadImage(imagePath);
+            oldImage?.Dispose();
+            latestTestImagePath = imagePath;
+        }
+
+        private static bool TryExtractLogValue(string logText, IEnumerable<string> patterns, out double value)
+        {
+            foreach (string pattern in patterns)
+            {
+                Match match = Regex.Match(logText, pattern, RegexOptions.IgnoreCase);
+                if (match.Success && TryParseLogDouble(match.Groups[1].Value, out value))
+                {
+                    return true;
+                }
+            }
+
+            value = 0;
+            return false;
+        }
+
+        private static bool TryParseLogDouble(string text, out double value)
+        {
+            return double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out value)
+                || double.TryParse(text, NumberStyles.Float, CultureInfo.CurrentCulture, out value);
+        }
+
+        private static bool IsImageFile(string path)
+        {
+            string extension = Path.GetExtension(path).ToLowerInvariant();
+            return extension is ".jpg" or ".jpeg" or ".png" or ".bmp";
         }
 
         // ==========================================
@@ -777,17 +1039,19 @@ namespace DataManager
 
         private void UpdateTimelineForFrame(int frameIndex)
         {
-            int timelineStart = (frameIndex / TimelineVisibleCount) * TimelineVisibleCount;
-            if (timelineStart == currentTimelineStart) return;
+            int visibleCount = GetTimelineVisibleCount();
+            int timelineStart = (frameIndex / visibleCount) * visibleCount;
+            if (timelineStart == currentTimelineStart && visibleCount == currentTimelineVisibleCount) return;
 
             currentTimelineStart = timelineStart;
+            currentTimelineVisibleCount = visibleCount;
             lvTimeline.BeginUpdate();
             lvTimeline.Items.Clear();
             timelineImages.Images.Clear();
 
             try
             {
-                int timelineEnd = Math.Min(tubFrames.Count, timelineStart + TimelineVisibleCount);
+                int timelineEnd = Math.Min(tubFrames.Count, timelineStart + visibleCount);
                 for (int i = timelineStart; i < timelineEnd; i++)
                 {
                     TubFrame frame = tubFrames[i];
@@ -797,6 +1061,24 @@ namespace DataManager
                 }
             }
             finally { lvTimeline.EndUpdate(); }
+        }
+
+        private int GetTimelineVisibleCount()
+        {
+            int availableWidth = Math.Max(0, lvTimeline.ClientSize.Width - 8);
+            int countByWidth = availableWidth / TimelineIconSpacingX;
+            return Math.Clamp(countByWidth, TimelineMinimumVisibleCount, TimelineMaximumVisibleCount);
+        }
+
+        private void ReloadTimelineForCurrentFrame()
+        {
+            ApplyTimelineIconSpacing();
+            if (tubFrames.Count == 0) return;
+
+            currentTimelineStart = -1;
+            currentTimelineVisibleCount = -1;
+            int frameIndex = Math.Min(trackFrame.Value, tubFrames.Count - 1);
+            UpdateTimelineForFrame(frameIndex);
         }
 
         private void ShowFrame(int index)
@@ -828,6 +1110,84 @@ namespace DataManager
             if (!File.Exists(frame.ImagePath)) missingImageFrames.Add(index);
 
             UpdateFrameInfoLabels(frame, index);
+            picFrame.Invalidate();
+        }
+
+        private void picFrame_Paint(object? sender, PaintEventArgs e)
+        {
+            if (picFrame.Image == null || trackFrame.Value < 0 || trackFrame.Value >= tubFrames.Count) return;
+
+            Rectangle imageRect = GetZoomedImageRectangle(picFrame);
+            if (imageRect.Width <= 0 || imageRect.Height <= 0) return;
+
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+
+            TubFrame frame = tubFrames[trackFrame.Value];
+            if (chkShowRealAngle.Checked)
+            {
+                DrawSteeringAngleLine(e.Graphics, imageRect, frame.Angle, Color.LimeGreen, "실제");
+            }
+
+            if (chkShowPredictAngle.Checked && TryGetPredictedAngleForFrame(frame, out double framePredictAngle))
+            {
+                DrawSteeringAngleLine(e.Graphics, imageRect, framePredictAngle, Color.DeepSkyBlue, "예측");
+            }
+        }
+
+        private static Rectangle GetZoomedImageRectangle(PictureBox pictureBox)
+        {
+            if (pictureBox.Image == null) return Rectangle.Empty;
+
+            float imageRatio = (float)pictureBox.Image.Width / pictureBox.Image.Height;
+            float boxRatio = (float)pictureBox.ClientSize.Width / pictureBox.ClientSize.Height;
+
+            if (imageRatio > boxRatio)
+            {
+                int width = pictureBox.ClientSize.Width;
+                int height = (int)(width / imageRatio);
+                int top = (pictureBox.ClientSize.Height - height) / 2;
+                return new Rectangle(0, top, width, height);
+            }
+            else
+            {
+                int height = pictureBox.ClientSize.Height;
+                int width = (int)(height * imageRatio);
+                int left = (pictureBox.ClientSize.Width - width) / 2;
+                return new Rectangle(left, 0, width, height);
+            }
+        }
+
+        private static void DrawSteeringAngleLine(Graphics graphics, Rectangle imageRect, double angle, Color color, string label)
+        {
+            double clampedAngle = Math.Clamp(angle, -1.0, 1.0);
+            PointF start = new PointF(imageRect.Left + imageRect.Width / 2f, imageRect.Bottom - imageRect.Height * 0.12f);
+            float lineLength = imageRect.Height * 0.45f;
+            float endX = start.X + (float)(clampedAngle * imageRect.Width * 0.35);
+            float endY = start.Y - lineLength;
+            PointF end = new PointF(endX, endY);
+
+            using Pen shadowPen = new Pen(Color.FromArgb(150, Color.Black), 7)
+            {
+                StartCap = LineCap.Round,
+                EndCap = LineCap.Round
+            };
+            using Pen linePen = new Pen(color, 4)
+            {
+                StartCap = LineCap.Round,
+                EndCap = LineCap.Round
+            };
+
+            graphics.DrawLine(shadowPen, start, end);
+            graphics.DrawLine(linePen, start, end);
+
+            using Brush textBack = new SolidBrush(Color.FromArgb(170, Color.Black));
+            using Brush textBrush = new SolidBrush(Color.White);
+            using Font font = new Font("나눔고딕", 9F, FontStyle.Bold);
+            string text = $"{label} {angle:0.000}";
+            SizeF textSize = graphics.MeasureString(text, font);
+            RectangleF labelRect = new RectangleF(end.X + 8, end.Y - textSize.Height / 2, textSize.Width + 8, textSize.Height + 4);
+            graphics.FillRectangle(textBack, labelRect);
+            graphics.DrawString(text, font, textBrush, labelRect.Left + 4, labelRect.Top + 2);
         }
 
         private void UpdateFrameInfoLabels(TubFrame? frame, int index)
@@ -939,17 +1299,35 @@ namespace DataManager
         {
             if (!File.Exists(imagePath))
             {
-                Bitmap missing = new Bitmap(36, 27);
+                Bitmap missing = new Bitmap(TimelineThumbWidth, TimelineThumbHeight);
                 using Graphics graphics = Graphics.FromImage(missing);
                 graphics.Clear(Color.Black);
                 using Pen pen = new Pen(Color.DarkGray);
-                graphics.DrawRectangle(pen, 0, 0, 35, 26);
+                graphics.DrawRectangle(pen, 0, 0, TimelineThumbWidth - 1, TimelineThumbHeight - 1);
                 return missing;
             }
             using FileStream stream = new FileStream(imagePath, FileMode.Open, FileAccess.Read);
             using Image source = Image.FromStream(stream);
-            return new Bitmap(source, new Size(36, 27));
+            return new Bitmap(source, new Size(TimelineThumbWidth, TimelineThumbHeight));
         }
+
+        // ListView 기본 큰 아이콘 간격이 넓어서 썸네일이 한 줄에 촘촘히 보이도록 직접 조정한다.
+        private void ApplyTimelineIconSpacing()
+        {
+            if (!lvTimeline.IsHandleCreated) return;
+            SendMessage(lvTimeline.Handle, LvmSetIconSpacing, IntPtr.Zero, MakeLParam(TimelineIconSpacingX, TimelineIconSpacingY));
+        }
+
+        private static IntPtr MakeLParam(int lowWord, int highWord)
+        {
+            return (IntPtr)((highWord << 16) | (lowWord & 0xffff));
+        }
+
+        private const int LvmFirst = 0x1000;
+        private const int LvmSetIconSpacing = LvmFirst + 53;
+
+        [DllImport("user32.dll", CharSet = CharSet.Auto)]
+        private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
 
         private static string GetStringValue(JsonElement root, string propertyName)
         {
@@ -1799,6 +2177,11 @@ namespace DataManager
         private void chkAutoPlay_CheckedChanged(object sender, EventArgs e)
         {
             UpdateAutoPlayLoopVisual();
+        }
+
+        private void picFrame_Click(object sender, EventArgs e)
+        {
+
         }
     }
 }
