@@ -1085,5 +1085,10 @@ namespace DataManager
                 chkAutoPlay.ForeColor = Color.Black;
             }
         }
+
+        private void picFrame_Click(object sender, EventArgs e)
+        {
+
+        }
     }
 }
