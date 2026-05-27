@@ -40,7 +40,6 @@ namespace DataManager
 
         // 자동 재생 성능을 위한 표시용 이미지 LRU 캐시(메모리 상한 적용). 캐시가 Bitmap 소유권을 가진다.
         private readonly FrameImageCache frameImageCache;
-
         // ==========================================
         // 1. 초기화 및 생성자
         // ==========================================
@@ -106,6 +105,9 @@ namespace DataManager
             {
                 MessageBox.Show("[기본 사용 순서]\n\n1. 좌측 [서버 연결 설정]에서 [원격] 선택 후 로그인\n2. [설정 파일 열기] 클릭하여 서버 경로 동기화\n3. [Tub 데이터 열기]로 윈도우로 다운받은 주행기록 폴더 열기\n4. 이상한 데이터 필터링 및 삭제\n5. [학습] 버튼을 눌러 AI 훈련시키기\n6. 훈련된 모델로 [모델 테스트] 진행\n\n이 내용은 상단 메뉴바에서도 언제든 확인 가능합니다.", "초보자 가이드");
             }
+
+            // 기본 재생속도 1x로 설정
+            cmbPlaySpeed.SelectedIndex = 0;
         }
 
         // 상단 메뉴바 자동 생성기 (UI/UX 패치)
@@ -544,10 +546,27 @@ namespace DataManager
 
         private async Task LoadTubAsync(string selectedTubPath)
         {
-            string[] catalogFiles = Directory.GetFiles(selectedTubPath, "catalog_*.catalog").OrderBy(file => file).ToArray();
-            if (catalogFiles.Length == 0)
+            // 신버전 Tub은 catalog_*.catalog, 구버전 Tub은 record_*.json 파일을 사용한다.
+            // 사용자가 data 폴더를 선택해도 내부 tub 폴더를 찾을 수 있도록 하위 폴더까지 검색한다.
+            string[] catalogFiles = Directory.GetFiles(selectedTubPath, "catalog_*.catalog", SearchOption.AllDirectories)
+                .OrderBy(GetFileOrderNumber)
+                .ThenBy(file => file)
+                .ToArray();
+            string[] recordFiles = Array.Empty<string>();
+            bool isOldRecordTub = catalogFiles.Length == 0;
+
+            if (isOldRecordTub)
             {
-                MessageBox.Show("catalog_*.catalog 파일을 찾을 수 없습니다.", "Load Tub", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                // catalog 파일이 없으면 구버전 record JSON 형식으로 판단하고 record_*.json을 찾는다.
+                recordFiles = Directory.GetFiles(selectedTubPath, "record_*.json", SearchOption.AllDirectories)
+                    .OrderBy(GetFileOrderNumber)
+                    .ThenBy(file => file)
+                    .ToArray();
+            }
+
+            if (catalogFiles.Length == 0 && recordFiles.Length == 0)
+            {
+                MessageBox.Show("catalog_*.catalog 또는 record_*.json 파일을 찾을 수 없습니다.", "Load Tub", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
 
@@ -573,13 +592,17 @@ namespace DataManager
 
             try
             {
-                TubLoadResult result = await Task.Run(() => ReadTubFrames(selectedTubPath, catalogFiles));
+                // Tub 형식에 따라 신버전 catalog 파서 또는 구버전 record JSON 파서를 선택한다.
+                TubLoadResult result = await Task.Run(() =>
+                    isOldRecordTub
+                        ? ReadOldTubFrames(selectedTubPath, recordFiles)
+                        : ReadTubFrames(selectedTubPath, catalogFiles));
                 tubFrames.AddRange(result.Frames);
                 ResetTubView();
 
                 if (tubFrames.Count > 0) ShowFrame(0);
                 foreach (string error in result.Errors) AddLog(error);
-                AddLog($"Load Tub 완료: {tubFrames.Count}개 프레임");
+                AddLog($"Load Tub 완료: {tubFrames.Count}개 프레임 ({(isOldRecordTub ? "구버전 record JSON" : "catalog")} 형식)");
 
                 // 순차적 안내 팝업창
                 MessageBox.Show($"주행 데이터 {tubFrames.Count}장을 성공적으로 불러왔습니다!\n\n[다음 단계 안내]\n1. 화면 하단의 슬라이더를 움직여 비정상적인 주행 사진이 있는지 확인하세요.\n2. 필요하다면 데이터 필터링/삭제 기능을 이용해 정리하세요.\n3. 정리가 완료되었다면 좌측 하단의 [학습] 버튼을 눌러 AI 훈련을 시작하세요.", "데이터 로드 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -599,11 +622,17 @@ namespace DataManager
 
         private static TubLoadResult ReadTubFrames(string selectedTubPath, string[] catalogFiles)
         {
+            // 신버전 Donkeycar Tub의 catalog 파일을 읽어 프레임 데이터로 변환한다.
             TubLoadResult result = new TubLoadResult();
-            string imageBasePath = GetImageBasePath(selectedTubPath);
+            Dictionary<string, Dictionary<string, string>> imageLookupCache = new();
 
             foreach (string catalogFile in catalogFiles)
             {
+                // catalog가 하위 tub 폴더에 있을 수 있으므로 해당 catalog 폴더를 이미지 기준 경로로 사용한다.
+                string tubBasePath = Path.GetDirectoryName(catalogFile) ?? selectedTubPath;
+                string imageBasePath = GetImageBasePath(tubBasePath);
+                Dictionary<string, string>? imageLookup = null;
+
                 foreach (string line in File.ReadLines(catalogFile))
                 {
                     if (string.IsNullOrWhiteSpace(line)) continue;
@@ -619,10 +648,9 @@ namespace DataManager
                         {
                             FrameNumber = GetIntValue(root, "_index", result.Frames.Count),
                             ImageFileName = imageFileName,
-                            ImagePath = FindImagePath(selectedTubPath, imageBasePath, imageFileName),
+                            ImagePath = FindImagePath(tubBasePath, imageBasePath, imageLookupCache, ref imageLookup, imageFileName),
                             Angle = GetDoubleValue(root, "user/angle"),
-                            Throttle = GetDoubleValue(root, "user/throttle"),
-                            SourceCatalog = catalogFile
+                            Throttle = GetDoubleValue(root, "user/throttle")
                         };
                         result.Frames.Add(frame);
                     }
@@ -632,6 +660,62 @@ namespace DataManager
                     }
                 }
             }
+            return result;
+        }
+
+        private static TubLoadResult ReadOldTubFrames(string selectedTubPath, string[] recordFiles)
+        {
+            // 구버전 Donkeycar Tub은 record_0.json 같은 개별 JSON 파일에 프레임 정보를 저장한다.
+            TubLoadResult result = new TubLoadResult();
+            Dictionary<string, Dictionary<string, string>> imageLookupCache = new();
+
+            foreach (string recordFile in recordFiles)
+            {
+                // record 파일도 하위 tub 폴더에 있을 수 있으므로 record가 있는 폴더 기준으로 이미지를 찾는다.
+                string tubBasePath = Path.GetDirectoryName(recordFile) ?? selectedTubPath;
+                string imageBasePath = GetImageBasePath(tubBasePath);
+                Dictionary<string, string>? imageLookup = null;
+
+                try
+                {
+                    using JsonDocument document = JsonDocument.Parse(File.ReadAllText(recordFile));
+                    JsonElement root = document.RootElement;
+                    string imageFileName = GetStringValue(root, "cam/image_array");
+
+                    if (string.IsNullOrWhiteSpace(imageFileName))
+                    {
+                        result.Errors.Add($"record 이미지 정보 없음: {Path.GetFileName(recordFile)}");
+                        continue;
+                    }
+
+                    int fallbackFrameNumber = GetFileOrderNumber(recordFile);
+                    if (fallbackFrameNumber == int.MaxValue)
+                    {
+                        // 파일명에서 번호를 못 찾으면 읽은 순서를 프레임 번호로 사용한다.
+                        fallbackFrameNumber = result.Frames.Count;
+                    }
+
+                    TubFrame frame = new TubFrame
+                    {
+                        FrameNumber = GetIntValue(root, "_index", fallbackFrameNumber),
+                        ImageFileName = imageFileName,
+                        ImagePath = FindImagePath(tubBasePath, imageBasePath, imageLookupCache, ref imageLookup, imageFileName),
+                        Angle = GetDoubleValue(root, "user/angle"),
+                        Throttle = GetDoubleValue(root, "user/throttle")
+                    };
+
+                    result.Frames.Add(frame);
+                }
+                catch (JsonException ex)
+                {
+                    result.Errors.Add($"record 파싱 오류: {Path.GetFileName(recordFile)} - {ex.Message}");
+                }
+                catch (IOException ex)
+                {
+                    result.Errors.Add($"record 읽기 오류: {Path.GetFileName(recordFile)} - {ex.Message}");
+                }
+            }
+
             return result;
         }
 
@@ -721,12 +805,66 @@ namespace DataManager
             return selectedTubPath;
         }
 
-        private static string FindImagePath(string selectedTubPath, string imageBasePath, string imageFileName)
+        private static Dictionary<string, string> GetImageLookup(string selectedTubPath, Dictionary<string, Dictionary<string, string>> imageLookupCache)
         {
+            // 이미지 폴더명이 달라도 파일명으로 찾을 수 있도록 tub 폴더 아래의 이미지 파일 목록을 캐시한다.
+            if (imageLookupCache.TryGetValue(selectedTubPath, out Dictionary<string, string>? cachedLookup))
+            {
+                return cachedLookup;
+            }
+
+            string[] imageExtensions = { ".jpg", ".jpeg", ".png" };
+            Dictionary<string, string> imageLookup = Directory.GetFiles(selectedTubPath, "*.*", SearchOption.AllDirectories)
+                .Where(file => imageExtensions.Contains(Path.GetExtension(file).ToLowerInvariant()))
+                .GroupBy(file => Path.GetFileName(file), StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+
+            imageLookupCache[selectedTubPath] = imageLookup;
+            return imageLookup;
+        }
+
+        private static string FindImagePath(
+            string selectedTubPath,
+            string imageBasePath,
+            Dictionary<string, Dictionary<string, string>> imageLookupCache,
+            ref Dictionary<string, string>? imageLookup,
+            string imageFileName)
+        {
+            // catalog의 cam/image_array 파일명을 기준으로 이미지 경로를 결정한다.
+            // 기본 위치에서 못 찾을 때만 tub 하위 전체 검색 캐시를 만든다.
             if (Path.IsPathRooted(imageFileName)) return imageFileName;
             string normalizedImageFileName = imageFileName.Replace('/', Path.DirectorySeparatorChar);
-            if (!string.IsNullOrWhiteSpace(Path.GetDirectoryName(normalizedImageFileName))) return Path.Combine(selectedTubPath, normalizedImageFileName);
-            return Path.Combine(imageBasePath, normalizedImageFileName);
+            string fileNameOnly = Path.GetFileName(normalizedImageFileName);
+
+            if (!string.IsNullOrWhiteSpace(Path.GetDirectoryName(normalizedImageFileName)))
+            {
+                string catalogRelativePath = Path.Combine(selectedTubPath, normalizedImageFileName);
+                if (File.Exists(catalogRelativePath))
+                {
+                    return catalogRelativePath;
+                }
+            }
+
+            string basePath = Path.Combine(imageBasePath, fileNameOnly);
+            if (File.Exists(basePath))
+            {
+                return basePath;
+            }
+
+            imageLookup ??= GetImageLookup(selectedTubPath, imageLookupCache);
+            if (imageLookup.TryGetValue(fileNameOnly, out string? foundImagePath))
+            {
+                return foundImagePath;
+            }
+
+            return basePath;
+        }
+
+        private static int GetFileOrderNumber(string filePath)
+        {
+            // catalog_10.catalog, record_10.json 같은 파일명을 숫자 기준으로 정렬하기 위해 번호를 추출한다.
+            Match match = Regex.Match(Path.GetFileNameWithoutExtension(filePath), @"(\d+)$");
+            return match.Success ? int.Parse(match.Groups[1].Value) : int.MaxValue;
         }
 
         private static Image LoadImage(string imagePath)
@@ -1072,25 +1210,24 @@ namespace DataManager
                 string deletedDir = Path.Combine(tubPath, "deleted");
                 Directory.CreateDirectory(deletedDir);
 
-                // 1) catalog 파일별로 삭제 대상 기록을 제외하고 재작성 (원본은 1회 백업)
-                foreach (IGrouping<string, TubFrame> group in deleted.Where(f => !string.IsNullOrEmpty(f.SourceCatalog)).GroupBy(f => f.SourceCatalog))
+                // 1) tub 폴더의 catalog 파일들을 훑어 삭제 대상 이미지 기록을 제외하고 재작성한다.
+                //    (프레임의 원본 catalog를 따로 저장하지 않으므로 이미지 파일명으로 직접 찾는다. 변경된 catalog만 1회 백업)
+                HashSet<string> removeImages = new HashSet<string>(deleted.Select(f => f.ImageFileName));
+                foreach (string catalogFile in Directory.GetFiles(tubPath, "catalog_*.catalog", SearchOption.AllDirectories))
                 {
-                    string catalogFile = group.Key;
-                    if (!File.Exists(catalogFile)) continue;
-
-                    HashSet<string> removeImages = new HashSet<string>(group.Select(f => f.ImageFileName));
-
-                    string backupPath = Path.Combine(deletedDir, Path.GetFileName(catalogFile) + ".backup");
-                    if (!File.Exists(backupPath)) File.Copy(catalogFile, backupPath);
-
+                    bool removedAny = false;
                     List<string> keptLines = new List<string>();
                     foreach (string line in File.ReadLines(catalogFile))
                     {
                         if (string.IsNullOrWhiteSpace(line)) continue;
                         string? imageName = TryGetImageName(line);
-                        if (imageName != null && removeImages.Contains(imageName)) continue;
+                        if (imageName != null && removeImages.Contains(imageName)) { removedAny = true; continue; }
                         keptLines.Add(line);
                     }
+                    if (!removedAny) continue;
+
+                    string backupPath = Path.Combine(deletedDir, Path.GetFileName(catalogFile) + ".backup");
+                    if (!File.Exists(backupPath)) File.Copy(catalogFile, backupPath);
                     File.WriteAllLines(catalogFile, keptLines);
                 }
 
@@ -1152,13 +1289,13 @@ namespace DataManager
             public double Throttle { get; set; }
             public bool Deleted { get; set; }
             public string DeleteReason { get; set; } = "";
-            public string SourceCatalog { get; set; } = "";
             public override string ToString() => Deleted ? $"Frame {FrameNumber:D6} [삭제됨]" : $"Frame {FrameNumber:D6}";
         }
 
         private sealed class TubLoadResult
         {
             public List<TubFrame> Frames { get; } = new();
+            public List<string> MissingImages { get; } = new();
             public List<string> Errors { get; } = new();
         }
 
@@ -1211,6 +1348,32 @@ namespace DataManager
                 foreach (Image image in map.Values) image.Dispose();
                 map.Clear();
                 order.Clear();
+            }
+        }
+
+        private void panel1_Paint(object sender, PaintEventArgs e)
+        {
+
+        }
+
+        private void groupBoxDataLoad_Enter(object sender, EventArgs e)
+        {
+
+        }
+
+        private void chkAutoPlay_CheckedChanged(object sender, EventArgs e)
+        {
+            if (chkAutoPlay.Checked)
+            {
+                chkAutoPlay.BackColor =
+                    Color.FromArgb(59, 130, 246);
+
+                chkAutoPlay.ForeColor = Color.White;
+            }
+            else
+            {
+                chkAutoPlay.BackColor = Color.White;
+                chkAutoPlay.ForeColor = Color.Black;
             }
         }
     }
