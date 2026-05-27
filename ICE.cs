@@ -15,38 +15,68 @@ namespace DataManager
             void Cancel();
         }
 
-        // 1. 로컬용 실행기 (SSH 기능 없음! Process만 사용)
+        // 1. 로컬(윈도우 내 우분투 WSL)용 실행기
         public class LocalExecutor : ICommandExecutor
         {
             private Process _process;
 
-            public void ExecuteTrain(string path, bool useVenv, Action<string> onLogReceived)
+            // 윈도우 경로를 리눅스(WSL) 경로로 자동 변환해 주는 마법의 함수 (예: C:\data -> /mnt/c/data)
+            private string ConvertToWslPath(string winPath)
             {
-                // 윈도우 로컬 환경에 맞게 명령어 수정 (tubs 경로를 로컬에 맞게 세팅)
-                // 윈도우는 리눅스 쉘 명령어(&&)를 못 쓰므로 명확하게 python train.py를 실행합니다.
-                RunProcess(path, "train.py --tubs data/ --model models/mypilot.h5", onLogReceived);
+                string wslPath = winPath.Replace("\\", "/");
+                if (wslPath.Length >= 2 && wslPath[1] == ':')
+                {
+                    wslPath = $"/mnt/{char.ToLower(wslPath[0])}{wslPath.Substring(2)}";
+                }
+                return wslPath;
             }
 
-            // 로컬 파이썬 강제 종료
-            public void Cancel()
+            public void ExecuteTrain(string path, bool useVenv, Action<string> onLogReceived)
             {
-                try { if (_process != null && !_process.HasExited) _process.Kill(); } catch { }
+                string wslPath = ConvertToWslPath(path);
+                string venvCmd = useVenv ? "source ~/.bashrc && conda activate e2e_env && " : "";
+
+                // [만능 패치] 원격과 동일하게 WSL 내부에서도 자동 복구 적용!
+                string pyCode = "import donkeycar, os\np=os.path.join(os.path.dirname(donkeycar.__file__), 'pipeline', 'sequence.py')\nif os.path.exists(p):\n  c=open(p).read()\n  c=c.replace('class TfmIterator(Generic[R, XOut, YOut],  SizedIterator[Tuple[XOut, YOut]]):', 'class TfmIterator(SizedIterator):')\n  c=c.replace('class TfmTupleIterator(Generic[X, Y, XOut, YOut],  SizedIterator[Tuple[XOut, YOut]]):', 'class TfmTupleIterator(SizedIterator):')\n  c=c.replace('class BaseTfmIterator_(Generic[XOut, YOut],  SizedIterator[Tuple[XOut, YOut]]):', 'class BaseTfmIterator_(SizedIterator):')\n  open(p,'w').write(c)";
+                string patchCmd = $"cat << 'EOF' > /tmp/patch_mro.py\n{pyCode}\nEOF\n{venvCmd}python /tmp/patch_mro.py && rm /tmp/patch_mro.py";
+
+                string ensureEnvCmd = $"{venvCmd}pip install -q imgaug 'numpy<2.0'";
+                string findTubsCmd = "if [ -f data/manifest.json ]; then DIR='data/'; elif [ -f data/data3/manifest.json ]; then DIR='data/data3/'; elif [ -f data3/manifest.json ]; then DIR='data3/'; else DIR='data/'; fi";
+
+                string trainCmd = $"{venvCmd}python train.py --tubs $DIR --model models/mypilot.h5";
+
+                // 명령어들을 하나로 묶음
+                string fullCmd = $"cd '{wslPath}' && {patchCmd} && {ensureEnvCmd} && {findTubsCmd} && {trainCmd}";
+
+                // 핵심: 윈도우 python이 아니라 wsl(우분투)을 호출하여 bash 쉘 안에서 실행!
+                RunProcess("wsl", $"bash -ic \"{fullCmd}\"", onLogReceived);
             }
 
             public void ExecuteTest(string path, string modelPath, bool useVenv, Action<string> onLogReceived)
             {
-                RunProcess(path, $"train.py drive --model \"{modelPath}\"", onLogReceived);
+                string wslPath = ConvertToWslPath(path);
+                string wslModelPath = ConvertToWslPath(modelPath);
+                string venvCmd = useVenv ? "source ~/.bashrc && conda activate e2e_env && " : "";
+
+                string pyCode = "import donkeycar, os\np=os.path.join(os.path.dirname(donkeycar.__file__), 'pipeline', 'sequence.py')\nif os.path.exists(p):\n  c=open(p).read()\n  c=c.replace('class TfmIterator(Generic[R, XOut, YOut],  SizedIterator[Tuple[XOut, YOut]]):', 'class TfmIterator(SizedIterator):')\n  c=c.replace('class TfmTupleIterator(Generic[X, Y, XOut, YOut],  SizedIterator[Tuple[XOut, YOut]]):', 'class TfmTupleIterator(SizedIterator):')\n  c=c.replace('class BaseTfmIterator_(Generic[XOut, YOut],  SizedIterator[Tuple[XOut, YOut]]):', 'class BaseTfmIterator_(SizedIterator):')\n  open(p,'w').write(c)";
+                string patchCmd = $"cat << 'EOF' > /tmp/patch_mro.py\n{pyCode}\nEOF\n{venvCmd}python /tmp/patch_mro.py && rm /tmp/patch_mro.py";
+                string ensureEnvCmd = $"{venvCmd}pip install -q imgaug 'numpy<2.0'";
+
+                string testCmd = $"{venvCmd}python manage.py drive --model '{wslModelPath}'";
+
+                string fullCmd = $"cd '{wslPath}' && {patchCmd} && {ensureEnvCmd} && {testCmd}";
+
+                RunProcess("wsl", $"bash -ic \"{fullCmd}\"", onLogReceived);
             }
 
-            private void RunProcess(string path, string arguments, Action<string> onLogReceived)
+            private void RunProcess(string fileName, string arguments, Action<string> onLogReceived)
             {
                 _process = new Process
                 {
                     StartInfo = new ProcessStartInfo
                     {
-                        FileName = "python",
+                        FileName = fileName, 
                         Arguments = arguments,
-                        WorkingDirectory = path,
                         UseShellExecute = false,
                         RedirectStandardOutput = true,
                         RedirectStandardError = true,
@@ -60,7 +90,12 @@ namespace DataManager
                 _process.BeginErrorReadLine();
             }
 
-            public void Stop() => _process?.Kill();
+            public void Stop() => Cancel();
+
+            public void Cancel()
+            {
+                try { if (_process != null && !_process.HasExited) _process.Kill(); } catch { }
+            }
         }
 
         // 2. 원격용 실행기 (SSH 기능 전용)
