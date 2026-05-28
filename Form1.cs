@@ -162,6 +162,7 @@ namespace DataManager
             lstTrash.MouseMove += LstTrash_MouseMove;
             lstTrash.MouseUp += LstTrash_MouseUp;
             lstTrash.SelectedIndexChanged += LstTrash_SelectedIndexChanged;
+            tabCleaner.Resize += (_, _) => ArrangeCleanerControls();
 
             // 타임라인 썸네일 이미지 리스트 설정
             timelineImages.ImageSize = new Size(TimelineThumbWidth, TimelineThumbHeight);
@@ -195,8 +196,10 @@ namespace DataManager
                 // 실행 직후 기본 높이만 데이터 정보 판넬 아래와 맞춘다. 이후에는 사용자가 드래그로 조절한다.
                 navigatorHeight = Math.Max(MinNavigatorHeight, groupDataView.Bottom - groupTubNavigator.Top);
                 ArrangeTimelineAndTabs();
+                ArrangeCleanerControls();
             };
             ArrangeTimelineAndTabs();
+            ArrangeCleanerControls();
         }
 
         private void ArrangeTimelineAndTabs()
@@ -268,29 +271,45 @@ namespace DataManager
             int height = groupTubNavigator.ClientSize.Height;
             if (width <= 0 || height <= 0) return;
 
-            int sidePadding = 24;
-            int buttonHeight = 42;
-            int controlY = Math.Max(220, height - 123);
-            int trackY = Math.Min(height - 65, controlY + 58);
+            float layoutScale = GetNavigatorLayoutScale(width, height);
+            int sidePadding = ScaleLayout(24, layoutScale);
+            int imageTop = ScaleLayout(25, layoutScale);
+            int imageSidePadding = ScaleLayout(25, layoutScale);
+            int buttonHeight = ScaleLayout(42, layoutScale);
+            int comboHeight = ScaleLayout(28, layoutScale);
+            int speedComboWidth = ScaleLayout(80, layoutScale);
+            int autoPlayWidth = ScaleLayout(88, layoutScale);
+            int speedGap = ScaleLayout(16, layoutScale);
+            int speedWidth = speedComboWidth + speedGap + autoPlayWidth;
+            int controlsBottomPadding = ScaleLayout(82, layoutScale);
+            int controlY = Math.Max(ScaleLayout(220, layoutScale), height - controlsBottomPadding - buttonHeight);
+            int labelValueGap = ScaleLayout(27, layoutScale);
+            int trackY = Math.Min(height - ScaleLayout(65, layoutScale), controlY + ScaleLayout(58, layoutScale));
 
-            lblCurrentFrame.Location = new Point(45, controlY);
-            lblCurrentFrame2.Location = new Point(53, controlY + 27);
+            int imageBottom = Math.Max(imageTop + ScaleLayout(160, layoutScale), controlY - ScaleLayout(18, layoutScale));
+            picFrame.SetBounds(
+                imageSidePadding,
+                imageTop,
+                Math.Max(160, width - (imageSidePadding * 2)),
+                Math.Max(120, imageBottom - imageTop));
 
-            int speedWidth = 184;
+            lblCurrentFrame.Location = new Point(ScaleLayout(45, layoutScale), controlY);
+            lblCurrentFrame2.Location = new Point(ScaleLayout(53, layoutScale), controlY + labelValueGap);
+
             int speedX = width - sidePadding - speedWidth;
-            lblSpeed.Location = new Point(speedX, controlY - 7);
-            cmbPlaySpeed.SetBounds(speedX, controlY + 21, 80, 28);
-            chkAutoPlay.SetBounds(speedX + 96, controlY + 18, 88, 28);
+            lblSpeed.Location = new Point(speedX, controlY - ScaleLayout(7, layoutScale));
+            cmbPlaySpeed.SetBounds(speedX, controlY + ScaleLayout(21, layoutScale), speedComboWidth, comboHeight);
+            chkAutoPlay.SetBounds(speedX + speedComboWidth + speedGap, controlY + ScaleLayout(18, layoutScale), autoPlayWidth, comboHeight);
 
-            int leftReserved = 150;
-            int rightReserved = speedWidth + 24;
+            int leftReserved = ScaleLayout(150, layoutScale);
+            int rightReserved = speedWidth + sidePadding;
             int areaLeft = leftReserved;
             int areaRight = Math.Max(areaLeft, width - sidePadding - rightReserved);
             int areaWidth = areaRight - areaLeft;
 
-            int gap = Math.Clamp(areaWidth / 32, 8, 14);
-            int smallWidth = Math.Clamp((areaWidth - 122 - (gap * 4)) / 4, 52, 73);
-            int playWidth = Math.Clamp(areaWidth - (smallWidth * 4) - (gap * 4), 122, 158);
+            int gap = Math.Clamp(areaWidth / 32, ScaleLayout(8, layoutScale), ScaleLayout(18, layoutScale));
+            int smallWidth = Math.Clamp((areaWidth - ScaleLayout(122, layoutScale) - (gap * 4)) / 4, ScaleLayout(52, layoutScale), ScaleLayout(92, layoutScale));
+            int playWidth = Math.Clamp(areaWidth - (smallWidth * 4) - (gap * 4), ScaleLayout(122, layoutScale), ScaleLayout(210, layoutScale));
             int totalWidth = (smallWidth * 4) + playWidth + (gap * 4);
             int x = areaLeft + Math.Max(0, (areaWidth - totalWidth) / 2);
 
@@ -304,7 +323,39 @@ namespace DataManager
             x += smallWidth + gap;
             btnLast.SetBounds(x, controlY, smallWidth, buttonHeight);
 
-            trackFrame.SetBounds(37, trackY, Math.Max(120, width - 73), trackFrame.Height);
+            trackFrame.SetBounds(
+                ScaleLayout(37, layoutScale),
+                trackY,
+                Math.Max(120, width - ScaleLayout(73, layoutScale)),
+                trackFrame.Height);
+        }
+
+        private static float GetNavigatorLayoutScale(int width, int height)
+        {
+            float widthScale = width / 900f;
+            float heightScale = height / 520f;
+            return Math.Clamp(Math.Min(widthScale, heightScale * 1.15f), 1f, 1.35f);
+        }
+
+        private static int ScaleLayout(int value, float scale)
+        {
+            return (int)Math.Round(value * scale);
+        }
+
+        private void ArrangeCleanerControls()
+        {
+            if (tabCleaner.ClientSize.Width <= 0 || tabCleaner.ClientSize.Height <= 0) return;
+
+            int margin = 8;
+            int trashHeight = Math.Max(178, tabCleaner.ClientSize.Height - (margin * 2));
+            groupBoxTrash.Height = trashHeight;
+
+            int bottomRowY = trashHeight - 31;
+            lblTrashProgress.Top = bottomRowY + 3;
+            progressBarTrash.Top = bottomRowY + 3;
+            lblTrashPercent.Top = bottomRowY + 3;
+
+            lstTrash.Height = Math.Max(90, bottomRowY - lstTrash.Top - 5);
         }
 
         private bool IsFrameResizeGrip(Point location)
