@@ -32,6 +32,11 @@ namespace DataManager
         private System.Windows.Forms.Timer playTimer;
         private bool _isUpdatingRadio = false;
         private ToolStripMenuItem menuProfile;
+        private int _trainCount = 0;
+        private int _testCount = 0;
+        private ToolStripMenuItem infoTrain;
+        private ToolStripMenuItem infoTest;
+        private ToolStripMenuItem menuAttempts;
 
         private string configPath = "";
         private string tubPath = "";
@@ -123,6 +128,19 @@ namespace DataManager
             picTestImage.SizeMode = PictureBoxSizeMode.Zoom;
         }
 
+        // UI 스레드 안전하게 상태 라벨을 바꿔주는 도우미
+        private void UpdateStatusLabel(string text, Color color)
+        {
+            if (lblStatus2 != null)
+            {
+                lblStatus2.Invoke(new Action(() =>
+                {
+                    lblStatus2.Text = text;
+                    lblStatus2.ForeColor = color;
+                }));
+            }
+        }
+
         private void Form1_Load(object sender, EventArgs e)
         {
             DialogResult res = MessageBox.Show(
@@ -151,52 +169,45 @@ namespace DataManager
             menuStrip.Padding = new Padding(5, 5, 5, 5);
             this.MainMenuStrip = menuStrip;
             this.Controls.Add(menuStrip);
-
             menuStrip.BringToFront();
 
-            // 1. Donkeycar 사용 설명서 메뉴 
+            // ★ 설명서를 상황별로 명확하게 분리!
             ToolStripMenuItem menuManual = new ToolStripMenuItem("📖 Donkeycar 사용 설명서");
-            menuManual.DropDownItems.Add("1. [서버 연결 설정]에서 로컬/원격 선택 후 접속");
-            menuManual.DropDownItems.Add("2. [설정 파일 열기] 클릭하여 mycar 폴더(작업 기준점) 설정");
-            menuManual.DropDownItems.Add("3. [Tub 데이터 열기]로 주행 데이터(data 폴더) 불러오기");
-            menuManual.DropDownItems.Add("4. [데이터 정리] 탭에서 불필요한 데이터(속도 0 등) 필터링 및 휴지통 비우기");
-            menuManual.DropDownItems.Add("5. [학습/테스트] 탭에서 [학습 시작] 클릭 (완료 시 models/mypilot.h5 자동 저장)");
-            menuManual.DropDownItems.Add("6. [모델 선택] -> [테스트 이미지 선택] 후 [모델 테스트 실행]으로 검증");
+            menuManual.DropDownItems.Add("[공통] 1. 이상한 주행 데이터 필터/삭제로 휴지통 비우기");
+            menuManual.DropDownItems.Add("[공통] 2. [학습 시작] 클릭 (완료 시 models/mypilot.h5 생성)");
+            menuManual.DropDownItems.Add("-");
+            menuManual.DropDownItems.Add("[로컬 모드] 폴더를 고를 때 'Linux' 탭이나 \\\\wsl.localhost\\ 주소를 이용하세요.");
+            menuManual.DropDownItems.Add("[원격 서버] 경로는 프로그램이 알아서 똑똑하게 자동 설정합니다. (그냥 예 누르시면 됩니다)");
             menuManual.MouseEnter += (s, e) => menuManual.ShowDropDown();
 
-            // 2. 단축키 메뉴
             ToolStripMenuItem menuHotkeys = new ToolStripMenuItem("⌨️ 단축키 안내");
-            menuHotkeys.DropDownItems.Add("Space Bar : 자동 재생 / 정지 토글 (예정)");
-            menuHotkeys.DropDownItems.Add("← / → 방향키 : 프레임 1칸씩 이동 (예정)");
+            menuHotkeys.DropDownItems.Add("Space Bar : 자동 재생 / 정지 토글");
+            menuHotkeys.DropDownItems.Add("← / → 방향키 : 프레임 1칸씩 이동");
             menuHotkeys.MouseEnter += (s, e) => menuHotkeys.ShowDropDown();
 
-            // 3. 우측 상단 로그인 프로필 메뉴
-            menuProfile = new ToolStripMenuItem("👤 로컬 모드 (로그아웃 상태)");
-            menuProfile.Alignment = ToolStripItemAlignment.Right;
-            menuProfile.Font = new Font("맑은 고딕", 9, FontStyle.Bold);
-            menuProfile.DropDownDirection = ToolStripDropDownDirection.BelowLeft;
+            menuAttempts = new ToolStripMenuItem("📊 오늘의 시도");
+            menuAttempts.Alignment = ToolStripItemAlignment.Right;
+            menuAttempts.Font = new Font("맑은 고딕", 9, FontStyle.Bold);
+            menuAttempts.DropDownDirection = ToolStripDropDownDirection.BelowLeft;
 
-            ToolStripMenuItem infoRole = new ToolStripMenuItem("상태: 로컬 환경 대기 중");
-            infoRole.Enabled = false;
-
-            ToolStripMenuItem infoTrain = new ToolStripMenuItem("오늘 학습 시도: 0회");
+            infoTrain = new ToolStripMenuItem($"학습 시도: {_trainCount}회");
             infoTrain.Enabled = false;
+            infoTest = new ToolStripMenuItem($"모델 테스트 시도: {_testCount}회");
+            infoTest.Enabled = false;
 
-            ToolStripSeparator separator = new ToolStripSeparator();
-
-            ToolStripMenuItem menuLogout = new ToolStripMenuItem("🛑 원격 서버 로그아웃");
-            menuLogout.Click += menuLogout_Click;
-
-            menuProfile.DropDownItems.Add(infoRole);
-            menuProfile.DropDownItems.Add(infoTrain);
-            menuProfile.DropDownItems.Add(separator);
-            menuProfile.DropDownItems.Add(menuLogout);
-
-            menuProfile.MouseEnter += (s, e) => menuProfile.ShowDropDown();
+            menuAttempts.DropDownItems.Add(infoTrain);
+            menuAttempts.DropDownItems.Add(infoTest);
+            menuAttempts.MouseEnter += (s, e) => menuAttempts.ShowDropDown();
 
             menuStrip.Items.Add(menuManual);
             menuStrip.Items.Add(menuHotkeys);
-            menuStrip.Items.Add(menuProfile);
+            menuStrip.Items.Add(menuAttempts);
+
+            if (btnDisconnect != null)
+            {
+                btnDisconnect.Click -= btnDisconnect_Click;
+                btnDisconnect.Click += btnDisconnect_Click;
+            }
         }
 
         // ==========================================
@@ -214,20 +225,16 @@ namespace DataManager
                     {
                         try
                         {
+                            // ★ 이 두 줄이 실수로 지워졌었습니다! (서버 접속 엔진 가동)
                             _executor = new ICE.RemoteExecutor(loginForm.Host, loginForm.User, loginForm.Pass);
                             loggedInUser = loginForm.User;
 
-                            // lblProfile 찌꺼기 싹 지우고 menuProfile로 대체
-                            menuProfile.Text = $"👤 {loginForm.User} 접속중";
-                            menuProfile.ForeColor = Color.Blue; // 글씨를 파란색으로!
-                            menuProfile.Tag = loginForm.Host;   // 나중에 로그아웃할 때 쓰려고 IP를 살짝 숨겨둠
-
-                            // 하위 메뉴 첫 번째 줄에 접속 IP 띄우기
-                            if (menuProfile.DropDownItems.Count > 0 && menuProfile.DropDownItems[0] is ToolStripMenuItem ipMenuItem)
+                            if (lblUser2 != null)
                             {
-                                ipMenuItem.Text = $"접속 IP: {loginForm.Host}";
+                                lblUser2.Text = loginForm.User;
+                                lblUser2.ForeColor = Color.Blue;
                             }
-
+                            UpdateStatusLabel("원격 연결됨", Color.Green);
                             return;
                         }
                         catch (Exception ex)
@@ -334,16 +341,23 @@ namespace DataManager
         {
             if (rdoRemote.Checked)
             {
+                if (string.IsNullOrEmpty(loggedInUser))
+                {
+                    MessageBox.Show("원격 서버에 먼저 로그인(연결)해 주세요!", "로그인 필요", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
                 configPath = $"/home/{loggedInUser}/mycar";
                 lblConfigPath.Text = configPath;
-                MessageBox.Show($"[원격 모드 설정 완료]\n\n{loggedInUser}님의 서버 폴더({configPath})로\n작업 기준점이 똑똑하게 자동 설정되었습니다!\n\n이제 다음 단계인 'Tub 데이터 열기'를 진행해 주세요.", "설정 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show($"[원격 모드]\n{loggedInUser}님의 서버 폴더({configPath})로 작업 기준점이 설정되었습니다!\n\n이제 'Tub 데이터 열기'를 진행해 주세요.", "설정 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
 
-            MessageBox.Show("로컬(윈도우) 환경에서 작업할 준비를 합니다.\n\n이어서 뜨는 폴더 선택 창에서\n'manage.py' 파일이 들어있는 동키카 기본 폴더(mycar)를 선택해 주세요.", "작업 폴더 선택 안내", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            // ★ 로컬 모드일 때 우분투(WSL) 폴더 찾는 방법 상세 안내!
+            MessageBox.Show("[로컬(WSL) 모드 안내]\n\n윈도우 탐색기가 열리면, 좌측 폴더 목록 맨 아래의 'Linux' 아이콘을 클릭하거나 상단 주소창에 아래 경로를 직접 입력하세요.\n\n👉 \\\\wsl.localhost\\Ubuntu-22.04\\home\\(사용자명)\\mycar\n\n해당 mycar 폴더를 찾아 선택해 주시면 됩니다.", "WSL 폴더 선택 안내", MessageBoxButtons.OK, MessageBoxIcon.Information);
+
             using (FolderBrowserDialog dlg = new FolderBrowserDialog())
             {
-                dlg.Description = "manage.py 파일이 있는 mycar 폴더를 찾아 선택해주세요.";
+                dlg.Description = "manage.py 파일이 있는 우분투 내부의 mycar 폴더를 찾아 선택해주세요.";
                 if (dlg.ShowDialog() == DialogResult.OK)
                 {
                     configPath = dlg.SelectedPath;
@@ -351,7 +365,6 @@ namespace DataManager
                 }
             }
         }
-
         // 학습/테스트 강제 중지 버튼 클릭 이벤트
         private void btnStopTask_Click(object sender, EventArgs e)
         {
@@ -385,15 +398,24 @@ namespace DataManager
                 return;
             }
 
-            DialogResult res = MessageBox.Show($"원격 서버({configPath})에서 AI 모델 학습을 시작하시겠습니까?\n(학습에는 시간이 오래 걸릴 수 있습니다.)", "학습 시작 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+            // ★ 로컬/원격 환경에 맞춘 동적 알림창!
+            string modeText = rdoRemote.Checked ? "원격 서버" : "로컬(WSL)";
+            DialogResult res = MessageBox.Show($"{modeText}({configPath})에서 AI 모델 학습을 시작하시겠습니까?\n(학습에는 시간이 오래 걸릴 수 있습니다.)", "학습 시작 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
             if (res == DialogResult.No) return;
 
             txtLog.AppendText(Environment.NewLine + "[Train] AI 모델 학습을 시작합니다...");
 
+            UpdateStatusLabel("학습 중", Color.DarkOrange);
+
+            // ★ 카운트는 버튼 누를 때 한 번만 오르도록 여기서만 처리! (UpdateChartRealTime 안의 카운트 증가 코드는 지워주세요!)
+            _trainCount++;
+            if (infoTrain != null) infoTrain.Text = $"오늘 학습 시도: {_trainCount}회";
+
             bool useVenv = chkUseVenv != null ? chkUseVenv.Checked : true;
             _executor.ExecuteTrain(configPath, useVenv, (log) =>
             {
-                this.Invoke(new Action(() => { UpdateChartRealTime(log); }));
+                // 프리징 방지를 위해 BeginInvoke 사용
+                this.BeginInvoke(new Action(() => { UpdateChartRealTime(log); }));
             });
         }
 
@@ -401,44 +423,38 @@ namespace DataManager
         {
             if (string.IsNullOrEmpty(logText)) return;
 
-            //  1. 로그 클리너: 파이썬의 무의미한 진행률 ==== 및 깨진 문자 렌더링 무시 (UI 렉 방지)
-            if (logText.Contains('\r') || logText.Contains('\b') || logText.Count(c => c == '=') > 10 || logText.Contains(""))
-            {
-                return;
-            }
+            bool isJunkLog = logText.Contains('\r') || logText.Contains('\b') || logText.Count(c => c == '=') > 10 || logText.Contains("\u001b");
+            if (!isJunkLog) txtLog.AppendText(logText + Environment.NewLine);
 
-            txtLog.AppendText(logText + Environment.NewLine);
-
-            // 2. 에러 발생 시 알림
             if (logText.Contains("[Errno 2]") || logText.Contains("Error") || logText.Contains("Exception"))
             {
-                MessageBox.Show($"학습 중 파이썬 오류가 발생했습니다.\n로그 창을 확인해주세요.\n\n내용: {logText}", "학습 오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show($"학습 중 파이썬 오류가 발생했습니다.\n\n내용: {logText}", "학습 오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                UpdateStatusLabel("대기 중", Color.Green);
                 return;
             }
 
-            // 3. 로그 정리 및 안내 팝업 (저장 경로 및 다음 단계 상세 안내)
-            if (logText.Contains("Saved model") || logText.Contains("Finished") || logText.Contains("Stopping early") || logText.ToLower().Contains("model saved"))
+            // ★ 성공 감지기 (파이썬이 완전히 종료되었을 때 딱 1번만 실행됨)
+            if (logText.Trim() == "---TRAINING_COMPLETE---")
             {
                 if (progressBarTrain != null) progressBarTrain.Value = progressBarTrain.Maximum;
-                if (lblProgressPercent != null) lblProgressPercent.Text = "100%"; // 완료 시 100% 텍스트 강제 적용
+                if (lblProgressPercent != null) lblProgressPercent.Text = "100%";
 
                 txtLog.AppendText(Environment.NewLine + "--------------------------------------------------");
                 txtLog.AppendText(Environment.NewLine + "✅ [학습 완료] AI 모델 생성이 끝났습니다.");
                 txtLog.AppendText(Environment.NewLine + $"📁 자동 저장 위치: {configPath}/models/mypilot.h5");
                 txtLog.AppendText(Environment.NewLine + "--------------------------------------------------" + Environment.NewLine);
 
-                MessageBox.Show($"🎉 AI 모델 학습이 무사히 완료되었습니다!\n\n[자동 저장 위치]\n{configPath}/models/mypilot.h5\n\n[다음 단계 안내]\n1. 좌측의 [모델 선택] 버튼을 누르세요. (자동으로 세팅됩니다.)\n2. [테스트 이미지 선택]을 누르고 주행 데이터 폴더를 고르세요.\n3. [모델 테스트 실행] 버튼을 눌러 AI가 예측 조향각을 잘 뽑아내는지 확인해보세요!", "학습 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show($"🎉 AI 모델 학습이 성공적으로 완료되었습니다!\n\n[자동 저장 위치]\n{configPath}/models/mypilot.h5\n\n[다음 단계 안내]\n1. 좌측의 [모델 선택] 버튼을 누르세요. (자동으로 세팅됩니다.)\n2. [테스트 이미지 선택]을 누르세요. (원격 서버 폴더 자동 세팅)\n3. [모델 테스트 실행] 버튼을 눌러보세요!", "학습 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                UpdateStatusLabel("대기 중", Color.Green);
             }
 
-            // 4. Loss 값 추출 (그래프용 - 현재는 주석 처리됨)
-            Match matchLoss = Regex.Match(logText, @"loss:\s*([0-9]*\.?[0-9]+)");
-            if (matchLoss.Success)
+            // ★ 실패 감지기 (메모리 부족 등으로 튕겼을 때)
+            else if (logText.Contains("Killed") || logText.Contains("Segmentation fault"))
             {
-                double lossValue = Convert.ToDouble(matchLoss.Groups[1].Value);
-                // chartLoss.Series["Loss"].Points.AddY(lossValue); 
+                MessageBox.Show("🚨 학습이 비정상적으로 종료되었습니다. (메모리 부족 등)\n학습 옵션을 조절하거나 서버 상태를 확인하세요.", "학습 실패", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                UpdateStatusLabel("대기 중", Color.Green);
             }
 
-            // 5. 진행률 바 및 % 텍스트 정상화 (Epoch n/m 형태 감지)
             Match epochMatch = Regex.Match(logText, @"Epoch\s+(\d+)/(\d+)");
             if (epochMatch.Success && progressBarTrain != null)
             {
@@ -447,7 +463,6 @@ namespace DataManager
                 progressBarTrain.Maximum = total;
                 progressBarTrain.Value = current <= total ? current : total;
 
-                // ★ 퍼센트 라벨 업데이트 로직 추가!
                 if (lblProgressPercent != null)
                 {
                     int percent = (int)((double)current / total * 100);
@@ -458,39 +473,66 @@ namespace DataManager
 
         private void btnSelectModel_Click(object sender, EventArgs e)
         {
-            if (rdoRemote.Checked)
+            // ★ 학습하지 않고 모델을 선택할 경우를 대비한 강력한 경고 문구 추가!
+            DialogResult res = MessageBox.Show("기본 모델 경로(models/mypilot.h5)를 자동으로 지정하시겠습니까?\n\n💡 주의: 아직 AI 학습을 한 번도 완료하지 않아 파일이 없다면, 테스트 실행 시 파이썬 오류가 발생합니다!\n\n(아니요를 누르면 윈도우에서 직접 선택합니다.)", "모델 설정", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
+            if (res == DialogResult.Cancel) return;
+
+            if (res == DialogResult.Yes)
             {
                 modelPath = "models/mypilot.h5";
-                MessageBox.Show($"[원격 모드]\n서버의 기본 학습 모델로 지정되었습니다:\n{modelPath}", "모델 선택", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                txtLog.AppendText(Environment.NewLine + $"[Info] 선택된 모델: {modelPath}");
-                return;
+                txtLog.AppendText(Environment.NewLine + $"[Info] 기본 모델 자동 설정: {modelPath}");
+                MessageBox.Show($"모델이 설정되었습니다:\n{modelPath}");
             }
-
-            using (OpenFileDialog dlg = new OpenFileDialog())
+            else if (res == DialogResult.No)
             {
-                dlg.Title = "테스트할 Donkeycar 모델(.h5) 선택";
-                dlg.Filter = "Keras Models (*.h5)|*.h5|All files (*.*)|*.*";
-                if (dlg.ShowDialog() == DialogResult.OK)
+                if (rdoRemote.Checked)
                 {
-                    modelPath = dlg.FileName;
-                    MessageBox.Show($"모델이 선택되었습니다:\n{modelPath}");
+                    MessageBox.Show("원격(서버) 모드에서는 윈도우의 파일을 지정할 수 없습니다.\n자동으로 기본 모델을 사용합니다.", "안내", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    modelPath = "models/mypilot.h5";
+                }
+                else
+                {
+                    using (OpenFileDialog dlg = new OpenFileDialog() { Filter = "Keras Models (*.h5)|*.h5|All files (*.*)|*.*" })
+                    {
+                        if (dlg.ShowDialog() == DialogResult.OK)
+                        {
+                            modelPath = dlg.FileName;
+                            MessageBox.Show($"모델이 선택되었습니다:\n{modelPath}");
+                        }
+                    }
                 }
             }
         }
 
         private void btnSelectTestImage_Click(object sender, EventArgs e)
         {
-            using (FolderBrowserDialog dlg = new FolderBrowserDialog())
-            {
-                dlg.Description = "테스트할 이미지들이 들어있는 폴더(예: data3/images)를 선택하세요.";
-                if (!string.IsNullOrEmpty(tubPath)) dlg.SelectedPath = tubPath;
+            DialogResult res = MessageBox.Show("현재 화면에 열려있는 'Tub 데이터'를 그대로 테스트 이미지로 사용하시겠습니까?\n\n(아니요를 누르면 다른 폴더를 직접 선택합니다.)", "테스트 이미지 설정", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
+            if (res == DialogResult.Cancel) return;
 
-                if (dlg.ShowDialog() == DialogResult.OK)
+            if (res == DialogResult.Yes)
+            {
+                if (string.IsNullOrEmpty(tubPath)) { MessageBox.Show("열려있는 Tub 데이터가 없습니다."); return; }
+                testImagePath = rdoRemote.Checked ? "data/" : tubPath;
+                ShowTestImagePreview(FindFirstTestImagePath());
+                txtLog.AppendText(Environment.NewLine + $"[Info] 현재 데이터로 테스트 설정: {testImagePath}");
+            }
+            else if (res == DialogResult.No)
+            {
+                if (rdoRemote.Checked)
                 {
-                    testImagePath = dlg.SelectedPath;
-                    ShowTestImagePreview(FindFirstTestImagePath());
-                    MessageBox.Show($"테스트 이미지 폴더가 선택되었습니다:\n{testImagePath}", "선택 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                    txtLog.AppendText(Environment.NewLine + $"[Info] 선택된 테스트 폴더: {testImagePath}");
+                    MessageBox.Show("원격(서버) 모드에서는 윈도우 탐색기를 띄울 수 없습니다.\n자동으로 서버의 기본 data/ 폴더를 사용합니다.", "안내", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    testImagePath = "data/";
+                }
+                else
+                {
+                    using (FolderBrowserDialog dlg = new FolderBrowserDialog())
+                    {
+                        if (dlg.ShowDialog() == DialogResult.OK)
+                        {
+                            testImagePath = dlg.SelectedPath;
+                            ShowTestImagePreview(FindFirstTestImagePath());
+                        }
+                    }
                 }
             }
         }
@@ -525,10 +567,15 @@ namespace DataManager
             ResetModelTestResult();
             ShowTestImagePreview(FindFirstTestImagePath());
 
+            UpdateStatusLabel("모델 테스트 중", Color.DarkOrange);
+            _testCount++;
+            if (infoTest != null) infoTest.Text = $"오늘 테스트 시도: {_testCount}회";
+
             bool useVenv = chkUseVenv != null ? chkUseVenv.Checked : true;
             _executor.ExecuteTest(configPath, modelPath, testImagePath, useVenv, (log) =>
             {
-                this.Invoke(new Action(() => HandleModelTestLog(log)));
+                // 프리징 방지를 위해 BeginInvoke 사용
+                this.BeginInvoke(new Action(() => HandleModelTestLog(log)));
             });
         }
 
@@ -551,6 +598,15 @@ namespace DataManager
         private void HandleModelTestLog(string logText)
         {
             if (string.IsNullOrWhiteSpace(logText)) return;
+
+            // ★ 인성님 요청: 모델 파일이 없을 때 팝업창으로 강력하게 알려주기!
+            if (logText.StartsWith("[NO_MODEL]"))
+            {
+                string missingPath = logText.Substring(10).Trim();
+                MessageBox.Show($"지정된 경로에 AI 모델(.h5) 파일이 존재하지 않습니다.\n\n경로: {missingPath}\n\n아직 학습이 완료되지 않았거나 파일이 지워졌습니다. 먼저 [학습 시작]을 눌러 모델을 생성해 주세요.", "모델 파일 없음", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                UpdateStatusLabel("대기 중", Color.Green);
+                return;
+            }
 
             txtLog.AppendText(Environment.NewLine + logText);
 
@@ -599,6 +655,7 @@ namespace DataManager
             {
                 lblTrainStatus2.Text = "테스트 완료";
                 lblTrainStatus2.ForeColor = Color.Green;
+                UpdateStatusLabel("대기 중", Color.Green);
             }
             else if (logText.Contains("Error", StringComparison.OrdinalIgnoreCase)
                 || logText.Contains("Exception", StringComparison.OrdinalIgnoreCase)
@@ -606,6 +663,7 @@ namespace DataManager
             {
                 lblTrainStatus2.Text = "오류";
                 lblTrainStatus2.ForeColor = Color.Red;
+                UpdateStatusLabel("대기 중", Color.Green);
             }
         }
 
@@ -1167,6 +1225,26 @@ namespace DataManager
 
             UpdateFrameInfoLabels(frame, index);
             picFrame.Invalidate();
+        }
+
+        private void btnDisconnect_Click(object? sender, EventArgs e)
+        {
+            if (rdoRemote.Checked)
+            {
+                DialogResult result = MessageBox.Show($"현재 접속 중인 원격 서버의 연결을 끊고 로컬 모드로 전환하시겠습니까?", "로그아웃", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+                if (result == DialogResult.Yes)
+                {
+                    _isUpdatingRadio = true;
+                    rdoLocal.Checked = true;
+                    _executor.Stop();
+                    _executor = new ICE.LocalExecutor();
+                    _isUpdatingRadio = false;
+
+                    loggedInUser = "";
+                    if (lblUser2 != null) { lblUser2.Text = "없음"; lblUser2.ForeColor = Color.Black; }
+                    UpdateStatusLabel("로컬 대기중", Color.Black);
+                }
+            }
         }
 
         private void UpdateFrameInfoLabels(TubFrame? frame, int index)
