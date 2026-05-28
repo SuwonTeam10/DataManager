@@ -119,7 +119,7 @@ namespace DataManager
             btnDelete.Click += btnDelete_Click;
             btnRestore.Click += btnRestore_Click;
             btnEmptyTrash.Click += btnEmptyTrash_Click;
-            lstTrash.SelectionMode = SelectionMode.MultiExtended;
+            lstTrash.CheckOnClick = true;
 
             // 타임라인 썸네일 이미지 리스트 설정
             timelineImages.ImageSize = new Size(TimelineThumbWidth, TimelineThumbHeight);
@@ -1878,13 +1878,13 @@ namespace DataManager
 
         private void btnRestore_Click(object? sender, EventArgs e)
         {
-            if (lstTrash.SelectedItems.Count == 0)
+            if (lstTrash.CheckedItems.Count == 0)
             {
-                MessageBox.Show("복원할 항목을 휴지통 목록에서 선택하세요.", "복원", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show("복원할 항목을 휴지통 목록에서 체크하세요.", "복원", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
 
-            List<TrashEntry> selected = lstTrash.SelectedItems.Cast<TrashEntry>().ToList();
+            List<TrashEntry> selected = lstTrash.CheckedItems.Cast<TrashEntry>().ToList();
             foreach (TrashEntry entry in selected) RestoreFromTrash(entry.Frame);
             RebuildTrashList();
             RenderTubGraph();

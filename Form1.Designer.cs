@@ -57,7 +57,7 @@
             btnEmptyTrash = new Button();
             btnRestore = new Button();
             btnReloadTub = new Button();
-            lstTrash = new ListBox();
+            lstTrash = new CheckedListBox();
             btnDelete = new Button();
             chkAbnormalAngle = new CheckBox();
             chkMissingImage = new CheckBox();
@@ -1430,7 +1430,7 @@
         private Button btnEmptyTrash;
         private Button btnRestore;
         private Button btnReloadTub;
-        private ListBox lstTrash;
+        private CheckedListBox lstTrash;
         private Button btnDelete;
         private CheckBox chkAbnormalAngle;
         private CheckBox chkMissingImage;
