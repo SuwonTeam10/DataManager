@@ -1404,6 +1404,7 @@ namespace DataManager
             picDataGraph.SizeMode = PictureBoxSizeMode.StretchImage;
             picDataGraph.Resize += (_, _) => RedrawGraphAfterLayout();
             picDataGraph.MouseMove += picDataGraph_MouseMove;
+            picDataGraph.MouseClick += picDataGraph_MouseClick;
             picDataGraph.MouseLeave += (_, _) => lblGraphHover.Visible = false;
 
             // 그래프 위에 마우스를 올렸을 때 현재 프레임 값을 작은 정보창으로 표시한다.
@@ -1579,17 +1580,14 @@ namespace DataManager
 
         private void picDataGraph_MouseMove(object? sender, MouseEventArgs e)
         {
-            if (graphVisibleFrames.Count == 0 || graphPlotBounds == Rectangle.Empty || !graphPlotBounds.Contains(e.Location))
+            TubFrame? frame = GetGraphFrameAt(e.Location);
+            if (frame == null)
             {
                 lblGraphHover.Visible = false;
+                picDataGraph.Cursor = Cursors.Default;
                 return;
             }
 
-            double ratio = (e.X - graphPlotBounds.Left) / (double)Math.Max(1, graphPlotBounds.Width);
-            int frameIndex = (int)Math.Round(ratio * (graphVisibleFrames.Count - 1));
-            frameIndex = Math.Clamp(frameIndex, 0, graphVisibleFrames.Count - 1);
-
-            TubFrame frame = graphVisibleFrames[frameIndex];
             lblGraphHover.Text = $"프레임 {frame.FrameNumber:D6}\n조향각 {frame.Angle:0.000}\n속도 {frame.Throttle:0.000}";
 
             int x = Math.Min(e.X + 14, picDataGraph.ClientSize.Width - lblGraphHover.Width - 8);
@@ -1597,6 +1595,39 @@ namespace DataManager
             lblGraphHover.Location = new Point(Math.Max(8, x), Math.Max(8, y));
             lblGraphHover.Visible = true;
             lblGraphHover.BringToFront();
+            picDataGraph.Cursor = Cursors.Hand;
+        }
+
+        private void picDataGraph_MouseClick(object? sender, MouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Left) return;
+
+            TubFrame? frame = GetGraphFrameAt(e.Location);
+            if (frame == null) return;
+
+            int tubIndex = tubFrames.IndexOf(frame);
+            if (tubIndex < 0)
+            {
+                tubIndex = tubFrames.FindIndex(item => item.FrameNumber == frame.FrameNumber);
+            }
+
+            if (tubIndex >= 0)
+            {
+                ShowFrame(tubIndex);
+            }
+        }
+
+        private TubFrame? GetGraphFrameAt(Point location)
+        {
+            if (graphVisibleFrames.Count == 0 || graphPlotBounds == Rectangle.Empty || !graphPlotBounds.Contains(location))
+            {
+                return null;
+            }
+
+            double ratio = (location.X - graphPlotBounds.Left) / (double)Math.Max(1, graphPlotBounds.Width);
+            int frameIndex = (int)Math.Round(ratio * (graphVisibleFrames.Count - 1));
+            frameIndex = Math.Clamp(frameIndex, 0, graphVisibleFrames.Count - 1);
+            return graphVisibleFrames[frameIndex];
         }
 
         private static void DrawCenteredGraphMessage(Graphics graphics, Size size, string message)
