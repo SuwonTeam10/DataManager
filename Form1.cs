@@ -142,6 +142,7 @@ namespace DataManager
                 ArrangeTimelineAndTabs();
                 RedrawGraphAfterLayout();
             };
+            picFrame.Paint += picFrame_Paint;
             picFrame.MouseDown += picFrame_MouseDown;
             picFrame.MouseMove += picFrame_MouseMove;
             picFrame.MouseLeave += picFrame_MouseLeave;
@@ -906,8 +907,16 @@ namespace DataManager
                 }, out double predictAngle))
             {
                 latestTestPredictAngle = predictAngle;
-                lblPredictAngle2.Text = predictAngle.ToString("0.000");
-                StorePredictedAngleForImage(imagePath ?? imageReference ?? latestTestImagePath, predictAngle);
+                string? predictionImageReference = imagePath ?? imageReference ?? latestTestImagePath;
+                StorePredictedAngleForImage(predictionImageReference, predictAngle);
+                if (TryFindTubFrameByImageReference(predictionImageReference, out TubFrame? predictedFrame) && predictedFrame is not null)
+                {
+                    UpdatePredictionResultLabels(predictedFrame, predictAngle);
+                }
+                else
+                {
+                    lblPredictAngle2.Text = predictAngle.ToString("0.000");
+                }
                 picFrame.Invalidate();
             }
 
@@ -1021,6 +1030,45 @@ namespace DataManager
 
             predictAngle = 0;
             return false;
+        }
+
+        private bool TryFindTubFrameByImageReference(string? imagePath, out TubFrame? frame)
+        {
+            HashSet<string> keys = GetImagePredictionKeys(imagePath).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            foreach (TubFrame candidate in tubFrames)
+            {
+                foreach (string frameKey in GetImagePredictionKeys(candidate.ImagePath).Concat(GetImagePredictionKeys(candidate.ImageFileName)))
+                {
+                    if (keys.Contains(frameKey))
+                    {
+                        frame = candidate;
+                        return true;
+                    }
+                }
+            }
+
+            frame = null;
+            return false;
+        }
+
+        private void UpdatePredictionResultLabels(TubFrame frame)
+        {
+            if (TryGetPredictedAngleForFrame(frame, out double predictAngle))
+            {
+                UpdatePredictionResultLabels(frame, predictAngle);
+                return;
+            }
+
+            lblRealAngle2.Text = frame.Angle.ToString("0.000");
+            lblPredictAngle2.Text = "-";
+            lblErrorValue2.Text = "-";
+        }
+
+        private void UpdatePredictionResultLabels(TubFrame frame, double predictAngle)
+        {
+            lblRealAngle2.Text = frame.Angle.ToString("0.000");
+            lblPredictAngle2.Text = predictAngle.ToString("0.000");
+            lblErrorValue2.Text = Math.Abs(frame.Angle - predictAngle).ToString("0.000");
         }
 
         private static IEnumerable<string> GetImagePredictionKeys(string? imagePath)
@@ -1584,6 +1632,7 @@ namespace DataManager
             if (!File.Exists(frame.ImagePath)) missingImageFrames.Add(index);
 
             UpdateFrameInfoLabels(frame, index);
+            UpdatePredictionResultLabels(frame);
             picFrame.Invalidate();
         }
 
@@ -1620,12 +1669,12 @@ namespace DataManager
             TubFrame frame = tubFrames[trackFrame.Value];
             if (chkShowRealAngle.Checked)
             {
-                DrawSteeringAngleLine(e.Graphics, imageRect, frame.Angle, Color.LimeGreen, "실제");
+                DrawSteeringAngleLine(e.Graphics, imageRect, frame.Angle, Color.LimeGreen, "실제", 1.0f, -1);
             }
 
             if (chkShowPredictAngle.Checked && TryGetPredictedAngleForFrame(frame, out double framePredictAngle))
             {
-                DrawSteeringAngleLine(e.Graphics, imageRect, framePredictAngle, Color.DeepSkyBlue, "예측");
+                DrawSteeringAngleLine(e.Graphics, imageRect, framePredictAngle, Color.DeepSkyBlue, "예측", 0.72f, 1);
             }
         }
 
@@ -1652,12 +1701,12 @@ namespace DataManager
             }
         }
 
-        private static void DrawSteeringAngleLine(Graphics graphics, Rectangle imageRect, double angle, Color color, string label)
+        private static void DrawSteeringAngleLine(Graphics graphics, Rectangle imageRect, double angle, Color color, string label, float lengthScale, int labelSide)
         {
             double clampedAngle = Math.Clamp(angle, -1.0, 1.0);
             PointF start = new PointF(imageRect.Left + imageRect.Width / 2f, imageRect.Bottom - imageRect.Height * 0.12f);
-            float lineLength = imageRect.Height * 0.45f;
-            float endX = start.X + (float)(clampedAngle * imageRect.Width * 0.35);
+            float lineLength = imageRect.Height * 0.45f * lengthScale;
+            float endX = start.X + (float)(clampedAngle * imageRect.Width * 0.35 * lengthScale);
             float endY = start.Y - lineLength;
             PointF end = new PointF(endX, endY);
 
@@ -1680,7 +1729,11 @@ namespace DataManager
             using Font font = new Font("나눔고딕", 9F, FontStyle.Bold);
             string text = $"{label} {angle:0.000}";
             SizeF textSize = graphics.MeasureString(text, font);
-            RectangleF labelRect = new RectangleF(end.X + 8, end.Y - textSize.Height / 2, textSize.Width + 8, textSize.Height + 4);
+            float labelX = labelSide < 0 ? end.X - textSize.Width - 16 : end.X + 8;
+            float labelY = end.Y - textSize.Height / 2 + (labelSide > 0 ? textSize.Height + 6 : -textSize.Height - 6);
+            labelX = Math.Clamp(labelX, imageRect.Left + 4, imageRect.Right - textSize.Width - 12);
+            labelY = Math.Clamp(labelY, imageRect.Top + 4, imageRect.Bottom - textSize.Height - 8);
+            RectangleF labelRect = new RectangleF(labelX, labelY, textSize.Width + 8, textSize.Height + 4);
             graphics.FillRectangle(textBack, labelRect);
             graphics.DrawString(text, font, textBrush, labelRect.Left + 4, labelRect.Top + 2);
         }

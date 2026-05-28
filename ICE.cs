@@ -107,7 +107,8 @@ namespace DataManager
                     "print(f'[Info] 총 {len(records)}개의 이미지를 테스트합니다.', flush=True)\n" +
                     "for img_path, real_angle in records:\n" +
                     "  if os.path.exists(img_path):\n" +
-                    "    img_arr = np.expand_dims(np.asarray(Image.open(img_path)), axis=0)\n" +
+                    "    img = Image.open(img_path).convert('RGB').resize((160, 120))\n" +
+                    "    img_arr = np.expand_dims(np.asarray(img).astype('float32') / 255.0, axis=0)\n" +
                     "    pred = model(img_arr, training=False)\n" +
                     "    pred_angle = float(np.array(pred[0] if isinstance(pred, (list, tuple)) else pred).flatten()[0])\n" +
                     "    print(f'image={img_path} real={real_angle:.2f} predict={pred_angle:.2f}', flush=True)\n" +
@@ -230,7 +231,8 @@ namespace DataManager
                     "print(f'[Info] 총 {len(records)}개의 이미지를 테스트합니다.', flush=True)\n" +
                     "for img_path, real_angle in records:\n" +
                     "  if os.path.exists(img_path):\n" +
-                    "    img_arr = np.expand_dims(np.asarray(Image.open(img_path)), axis=0)\n" +
+                    "    img = Image.open(img_path).convert('RGB').resize((160, 120))\n" +
+                    "    img_arr = np.expand_dims(np.asarray(img).astype('float32') / 255.0, axis=0)\n" +
                     "    pred = model(img_arr, training=False)\n" +
                     "    pred_angle = float(np.array(pred[0] if isinstance(pred, (list, tuple)) else pred).flatten()[0])\n" +
                     "    print(f'image={img_path} real={real_angle:.2f} predict={pred_angle:.2f}', flush=True)\n" +
