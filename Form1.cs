@@ -5,6 +5,7 @@ using System.Drawing.Drawing2D;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
@@ -25,9 +26,7 @@ namespace DataManager
         private string latestTestImagePath = "";
         private double? latestTestRealAngle;
         private double? latestTestPredictAngle;
-        private int currentFrameIndex = -1;
-        private readonly Dictionary<int, double> predictedAnglesByFrame = new();
-        private readonly Dictionary<string, double> predictedAnglesByImageName = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, double> predictedAnglesByImageKey = new(StringComparer.OrdinalIgnoreCase);
         private string loggedInUser = "";
         private System.Windows.Forms.Timer playTimer;
         private bool _isUpdatingRadio = false;
@@ -43,12 +42,41 @@ namespace DataManager
         private readonly List<TubFrame> tubFrames = new();
         private readonly HashSet<int> missingImageFrames = new();
         private readonly ImageList timelineImages = new();
-        private const int TimelineVisibleCount = 20;
+        private const int TimelineMinimumVisibleCount = 20;
+        private const int TimelineMaximumVisibleCount = 60;
+        private const int TimelineThumbWidth = 48;
+        private const int TimelineThumbHeight = 36;
+        private const int TimelineIconSpacingX = 56;
+        private const int TimelineIconSpacingY = 44;
         private const int PlaybackBaseIntervalMs = 100;
         private const int PlaybackMinimumIntervalMs = 50;
         private int currentTimelineStart = -1;
+        private int currentTimelineVisibleCount = -1;
         private bool isUpdatingTimelineSelection;
+        private bool isTimelineRangeDragging;
+        private bool hasTimelineRangeDragMoved;
+        private int timelineDragStartIndex = -1;
+        private int timelineDragCurrentIndex = -1;
+        private int timelineDragEdgeDirection;
+        private readonly System.Windows.Forms.Timer timelineDragTimer = new();
         private int playbackFrameStep = 1;
+        private const int DefaultNavigatorHeight = 517;
+        private const int MinNavigatorHeight = 360;
+        private const int TimelinePanelHeight = 86;
+        private const int TimelineMinimumPanelHeight = 42;
+        private const int DefaultTabPanelHeight = 220;
+        private const int MinimumTabVisibleHeight = 130;
+        private const int LayoutGap = 8;
+        private const int FrameResizeBarHeight = 0;
+        private const int FrameResizeGripHeight = 12;
+        private int navigatorHeight = DefaultNavigatorHeight;
+        private bool isResizingNavigator;
+        private bool suppressNextFrameClick;
+        private int resizeStartMouseY;
+        private int resizeStartNavigatorHeight;
+        private const int MinimumResponsiveFormWidth = 1320;
+        private const int LeftDataPanelGap = 12;
+        private const int MinimumDataInfoPanelHeight = 264;
 
         // 데이터 정리(필터/삭제) 대상 범위. -1은 미지정.
         private int rangeStart = -1;
@@ -101,10 +129,17 @@ namespace DataManager
             btnLast.Click += btnLast_Click;
             cmbPlaySpeed.SelectedIndexChanged += cmbPlaySpeed_SelectedIndexChanged;
             tabMain.SelectedIndexChanged += tabMain_SelectedIndexChanged;
-            picFrame.Paint += picFrame_Paint;
+            Resize += (_, _) =>
+            {
+                ArrangeTimelineAndTabs();
+                RedrawGraphAfterLayout();
+            };
+            picFrame.MouseDown += picFrame_MouseDown;
+            picFrame.MouseMove += picFrame_MouseMove;
+            picFrame.MouseLeave += picFrame_MouseLeave;
+            picFrame.MouseUp += picFrame_MouseUp;
             chkShowRealAngle.CheckedChanged += (_, _) => picFrame.Invalidate();
             chkShowPredictAngle.CheckedChanged += (_, _) => picFrame.Invalidate();
-            Resize += (_, _) => RedrawGraphAfterLayout();
 
             // 데이터 정리(범위 지정/필터/삭제/휴지통) 이벤트 연결
             btnSetLeft.Click += btnSetLeft_Click;
@@ -113,19 +148,200 @@ namespace DataManager
             btnDelete.Click += btnDelete_Click;
             btnRestore.Click += btnRestore_Click;
             btnEmptyTrash.Click += btnEmptyTrash_Click;
-            lstTrash.SelectionMode = SelectionMode.MultiExtended;
+            lstFrames.SelectionMode = SelectionMode.MultiExtended;
+            lstTrash.CheckOnClick = false;
+            lstTrash.MouseDown += LstTrash_MouseDown;
+            lstTrash.MouseMove += LstTrash_MouseMove;
+            lstTrash.MouseUp += LstTrash_MouseUp;
+            lstTrash.SelectedIndexChanged += LstTrash_SelectedIndexChanged;
 
             // 타임라인 썸네일 이미지 리스트 설정
-            timelineImages.ImageSize = new Size(36, 27);
+            timelineImages.ImageSize = new Size(TimelineThumbWidth, TimelineThumbHeight);
             timelineImages.ColorDepth = ColorDepth.Depth32Bit;
             lvTimeline.LargeImageList = timelineImages;
             lvTimeline.View = View.LargeIcon;
+            lvTimeline.Alignment = ListViewAlignment.Left;
+            lvTimeline.AutoArrange = true;
+            lvTimeline.LabelWrap = false;
+            lvTimeline.Scrollable = false;
             lvTimeline.HideSelection = false;
-            lvTimeline.MultiSelect = false;
+            lvTimeline.MultiSelect = true;
             lvTimeline.ShowItemToolTips = true;
+            lvTimeline.HandleCreated += (_, _) => ApplyTimelineIconSpacing();
+            lvTimeline.Resize += (_, _) => ReloadTimelineForCurrentFrame();
+            lvTimeline.MouseDown += lvTimeline_MouseDown;
+            lvTimeline.MouseMove += lvTimeline_MouseMove;
+            lvTimeline.MouseUp += lvTimeline_MouseUp;
+            lvTimeline.MouseLeave += lvTimeline_MouseLeave;
+            ApplyTimelineIconSpacing();
+
+            timelineDragTimer.Interval = 120;
+            timelineDragTimer.Tick += timelineDragTimer_Tick;
 
             InitializeGraphControls();
             picTestImage.SizeMode = PictureBoxSizeMode.Zoom;
+            MinimumSize = new Size(Math.Max(MinimumSize.Width, MinimumResponsiveFormWidth), MinimumSize.Height);
+            groupTubNavigator.Resize += (_, _) => ArrangeNavigatorControls();
+            Shown += (_, _) =>
+            {
+                // 실행 직후 기본 높이만 데이터 정보 판넬 아래와 맞춘다. 이후에는 사용자가 드래그로 조절한다.
+                navigatorHeight = Math.Max(MinNavigatorHeight, groupDataView.Bottom - groupTubNavigator.Top);
+                ArrangeTimelineAndTabs();
+            };
+            ArrangeTimelineAndTabs();
+        }
+
+        private void ArrangeTimelineAndTabs()
+        {
+            int bottomGap = 8;
+            int resizeBarTopGap = 2;
+            int minimumNavigatorHeight = GetMinimumNavigatorHeight();
+            int appliedNavigatorHeight = Math.Max(navigatorHeight, minimumNavigatorHeight);
+            int tabHeight = DefaultTabPanelHeight;
+            int timelineHeight = TimelinePanelHeight;
+
+            int availableBelowNavigator = ClientSize.Height
+                - bottomGap
+                - groupTubNavigator.Top
+                - appliedNavigatorHeight
+                - resizeBarTopGap
+                - FrameResizeBarHeight
+                - (LayoutGap * 2);
+
+            int shortage = (timelineHeight + tabHeight) - availableBelowNavigator;
+            if (shortage > 0)
+            {
+                int tabShrink = Math.Min(shortage, tabHeight - MinimumTabVisibleHeight);
+                tabHeight -= tabShrink;
+                shortage -= tabShrink;
+            }
+
+            if (shortage > 0)
+            {
+                int timelineShrink = Math.Min(shortage, timelineHeight - TimelineMinimumPanelHeight);
+                timelineHeight -= timelineShrink;
+                shortage -= timelineShrink;
+            }
+
+            if (shortage > 0)
+            {
+                appliedNavigatorHeight = Math.Max(minimumNavigatorHeight, appliedNavigatorHeight - shortage);
+            }
+
+            tabMain.Height = tabHeight;
+            tabMain.Top = ClientSize.Height - tabMain.Height - bottomGap;
+
+            groupTimeline.Height = timelineHeight;
+            groupTimeline.Top = tabMain.Top - groupTimeline.Height - LayoutGap;
+            groupTimeline.BringToFront();
+
+            groupTubNavigator.Height = appliedNavigatorHeight;
+            groupFrameList.Height = appliedNavigatorHeight;
+            ArrangeLeftDataPanels(groupTubNavigator.Bottom);
+
+            ArrangeNavigatorControls();
+        }
+
+        private int GetMinimumNavigatorHeight()
+        {
+            return Math.Max(MinNavigatorHeight, groupBoxDataLoad.Height + LeftDataPanelGap + MinimumDataInfoPanelHeight);
+        }
+
+        private void ArrangeLeftDataPanels(int targetBottom)
+        {
+            groupBoxDataLoad.Top = groupTubNavigator.Top;
+            groupDataView.Top = groupBoxDataLoad.Bottom + LeftDataPanelGap;
+            groupDataView.Height = Math.Max(MinimumDataInfoPanelHeight, targetBottom - groupDataView.Top);
+        }
+
+        private void ArrangeNavigatorControls()
+        {
+            int width = groupTubNavigator.ClientSize.Width;
+            int height = groupTubNavigator.ClientSize.Height;
+            if (width <= 0 || height <= 0) return;
+
+            int sidePadding = 24;
+            int buttonHeight = 42;
+            int controlY = Math.Max(220, height - 123);
+            int trackY = Math.Min(height - 65, controlY + 58);
+
+            lblCurrentFrame.Location = new Point(45, controlY);
+            lblCurrentFrame2.Location = new Point(53, controlY + 27);
+
+            int speedWidth = 184;
+            int speedX = width - sidePadding - speedWidth;
+            lblSpeed.Location = new Point(speedX, controlY - 7);
+            cmbPlaySpeed.SetBounds(speedX, controlY + 21, 80, 28);
+            chkAutoPlay.SetBounds(speedX + 96, controlY + 18, 88, 28);
+
+            int leftReserved = 150;
+            int rightReserved = speedWidth + 24;
+            int areaLeft = leftReserved;
+            int areaRight = Math.Max(areaLeft, width - sidePadding - rightReserved);
+            int areaWidth = areaRight - areaLeft;
+
+            int gap = Math.Clamp(areaWidth / 32, 8, 14);
+            int smallWidth = Math.Clamp((areaWidth - 122 - (gap * 4)) / 4, 52, 73);
+            int playWidth = Math.Clamp(areaWidth - (smallWidth * 4) - (gap * 4), 122, 158);
+            int totalWidth = (smallWidth * 4) + playWidth + (gap * 4);
+            int x = areaLeft + Math.Max(0, (areaWidth - totalWidth) / 2);
+
+            btnFirst.SetBounds(x, controlY, smallWidth, buttonHeight);
+            x += smallWidth + gap;
+            btnPrev.SetBounds(x, controlY, smallWidth, buttonHeight);
+            x += smallWidth + gap;
+            btnPlayStop.SetBounds(x, controlY, playWidth, buttonHeight);
+            x += playWidth + gap;
+            btnNext.SetBounds(x, controlY, smallWidth, buttonHeight);
+            x += smallWidth + gap;
+            btnLast.SetBounds(x, controlY, smallWidth, buttonHeight);
+
+            trackFrame.SetBounds(37, trackY, Math.Max(120, width - 73), trackFrame.Height);
+        }
+
+        private bool IsFrameResizeGrip(Point location)
+        {
+            return location.Y >= picFrame.ClientSize.Height - FrameResizeGripHeight;
+        }
+
+        private void picFrame_MouseDown(object? sender, MouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Left || !IsFrameResizeGrip(e.Location)) return;
+
+            isResizingNavigator = true;
+            suppressNextFrameClick = true;
+            resizeStartMouseY = PointToClient(Cursor.Position).Y;
+            resizeStartNavigatorHeight = groupTubNavigator.Height;
+            picFrame.Capture = true;
+            picFrame.Cursor = Cursors.HSplit;
+        }
+
+        private void picFrame_MouseMove(object? sender, MouseEventArgs e)
+        {
+            if (!isResizingNavigator)
+            {
+                picFrame.Cursor = IsFrameResizeGrip(e.Location) ? Cursors.HSplit : Cursors.Default;
+                return;
+            }
+
+            int currentMouseY = PointToClient(Cursor.Position).Y;
+            navigatorHeight = resizeStartNavigatorHeight + currentMouseY - resizeStartMouseY;
+            ArrangeTimelineAndTabs();
+        }
+
+        private void picFrame_MouseLeave(object? sender, EventArgs e)
+        {
+            if (!isResizingNavigator)
+            {
+                picFrame.Cursor = Cursors.Default;
+            }
+        }
+
+        private void picFrame_MouseUp(object? sender, MouseEventArgs e)
+        {
+            isResizingNavigator = false;
+            picFrame.Capture = false;
+            picFrame.Cursor = IsFrameResizeGrip(e.Location) ? Cursors.HSplit : Cursors.Default;
         }
 
         // UI 스레드 안전하게 상태 라벨을 바꿔주는 도우미
@@ -585,14 +801,12 @@ namespace DataManager
             latestTestImagePath = "";
             latestTestRealAngle = null;
             latestTestPredictAngle = null;
-            predictedAnglesByFrame.Clear();
-            predictedAnglesByImageName.Clear();
+            predictedAnglesByImageKey.Clear();
             lblRealAngle2.Text = "-";
             lblPredictAngle2.Text = "-";
             lblErrorValue2.Text = "-";
             lblTrainStatus2.Text = "테스트 중";
             lblTrainStatus2.ForeColor = Color.DarkOrange;
-            picFrame.Invalidate();
         }
 
         private void HandleModelTestLog(string logText)
@@ -610,6 +824,7 @@ namespace DataManager
 
             txtLog.AppendText(Environment.NewLine + logText);
 
+            string? imageReference = TryFindImageReferenceFromLog(logText);
             string? imagePath = TryFindImagePathFromLog(logText);
             if (!string.IsNullOrWhiteSpace(imagePath))
             {
@@ -633,7 +848,7 @@ namespace DataManager
             {
                 latestTestPredictAngle = predictAngle;
                 lblPredictAngle2.Text = predictAngle.ToString("0.000");
-                StorePredictedAngleForImage(imagePath ?? latestTestImagePath, predictAngle);
+                StorePredictedAngleForImage(imagePath ?? imageReference ?? latestTestImagePath, predictAngle);
                 picFrame.Invalidate();
             }
 
@@ -688,10 +903,8 @@ namespace DataManager
 
         private string? TryFindImagePathFromLog(string logText)
         {
-            Match match = Regex.Match(logText, @"(?<path>[^\s""']+\.(?:jpg|jpeg|png|bmp))", RegexOptions.IgnoreCase);
-            if (!match.Success) return null;
-
-            string rawPath = match.Groups["path"].Value.Trim();
+            string? rawPath = TryFindImageReferenceFromLog(logText);
+            if (string.IsNullOrWhiteSpace(rawPath)) return null;
             if (File.Exists(rawPath)) return rawPath;
 
             string normalizedPath = rawPath.Replace('/', Path.DirectorySeparatorChar);
@@ -721,6 +934,45 @@ namespace DataManager
             }
 
             return null;
+        }
+
+        private static string? TryFindImageReferenceFromLog(string logText)
+        {
+            Match match = Regex.Match(logText, @"(?<path>[^\s""']+\.(?:jpg|jpeg|png|bmp))", RegexOptions.IgnoreCase);
+            return match.Success ? match.Groups["path"].Value.Trim() : null;
+        }
+
+        private void StorePredictedAngleForImage(string? imagePath, double predictAngle)
+        {
+            foreach (string key in GetImagePredictionKeys(imagePath))
+            {
+                predictedAnglesByImageKey[key] = predictAngle;
+            }
+        }
+
+        private bool TryGetPredictedAngleForFrame(TubFrame frame, out double predictAngle)
+        {
+            foreach (string key in GetImagePredictionKeys(frame.ImagePath).Concat(GetImagePredictionKeys(frame.ImageFileName)))
+            {
+                if (predictedAnglesByImageKey.TryGetValue(key, out predictAngle))
+                {
+                    return true;
+                }
+            }
+
+            predictAngle = 0;
+            return false;
+        }
+
+        private static IEnumerable<string> GetImagePredictionKeys(string? imagePath)
+        {
+            if (string.IsNullOrWhiteSpace(imagePath)) yield break;
+
+            string normalized = imagePath.Trim().Replace('/', Path.DirectorySeparatorChar);
+            yield return normalized;
+
+            string fileName = Path.GetFileName(normalized);
+            if (!string.IsNullOrWhiteSpace(fileName)) yield return fileName;
         }
 
         private void ShowTestImagePreview(string? imagePath)
@@ -759,151 +1011,6 @@ namespace DataManager
         {
             string extension = Path.GetExtension(path).ToLowerInvariant();
             return extension is ".jpg" or ".jpeg" or ".png" or ".bmp";
-        }
-
-        private void StorePredictedAngleForImage(string? imagePath, double predictAngle)
-        {
-            // 테스트 로그의 이미지 파일명과 예측 조향각을 연결해 두고, 같은 프레임을 볼 때 오버레이로 그린다.
-            if (string.IsNullOrWhiteSpace(imagePath)) return;
-
-            string imageName = Path.GetFileName(imagePath);
-            if (!string.IsNullOrWhiteSpace(imageName))
-            {
-                predictedAnglesByImageName[imageName] = predictAngle;
-            }
-
-            if (TryFindTubFrameIndexByImagePath(imagePath, out int frameIndex))
-            {
-                predictedAnglesByFrame[frameIndex] = predictAngle;
-            }
-        }
-
-        private bool TryFindTubFrameIndexByImagePath(string imagePath, out int frameIndex)
-        {
-            string imageName = Path.GetFileName(imagePath);
-            for (int i = 0; i < tubFrames.Count; i++)
-            {
-                TubFrame frame = tubFrames[i];
-                if (string.Equals(frame.ImagePath, imagePath, StringComparison.OrdinalIgnoreCase)
-                    || string.Equals(Path.GetFileName(frame.ImagePath), imageName, StringComparison.OrdinalIgnoreCase)
-                    || string.Equals(Path.GetFileName(frame.ImageFileName), imageName, StringComparison.OrdinalIgnoreCase))
-                {
-                    frameIndex = i;
-                    return true;
-                }
-            }
-
-            frameIndex = -1;
-            return false;
-        }
-
-        private bool TryGetPredictedAngleForFrame(int frameIndex, TubFrame frame, out double predictAngle)
-        {
-            if (predictedAnglesByFrame.TryGetValue(frameIndex, out predictAngle)) return true;
-
-            string imagePathName = Path.GetFileName(frame.ImagePath);
-            if (!string.IsNullOrWhiteSpace(imagePathName)
-                && predictedAnglesByImageName.TryGetValue(imagePathName, out predictAngle))
-            {
-                return true;
-            }
-
-            string catalogImageName = Path.GetFileName(frame.ImageFileName);
-            return !string.IsNullOrWhiteSpace(catalogImageName)
-                && predictedAnglesByImageName.TryGetValue(catalogImageName, out predictAngle);
-        }
-
-        private void picFrame_Paint(object? sender, PaintEventArgs e)
-        {
-            if (picFrame.Image == null || currentFrameIndex < 0 || currentFrameIndex >= tubFrames.Count) return;
-
-            TubFrame frame = tubFrames[currentFrameIndex];
-            Rectangle imageBounds = GetZoomedImageBounds(picFrame);
-            if (imageBounds.Width <= 0 || imageBounds.Height <= 0) return;
-
-            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-            e.Graphics.SetClip(imageBounds);
-
-            if (chkShowRealAngle.Checked)
-            {
-                DrawSteeringOverlayLine(e.Graphics, imageBounds, frame.Angle, Color.LimeGreen, "실제");
-            }
-
-            if (chkShowPredictAngle.Checked && TryGetPredictedAngleForFrame(currentFrameIndex, frame, out double predictAngle))
-            {
-                DrawSteeringOverlayLine(e.Graphics, imageBounds, predictAngle, Color.DeepSkyBlue, "예측");
-            }
-
-            e.Graphics.ResetClip();
-        }
-
-        private static Rectangle GetZoomedImageBounds(PictureBox pictureBox)
-        {
-            Image? image = pictureBox.Image;
-            if (image == null || pictureBox.ClientSize.Width <= 0 || pictureBox.ClientSize.Height <= 0)
-            {
-                return Rectangle.Empty;
-            }
-
-            double imageRatio = image.Width / (double)image.Height;
-            double boxRatio = pictureBox.ClientSize.Width / (double)pictureBox.ClientSize.Height;
-
-            int width;
-            int height;
-            if (imageRatio > boxRatio)
-            {
-                width = pictureBox.ClientSize.Width;
-                height = (int)Math.Round(width / imageRatio);
-            }
-            else
-            {
-                height = pictureBox.ClientSize.Height;
-                width = (int)Math.Round(height * imageRatio);
-            }
-
-            int x = (pictureBox.ClientSize.Width - width) / 2;
-            int y = (pictureBox.ClientSize.Height - height) / 2;
-            return new Rectangle(x, y, width, height);
-        }
-
-        private static void DrawSteeringOverlayLine(Graphics graphics, Rectangle imageBounds, double angle, Color color, string label)
-        {
-            double clampedAngle = Math.Clamp(angle, -1.0, 1.0);
-            PointF start = new PointF(imageBounds.Left + imageBounds.Width / 2f, imageBounds.Bottom - Math.Max(12, imageBounds.Height * 0.12f));
-            PointF end = new PointF(
-                start.X + (float)(clampedAngle * imageBounds.Width * 0.42),
-                imageBounds.Top + imageBounds.Height * 0.32f);
-
-            using Pen shadowPen = new Pen(Color.FromArgb(160, 0, 0, 0), 6)
-            {
-                StartCap = LineCap.Round,
-                EndCap = LineCap.Round
-            };
-            using Pen linePen = new Pen(color, 3)
-            {
-                StartCap = LineCap.Round,
-                EndCap = LineCap.ArrowAnchor
-            };
-
-            graphics.DrawLine(shadowPen, start, end);
-            graphics.DrawLine(linePen, start, end);
-
-            using Brush pointBrush = new SolidBrush(color);
-            graphics.FillEllipse(pointBrush, start.X - 5, start.Y - 5, 10, 10);
-
-            string text = $"{label} {angle:0.00}";
-            using Font font = new Font(SystemFonts.DefaultFont.FontFamily, 9, FontStyle.Bold);
-            SizeF textSize = graphics.MeasureString(text, font);
-            RectangleF labelBounds = new RectangleF(
-                Math.Clamp(end.X + 8, imageBounds.Left + 4, imageBounds.Right - textSize.Width - 10),
-                Math.Clamp(end.Y - textSize.Height - 4, imageBounds.Top + 4, imageBounds.Bottom - textSize.Height - 4),
-                textSize.Width + 6,
-                textSize.Height + 4);
-
-            using Brush labelBack = new SolidBrush(Color.FromArgb(180, 0, 0, 0));
-            using Brush labelText = new SolidBrush(Color.White);
-            graphics.FillRectangle(labelBack, labelBounds);
-            graphics.DrawString(text, font, labelText, labelBounds.Left + 3, labelBounds.Top + 2);
         }
 
         // ==========================================
@@ -1172,17 +1279,19 @@ namespace DataManager
 
         private void UpdateTimelineForFrame(int frameIndex)
         {
-            int timelineStart = (frameIndex / TimelineVisibleCount) * TimelineVisibleCount;
-            if (timelineStart == currentTimelineStart) return;
+            int visibleCount = GetTimelineVisibleCount();
+            int timelineStart = (frameIndex / visibleCount) * visibleCount;
+            if (timelineStart == currentTimelineStart && visibleCount == currentTimelineVisibleCount) return;
 
             currentTimelineStart = timelineStart;
+            currentTimelineVisibleCount = visibleCount;
             lvTimeline.BeginUpdate();
             lvTimeline.Items.Clear();
             timelineImages.Images.Clear();
 
             try
             {
-                int timelineEnd = Math.Min(tubFrames.Count, timelineStart + TimelineVisibleCount);
+                int timelineEnd = Math.Min(tubFrames.Count, timelineStart + visibleCount);
                 for (int i = timelineStart; i < timelineEnd; i++)
                 {
                     TubFrame frame = tubFrames[i];
@@ -1192,6 +1301,163 @@ namespace DataManager
                 }
             }
             finally { lvTimeline.EndUpdate(); }
+
+            if (hasTimelineRangeDragMoved)
+            {
+                ApplyTimelineRangeSelection();
+            }
+        }
+
+        private int GetTimelineVisibleCount()
+        {
+            int availableWidth = Math.Max(0, lvTimeline.ClientSize.Width - 8);
+            int countByWidth = availableWidth / TimelineIconSpacingX;
+            return Math.Clamp(countByWidth, TimelineMinimumVisibleCount, TimelineMaximumVisibleCount);
+        }
+
+        private void ReloadTimelineForCurrentFrame()
+        {
+            ApplyTimelineIconSpacing();
+            if (tubFrames.Count == 0) return;
+
+            currentTimelineStart = -1;
+            currentTimelineVisibleCount = -1;
+            int frameIndex = Math.Min(trackFrame.Value, tubFrames.Count - 1);
+            UpdateTimelineForFrame(frameIndex);
+        }
+
+        private void lvTimeline_MouseDown(object? sender, MouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Left || tubFrames.Count == 0) return;
+
+            ListViewItem? item = lvTimeline.GetItemAt(e.X, e.Y);
+            if (item?.Tag is not int frameIndex) return;
+
+            isTimelineRangeDragging = true;
+            hasTimelineRangeDragMoved = false;
+            timelineDragStartIndex = frameIndex;
+            timelineDragCurrentIndex = frameIndex;
+            lvTimeline.Capture = true;
+        }
+
+        private void lvTimeline_MouseMove(object? sender, MouseEventArgs e)
+        {
+            if (!isTimelineRangeDragging) return;
+
+            int edgeMargin = 18;
+            timelineDragEdgeDirection = e.X >= lvTimeline.ClientSize.Width - edgeMargin
+                ? 1
+                : e.X <= edgeMargin
+                    ? -1
+                    : 0;
+
+            if (timelineDragEdgeDirection == 0)
+            {
+                timelineDragTimer.Stop();
+            }
+            else if (!timelineDragTimer.Enabled)
+            {
+                timelineDragTimer.Start();
+            }
+
+            int x = Math.Clamp(e.X, 0, Math.Max(0, lvTimeline.ClientSize.Width - 1));
+            int y = Math.Clamp(e.Y, 0, Math.Max(0, lvTimeline.ClientSize.Height - 1));
+            ListViewItem? item = lvTimeline.GetItemAt(x, y);
+            if (item?.Tag is int frameIndex)
+            {
+                if (!hasTimelineRangeDragMoved && frameIndex == timelineDragStartIndex) return;
+
+                hasTimelineRangeDragMoved = true;
+                UpdateTimelineDragRange(frameIndex);
+            }
+        }
+
+        private void lvTimeline_MouseUp(object? sender, MouseEventArgs e)
+        {
+            int clickedIndex = timelineDragStartIndex;
+            bool shouldShowFrame = isTimelineRangeDragging && !hasTimelineRangeDragMoved;
+            StopTimelineRangeDrag();
+
+            if (shouldShowFrame && clickedIndex >= 0)
+            {
+                ShowFrame(clickedIndex);
+            }
+        }
+
+        private void lvTimeline_MouseLeave(object? sender, EventArgs e)
+        {
+            if (!isTimelineRangeDragging)
+            {
+                timelineDragEdgeDirection = 0;
+                timelineDragTimer.Stop();
+            }
+        }
+
+        private void timelineDragTimer_Tick(object? sender, EventArgs e)
+        {
+            if (!isTimelineRangeDragging || !hasTimelineRangeDragMoved || timelineDragEdgeDirection == 0) return;
+
+            int nextIndex = Math.Clamp(timelineDragCurrentIndex + timelineDragEdgeDirection, 0, tubFrames.Count - 1);
+            if (nextIndex == timelineDragCurrentIndex) return;
+
+            UpdateTimelineDragRange(nextIndex);
+            UpdateTimelineForFrame(nextIndex);
+        }
+
+        private void StopTimelineRangeDrag()
+        {
+            if (!isTimelineRangeDragging) return;
+
+            isTimelineRangeDragging = false;
+            timelineDragEdgeDirection = 0;
+            timelineDragTimer.Stop();
+            lvTimeline.Capture = false;
+            if (hasTimelineRangeDragMoved)
+            {
+                ApplyTimelineRangeSelection();
+            }
+        }
+
+        private void UpdateTimelineDragRange(int currentIndex)
+        {
+            timelineDragCurrentIndex = Math.Clamp(currentIndex, 0, tubFrames.Count - 1);
+            rangeStart = timelineDragStartIndex;
+            rangeEnd = timelineDragCurrentIndex;
+            UpdateRangeLabel();
+            ApplyTimelineRangeSelection();
+        }
+
+        private void ApplyTimelineRangeSelection()
+        {
+            if (lvTimeline.Items.Count == 0) return;
+
+            isUpdatingTimelineSelection = true;
+            try
+            {
+                if (rangeStart < 0 && rangeEnd < 0)
+                {
+                    foreach (ListViewItem item in lvTimeline.Items) item.Selected = false;
+                    return;
+                }
+
+                (int lo, int hi) = GetEffectiveRange();
+                foreach (ListViewItem item in lvTimeline.Items)
+                {
+                    if (item.Tag is not int frameIndex) continue;
+                    item.Selected = frameIndex >= lo && frameIndex <= hi;
+                    item.Focused = frameIndex == timelineDragCurrentIndex;
+                }
+
+                int visibleIndex = timelineDragCurrentIndex - currentTimelineStart;
+                if (visibleIndex >= 0 && visibleIndex < lvTimeline.Items.Count)
+                {
+                    lvTimeline.Items[visibleIndex].EnsureVisible();
+                }
+            }
+            finally
+            {
+                isUpdatingTimelineSelection = false;
+            }
         }
 
         private void ShowFrame(int index)
@@ -1211,6 +1477,7 @@ namespace DataManager
             if (timelineItemIndex >= 0 && timelineItemIndex < lvTimeline.Items.Count)
             {
                 isUpdatingTimelineSelection = true;
+                foreach (ListViewItem item in lvTimeline.Items) item.Selected = false;
                 lvTimeline.Items[timelineItemIndex].Selected = true;
                 lvTimeline.Items[timelineItemIndex].Focused = true;
                 lvTimeline.Items[timelineItemIndex].EnsureVisible();
@@ -1219,13 +1486,13 @@ namespace DataManager
 
             // 캐시가 소유한 이미지를 표시한다. (캐시가 Dispose를 책임지므로 여기서 Dispose하지 않는다.)
             picFrame.Image = frameImageCache.Get(frame.ImagePath);
-            currentFrameIndex = index;
 
             if (!File.Exists(frame.ImagePath)) missingImageFrames.Add(index);
 
             UpdateFrameInfoLabels(frame, index);
             picFrame.Invalidate();
         }
+
 
         private void btnDisconnect_Click(object? sender, EventArgs e)
         {
@@ -1245,6 +1512,83 @@ namespace DataManager
                     UpdateStatusLabel("로컬 대기중", Color.Black);
                 }
             }
+        }
+
+        private void picFrame_Paint(object? sender, PaintEventArgs e)
+        {
+            if (picFrame.Image == null || trackFrame.Value < 0 || trackFrame.Value >= tubFrames.Count) return;
+
+            Rectangle imageRect = GetZoomedImageRectangle(picFrame);
+            if (imageRect.Width <= 0 || imageRect.Height <= 0) return;
+
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+
+            TubFrame frame = tubFrames[trackFrame.Value];
+            if (chkShowRealAngle.Checked)
+            {
+                DrawSteeringAngleLine(e.Graphics, imageRect, frame.Angle, Color.LimeGreen, "실제");
+            }
+
+            if (chkShowPredictAngle.Checked && TryGetPredictedAngleForFrame(frame, out double framePredictAngle))
+            {
+                DrawSteeringAngleLine(e.Graphics, imageRect, framePredictAngle, Color.DeepSkyBlue, "예측");
+            }
+        }
+
+        private static Rectangle GetZoomedImageRectangle(PictureBox pictureBox)
+        {
+            if (pictureBox.Image == null) return Rectangle.Empty;
+
+            float imageRatio = (float)pictureBox.Image.Width / pictureBox.Image.Height;
+            float boxRatio = (float)pictureBox.ClientSize.Width / pictureBox.ClientSize.Height;
+
+            if (imageRatio > boxRatio)
+            {
+                int width = pictureBox.ClientSize.Width;
+                int height = (int)(width / imageRatio);
+                int top = (pictureBox.ClientSize.Height - height) / 2;
+                return new Rectangle(0, top, width, height);
+            }
+            else
+            {
+                int height = pictureBox.ClientSize.Height;
+                int width = (int)(height * imageRatio);
+                int left = (pictureBox.ClientSize.Width - width) / 2;
+                return new Rectangle(left, 0, width, height);
+            }
+        }
+
+        private static void DrawSteeringAngleLine(Graphics graphics, Rectangle imageRect, double angle, Color color, string label)
+        {
+            double clampedAngle = Math.Clamp(angle, -1.0, 1.0);
+            PointF start = new PointF(imageRect.Left + imageRect.Width / 2f, imageRect.Bottom - imageRect.Height * 0.12f);
+            float lineLength = imageRect.Height * 0.45f;
+            float endX = start.X + (float)(clampedAngle * imageRect.Width * 0.35);
+            float endY = start.Y - lineLength;
+            PointF end = new PointF(endX, endY);
+
+            using Pen shadowPen = new Pen(Color.FromArgb(150, Color.Black), 7)
+            {
+                StartCap = LineCap.Round,
+                EndCap = LineCap.Round
+            };
+            using Pen linePen = new Pen(color, 4)
+            {
+                StartCap = LineCap.Round,
+                EndCap = LineCap.Round
+            };
+
+            graphics.DrawLine(shadowPen, start, end);
+            graphics.DrawLine(linePen, start, end);
+
+            using Brush textBack = new SolidBrush(Color.FromArgb(170, Color.Black));
+            using Brush textBrush = new SolidBrush(Color.White);
+            using Font font = new Font("나눔고딕", 9F, FontStyle.Bold);
+            string text = $"{label} {angle:0.000}";
+            SizeF textSize = graphics.MeasureString(text, font);
+            RectangleF labelRect = new RectangleF(end.X + 8, end.Y - textSize.Height / 2, textSize.Width + 8, textSize.Height + 4);
+            graphics.FillRectangle(textBack, labelRect);
+            graphics.DrawString(text, font, textBrush, labelRect.Left + 4, labelRect.Top + 2);
         }
 
         private void UpdateFrameInfoLabels(TubFrame? frame, int index)
@@ -1356,17 +1700,35 @@ namespace DataManager
         {
             if (!File.Exists(imagePath))
             {
-                Bitmap missing = new Bitmap(36, 27);
+                Bitmap missing = new Bitmap(TimelineThumbWidth, TimelineThumbHeight);
                 using Graphics graphics = Graphics.FromImage(missing);
                 graphics.Clear(Color.Black);
                 using Pen pen = new Pen(Color.DarkGray);
-                graphics.DrawRectangle(pen, 0, 0, 35, 26);
+                graphics.DrawRectangle(pen, 0, 0, TimelineThumbWidth - 1, TimelineThumbHeight - 1);
                 return missing;
             }
             using FileStream stream = new FileStream(imagePath, FileMode.Open, FileAccess.Read);
             using Image source = Image.FromStream(stream);
-            return new Bitmap(source, new Size(36, 27));
+            return new Bitmap(source, new Size(TimelineThumbWidth, TimelineThumbHeight));
         }
+
+        // ListView 기본 큰 아이콘 간격이 넓어서 썸네일이 한 줄에 촘촘히 보이도록 직접 조정한다.
+        private void ApplyTimelineIconSpacing()
+        {
+            if (!lvTimeline.IsHandleCreated) return;
+            SendMessage(lvTimeline.Handle, LvmSetIconSpacing, IntPtr.Zero, MakeLParam(TimelineIconSpacingX, TimelineIconSpacingY));
+        }
+
+        private static IntPtr MakeLParam(int lowWord, int highWord)
+        {
+            return (IntPtr)((highWord << 16) | (lowWord & 0xffff));
+        }
+
+        private const int LvmFirst = 0x1000;
+        private const int LvmSetIconSpacing = LvmFirst + 53;
+
+        [DllImport("user32.dll", CharSet = CharSet.Auto)]
+        private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
 
         private static string GetStringValue(JsonElement root, string propertyName)
         {
@@ -1443,6 +1805,7 @@ namespace DataManager
             picDataGraph.SizeMode = PictureBoxSizeMode.StretchImage;
             picDataGraph.Resize += (_, _) => RedrawGraphAfterLayout();
             picDataGraph.MouseMove += picDataGraph_MouseMove;
+            picDataGraph.MouseClick += picDataGraph_MouseClick;
             picDataGraph.MouseLeave += (_, _) => lblGraphHover.Visible = false;
 
             // 그래프 위에 마우스를 올렸을 때 현재 프레임 값을 작은 정보창으로 표시한다.
@@ -1618,17 +1981,14 @@ namespace DataManager
 
         private void picDataGraph_MouseMove(object? sender, MouseEventArgs e)
         {
-            if (graphVisibleFrames.Count == 0 || graphPlotBounds == Rectangle.Empty || !graphPlotBounds.Contains(e.Location))
+            TubFrame? frame = GetGraphFrameAt(e.Location);
+            if (frame == null)
             {
                 lblGraphHover.Visible = false;
+                picDataGraph.Cursor = Cursors.Default;
                 return;
             }
 
-            double ratio = (e.X - graphPlotBounds.Left) / (double)Math.Max(1, graphPlotBounds.Width);
-            int frameIndex = (int)Math.Round(ratio * (graphVisibleFrames.Count - 1));
-            frameIndex = Math.Clamp(frameIndex, 0, graphVisibleFrames.Count - 1);
-
-            TubFrame frame = graphVisibleFrames[frameIndex];
             lblGraphHover.Text = $"프레임 {frame.FrameNumber:D6}\n조향각 {frame.Angle:0.000}\n속도 {frame.Throttle:0.000}";
 
             int x = Math.Min(e.X + 14, picDataGraph.ClientSize.Width - lblGraphHover.Width - 8);
@@ -1636,6 +1996,39 @@ namespace DataManager
             lblGraphHover.Location = new Point(Math.Max(8, x), Math.Max(8, y));
             lblGraphHover.Visible = true;
             lblGraphHover.BringToFront();
+            picDataGraph.Cursor = Cursors.Hand;
+        }
+
+        private void picDataGraph_MouseClick(object? sender, MouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Left) return;
+
+            TubFrame? frame = GetGraphFrameAt(e.Location);
+            if (frame == null) return;
+
+            int tubIndex = tubFrames.IndexOf(frame);
+            if (tubIndex < 0)
+            {
+                tubIndex = tubFrames.FindIndex(item => item.FrameNumber == frame.FrameNumber);
+            }
+
+            if (tubIndex >= 0)
+            {
+                ShowFrame(tubIndex);
+            }
+        }
+
+        private TubFrame? GetGraphFrameAt(Point location)
+        {
+            if (graphVisibleFrames.Count == 0 || graphPlotBounds == Rectangle.Empty || !graphPlotBounds.Contains(location))
+            {
+                return null;
+            }
+
+            double ratio = (location.X - graphPlotBounds.Left) / (double)Math.Max(1, graphPlotBounds.Width);
+            int frameIndex = (int)Math.Round(ratio * (graphVisibleFrames.Count - 1));
+            frameIndex = Math.Clamp(frameIndex, 0, graphVisibleFrames.Count - 1);
+            return graphVisibleFrames[frameIndex];
         }
 
         private static void DrawCenteredGraphMessage(Graphics graphics, Size size, string message)
@@ -1649,7 +2042,11 @@ namespace DataManager
 
         private void AddLog(string message) => txtLog.AppendText(Environment.NewLine + message);
         private void lstFrames_SelectedIndexChanged(object sender, EventArgs e) => ShowFrame(lstFrames.SelectedIndex);
-        private void lvTimeline_SelectedIndexChanged(object sender, EventArgs e) { if (!isUpdatingTimelineSelection && lvTimeline.SelectedItems.Count > 0 && lvTimeline.SelectedItems[0].Tag is int index) ShowFrame(index); }
+        private void lvTimeline_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            if (isUpdatingTimelineSelection || isTimelineRangeDragging) return;
+            if (lvTimeline.SelectedItems.Count > 0 && lvTimeline.SelectedItems[0].Tag is int index) ShowFrame(index);
+        }
         private void trackFrame_Scroll(object sender, EventArgs e) => ShowFrame(trackFrame.Value);
         private void btnFirst_Click(object? sender, EventArgs e) { int i = FirstActiveIndex(); if (i >= 0) ShowFrame(i); }
         private void btnPrev_Click(object? sender, EventArgs e) { int i = PrevActiveIndex(trackFrame.Value); if (i >= 0) ShowFrame(i); }
@@ -1748,6 +2145,62 @@ namespace DataManager
         {
             if (index < 0 || index >= lstFrames.Items.Count) return;
             lstFrames.Items[index] = tubFrames[index];
+        }
+
+        // 휴지통(CheckedListBox) 드래그 다중 체크 상태
+        private bool trashDragging;
+        private bool trashDragTargetState;
+        private int trashDragLastIndex = -1;
+
+        private void LstTrash_MouseDown(object? sender, MouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Left) return;
+            int index = lstTrash.IndexFromPoint(e.Location);
+            if (index < 0 || index >= lstTrash.Items.Count) { trashDragging = false; return; }
+
+            bool newState = !lstTrash.GetItemChecked(index);
+            lstTrash.SetItemChecked(index, newState);
+            trashDragTargetState = newState;
+            trashDragLastIndex = index;
+            trashDragging = true;
+        }
+
+        private void LstTrash_MouseMove(object? sender, MouseEventArgs e)
+        {
+            if (!trashDragging || (e.Button & MouseButtons.Left) == 0) return;
+            int index = lstTrash.IndexFromPoint(e.Location);
+            if (index < 0 || index >= lstTrash.Items.Count) return;
+            ApplyTrashDragTo(index);
+        }
+
+        // 오토스크롤(커서를 가장자리에 두면 리스트가 자동으로 스크롤되는 동작) 시에는
+        // 실제 마우스 이동이 없어서 MouseMove가 안 오고, native SelectionMode.One 로직이
+        // SelectedIndex만 갱신한다. 따라서 SelectedIndexChanged도 같이 후킹해 드래그를 따라가게 한다.
+        private void LstTrash_SelectedIndexChanged(object? sender, EventArgs e)
+        {
+            if (!trashDragging) return;
+            int index = lstTrash.SelectedIndex;
+            if (index < 0) return;
+            ApplyTrashDragTo(index);
+        }
+
+        // 드래그 중 인덱스가 점프(빠른 드래그/오토스크롤)할 때 마지막 위치~현재 위치 사이를 일괄 적용.
+        private void ApplyTrashDragTo(int index)
+        {
+            if (index == trashDragLastIndex) return;
+            int start = Math.Min(trashDragLastIndex, index);
+            int end = Math.Max(trashDragLastIndex, index);
+            for (int i = start; i <= end; i++)
+            {
+                lstTrash.SetItemChecked(i, trashDragTargetState);
+            }
+            trashDragLastIndex = index;
+        }
+
+        private void LstTrash_MouseUp(object? sender, MouseEventArgs e)
+        {
+            trashDragging = false;
+            trashDragLastIndex = -1;
         }
 
         // ==========================================
@@ -1901,13 +2354,25 @@ namespace DataManager
             }
             else
             {
-                int index = lstFrames.SelectedIndex;
-                if (index < 0)
+                // SelectedIndices는 라이브 컬렉션이라, MoveToTrash → RefreshFrameListItem의
+                // lstFrames.Items[i] 재대입이 해당 인덱스의 선택을 해제(앵커는 제외)한다.
+                // 그 결과 라이브 컬렉션 그대로 순회하면 일부 항목이 누락되므로 스냅샷으로 떠서 순회한다.
+                List<int> indices = new List<int>();
+                foreach (int idx in lstFrames.SelectedIndices) indices.Add(idx);
+                if (indices.Count == 0)
                 {
                     MessageBox.Show("삭제할 프레임을 목록에서 선택하거나 [시작 지정]/[끝 지정]으로 범위를 정하세요.", "삭제", MessageBoxButtons.OK, MessageBoxIcon.Information);
                     return;
                 }
-                if (MoveToTrash(index, "수동 삭제")) moved++;
+                if (indices.Count > 1)
+                {
+                    DialogResult res = MessageBox.Show($"선택한 {indices.Count}개 프레임을 휴지통으로 이동하시겠습니까?", "삭제", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+                    if (res == DialogResult.No) return;
+                }
+                foreach (int index in indices)
+                {
+                    if (MoveToTrash(index, "수동 삭제")) moved++;
+                }
             }
 
             RebuildTrashList();
@@ -1917,13 +2382,13 @@ namespace DataManager
 
         private void btnRestore_Click(object? sender, EventArgs e)
         {
-            if (lstTrash.SelectedItems.Count == 0)
+            if (lstTrash.CheckedItems.Count == 0)
             {
-                MessageBox.Show("복원할 항목을 휴지통 목록에서 선택하세요.", "복원", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show("복원할 항목을 휴지통 목록에서 체크하세요.", "복원", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
 
-            List<TrashEntry> selected = lstTrash.SelectedItems.Cast<TrashEntry>().ToList();
+            List<TrashEntry> selected = lstTrash.CheckedItems.Cast<TrashEntry>().ToList();
             foreach (TrashEntry entry in selected) RestoreFromTrash(entry.Frame);
             RebuildTrashList();
             RenderTubGraph();
@@ -2220,7 +2685,9 @@ namespace DataManager
 
         private void picFrame_Click(object sender, EventArgs e)
         {
+            if (!suppressNextFrameClick) return;
 
+            suppressNextFrameClick = false;
         }
     }
 }
