@@ -48,9 +48,30 @@ namespace DataManager
         private int currentTimelineStart = -1;
         private int currentTimelineVisibleCount = -1;
         private bool isUpdatingTimelineSelection;
+        private bool isTimelineRangeDragging;
+        private bool hasTimelineRangeDragMoved;
+        private int timelineDragStartIndex = -1;
+        private int timelineDragCurrentIndex = -1;
+        private int timelineDragEdgeDirection;
+        private readonly System.Windows.Forms.Timer timelineDragTimer = new();
         private int playbackFrameStep = 1;
-        private int tubNavigatorBaseHeight;
-        private int frameListBaseHeight;
+        private const int DefaultNavigatorHeight = 517;
+        private const int MinNavigatorHeight = 360;
+        private const int TimelinePanelHeight = 86;
+        private const int TimelineMinimumPanelHeight = 42;
+        private const int DefaultTabPanelHeight = 220;
+        private const int MinimumTabVisibleHeight = 130;
+        private const int LayoutGap = 8;
+        private const int FrameResizeBarHeight = 0;
+        private const int FrameResizeGripHeight = 12;
+        private int navigatorHeight = DefaultNavigatorHeight;
+        private bool isResizingNavigator;
+        private bool suppressNextFrameClick;
+        private int resizeStartMouseY;
+        private int resizeStartNavigatorHeight;
+        private const int MinimumResponsiveFormWidth = 1320;
+        private const int LeftDataPanelGap = 12;
+        private const int MinimumDataInfoPanelHeight = 264;
 
         // 데이터 정리(필터/삭제) 대상 범위. -1은 미지정.
         private int rangeStart = -1;
@@ -109,6 +130,10 @@ namespace DataManager
                 RedrawGraphAfterLayout();
             };
             picFrame.Paint += picFrame_Paint;
+            picFrame.MouseDown += picFrame_MouseDown;
+            picFrame.MouseMove += picFrame_MouseMove;
+            picFrame.MouseLeave += picFrame_MouseLeave;
+            picFrame.MouseUp += picFrame_MouseUp;
             chkShowRealAngle.CheckedChanged += (_, _) => picFrame.Invalidate();
             chkShowPredictAngle.CheckedChanged += (_, _) => picFrame.Invalidate();
 
@@ -136,30 +161,183 @@ namespace DataManager
             lvTimeline.LabelWrap = false;
             lvTimeline.Scrollable = false;
             lvTimeline.HideSelection = false;
-            lvTimeline.MultiSelect = false;
+            lvTimeline.MultiSelect = true;
             lvTimeline.ShowItemToolTips = true;
             lvTimeline.HandleCreated += (_, _) => ApplyTimelineIconSpacing();
             lvTimeline.Resize += (_, _) => ReloadTimelineForCurrentFrame();
+            lvTimeline.MouseDown += lvTimeline_MouseDown;
+            lvTimeline.MouseMove += lvTimeline_MouseMove;
+            lvTimeline.MouseUp += lvTimeline_MouseUp;
+            lvTimeline.MouseLeave += lvTimeline_MouseLeave;
             ApplyTimelineIconSpacing();
+
+            timelineDragTimer.Interval = 120;
+            timelineDragTimer.Tick += timelineDragTimer_Tick;
 
             InitializeGraphControls();
             picTestImage.SizeMode = PictureBoxSizeMode.Zoom;
-            tubNavigatorBaseHeight = groupTubNavigator.Height;
-            frameListBaseHeight = groupFrameList.Height;
+            MinimumSize = new Size(Math.Max(MinimumSize.Width, MinimumResponsiveFormWidth), MinimumSize.Height);
+            groupTubNavigator.Resize += (_, _) => ArrangeNavigatorControls();
+            Shown += (_, _) =>
+            {
+                // 실행 직후 기본 높이만 데이터 정보 판넬 아래와 맞춘다. 이후에는 사용자가 드래그로 조절한다.
+                navigatorHeight = Math.Max(MinNavigatorHeight, groupDataView.Bottom - groupTubNavigator.Top);
+                ArrangeTimelineAndTabs();
+            };
             ArrangeTimelineAndTabs();
         }
 
         private void ArrangeTimelineAndTabs()
         {
-            if (tubNavigatorBaseHeight <= 0 || frameListBaseHeight <= 0) return;
+            int bottomGap = 8;
+            int resizeBarTopGap = 2;
+            int minimumNavigatorHeight = GetMinimumNavigatorHeight();
+            int appliedNavigatorHeight = Math.Max(navigatorHeight, minimumNavigatorHeight);
+            int tabHeight = DefaultTabPanelHeight;
+            int timelineHeight = TimelinePanelHeight;
 
-            groupTubNavigator.Height = tubNavigatorBaseHeight;
-            groupFrameList.Height = frameListBaseHeight;
+            int availableBelowNavigator = ClientSize.Height
+                - bottomGap
+                - groupTubNavigator.Top
+                - appliedNavigatorHeight
+                - resizeBarTopGap
+                - FrameResizeBarHeight
+                - (LayoutGap * 2);
 
-            int gap = 8;
-            groupTimeline.Top = groupTubNavigator.Bottom + gap;
-            tabMain.Top = groupTimeline.Bottom + gap;
-            tabMain.Height = Math.Max(120, ClientSize.Height - tabMain.Top - gap);
+            int shortage = (timelineHeight + tabHeight) - availableBelowNavigator;
+            if (shortage > 0)
+            {
+                int tabShrink = Math.Min(shortage, tabHeight - MinimumTabVisibleHeight);
+                tabHeight -= tabShrink;
+                shortage -= tabShrink;
+            }
+
+            if (shortage > 0)
+            {
+                int timelineShrink = Math.Min(shortage, timelineHeight - TimelineMinimumPanelHeight);
+                timelineHeight -= timelineShrink;
+                shortage -= timelineShrink;
+            }
+
+            if (shortage > 0)
+            {
+                appliedNavigatorHeight = Math.Max(minimumNavigatorHeight, appliedNavigatorHeight - shortage);
+            }
+
+            tabMain.Height = tabHeight;
+            tabMain.Top = ClientSize.Height - tabMain.Height - bottomGap;
+
+            groupTimeline.Height = timelineHeight;
+            groupTimeline.Top = tabMain.Top - groupTimeline.Height - LayoutGap;
+            groupTimeline.BringToFront();
+
+            groupTubNavigator.Height = appliedNavigatorHeight;
+            groupFrameList.Height = appliedNavigatorHeight;
+            ArrangeLeftDataPanels(groupTubNavigator.Bottom);
+
+            ArrangeNavigatorControls();
+        }
+
+        private int GetMinimumNavigatorHeight()
+        {
+            return Math.Max(MinNavigatorHeight, groupBoxDataLoad.Height + LeftDataPanelGap + MinimumDataInfoPanelHeight);
+        }
+
+        private void ArrangeLeftDataPanels(int targetBottom)
+        {
+            groupBoxDataLoad.Top = groupTubNavigator.Top;
+            groupDataView.Top = groupBoxDataLoad.Bottom + LeftDataPanelGap;
+            groupDataView.Height = Math.Max(MinimumDataInfoPanelHeight, targetBottom - groupDataView.Top);
+        }
+
+        private void ArrangeNavigatorControls()
+        {
+            int width = groupTubNavigator.ClientSize.Width;
+            int height = groupTubNavigator.ClientSize.Height;
+            if (width <= 0 || height <= 0) return;
+
+            int sidePadding = 24;
+            int buttonHeight = 42;
+            int controlY = Math.Max(220, height - 123);
+            int trackY = Math.Min(height - 65, controlY + 58);
+
+            lblCurrentFrame.Location = new Point(45, controlY);
+            lblCurrentFrame2.Location = new Point(53, controlY + 27);
+
+            int speedWidth = 184;
+            int speedX = width - sidePadding - speedWidth;
+            lblSpeed.Location = new Point(speedX, controlY - 7);
+            cmbPlaySpeed.SetBounds(speedX, controlY + 21, 80, 28);
+            chkAutoPlay.SetBounds(speedX + 96, controlY + 18, 88, 28);
+
+            int leftReserved = 150;
+            int rightReserved = speedWidth + 24;
+            int areaLeft = leftReserved;
+            int areaRight = Math.Max(areaLeft, width - sidePadding - rightReserved);
+            int areaWidth = areaRight - areaLeft;
+
+            int gap = Math.Clamp(areaWidth / 32, 8, 14);
+            int smallWidth = Math.Clamp((areaWidth - 122 - (gap * 4)) / 4, 52, 73);
+            int playWidth = Math.Clamp(areaWidth - (smallWidth * 4) - (gap * 4), 122, 158);
+            int totalWidth = (smallWidth * 4) + playWidth + (gap * 4);
+            int x = areaLeft + Math.Max(0, (areaWidth - totalWidth) / 2);
+
+            btnFirst.SetBounds(x, controlY, smallWidth, buttonHeight);
+            x += smallWidth + gap;
+            btnPrev.SetBounds(x, controlY, smallWidth, buttonHeight);
+            x += smallWidth + gap;
+            btnPlayStop.SetBounds(x, controlY, playWidth, buttonHeight);
+            x += playWidth + gap;
+            btnNext.SetBounds(x, controlY, smallWidth, buttonHeight);
+            x += smallWidth + gap;
+            btnLast.SetBounds(x, controlY, smallWidth, buttonHeight);
+
+            trackFrame.SetBounds(37, trackY, Math.Max(120, width - 73), trackFrame.Height);
+        }
+
+        private bool IsFrameResizeGrip(Point location)
+        {
+            return location.Y >= picFrame.ClientSize.Height - FrameResizeGripHeight;
+        }
+
+        private void picFrame_MouseDown(object? sender, MouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Left || !IsFrameResizeGrip(e.Location)) return;
+
+            isResizingNavigator = true;
+            suppressNextFrameClick = true;
+            resizeStartMouseY = PointToClient(Cursor.Position).Y;
+            resizeStartNavigatorHeight = groupTubNavigator.Height;
+            picFrame.Capture = true;
+            picFrame.Cursor = Cursors.HSplit;
+        }
+
+        private void picFrame_MouseMove(object? sender, MouseEventArgs e)
+        {
+            if (!isResizingNavigator)
+            {
+                picFrame.Cursor = IsFrameResizeGrip(e.Location) ? Cursors.HSplit : Cursors.Default;
+                return;
+            }
+
+            int currentMouseY = PointToClient(Cursor.Position).Y;
+            navigatorHeight = resizeStartNavigatorHeight + currentMouseY - resizeStartMouseY;
+            ArrangeTimelineAndTabs();
+        }
+
+        private void picFrame_MouseLeave(object? sender, EventArgs e)
+        {
+            if (!isResizingNavigator)
+            {
+                picFrame.Cursor = Cursors.Default;
+            }
+        }
+
+        private void picFrame_MouseUp(object? sender, MouseEventArgs e)
+        {
+            isResizingNavigator = false;
+            picFrame.Capture = false;
+            picFrame.Cursor = IsFrameResizeGrip(e.Location) ? Cursors.HSplit : Cursors.Default;
         }
 
         private void Form1_Load(object sender, EventArgs e)
@@ -1066,6 +1244,11 @@ namespace DataManager
                 }
             }
             finally { lvTimeline.EndUpdate(); }
+
+            if (hasTimelineRangeDragMoved)
+            {
+                ApplyTimelineRangeSelection();
+            }
         }
 
         private int GetTimelineVisibleCount()
@@ -1086,6 +1269,140 @@ namespace DataManager
             UpdateTimelineForFrame(frameIndex);
         }
 
+        private void lvTimeline_MouseDown(object? sender, MouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Left || tubFrames.Count == 0) return;
+
+            ListViewItem? item = lvTimeline.GetItemAt(e.X, e.Y);
+            if (item?.Tag is not int frameIndex) return;
+
+            isTimelineRangeDragging = true;
+            hasTimelineRangeDragMoved = false;
+            timelineDragStartIndex = frameIndex;
+            timelineDragCurrentIndex = frameIndex;
+            lvTimeline.Capture = true;
+        }
+
+        private void lvTimeline_MouseMove(object? sender, MouseEventArgs e)
+        {
+            if (!isTimelineRangeDragging) return;
+
+            int edgeMargin = 18;
+            timelineDragEdgeDirection = e.X >= lvTimeline.ClientSize.Width - edgeMargin
+                ? 1
+                : e.X <= edgeMargin
+                    ? -1
+                    : 0;
+
+            if (timelineDragEdgeDirection == 0)
+            {
+                timelineDragTimer.Stop();
+            }
+            else if (!timelineDragTimer.Enabled)
+            {
+                timelineDragTimer.Start();
+            }
+
+            int x = Math.Clamp(e.X, 0, Math.Max(0, lvTimeline.ClientSize.Width - 1));
+            int y = Math.Clamp(e.Y, 0, Math.Max(0, lvTimeline.ClientSize.Height - 1));
+            ListViewItem? item = lvTimeline.GetItemAt(x, y);
+            if (item?.Tag is int frameIndex)
+            {
+                if (!hasTimelineRangeDragMoved && frameIndex == timelineDragStartIndex) return;
+
+                hasTimelineRangeDragMoved = true;
+                UpdateTimelineDragRange(frameIndex);
+            }
+        }
+
+        private void lvTimeline_MouseUp(object? sender, MouseEventArgs e)
+        {
+            int clickedIndex = timelineDragStartIndex;
+            bool shouldShowFrame = isTimelineRangeDragging && !hasTimelineRangeDragMoved;
+            StopTimelineRangeDrag();
+
+            if (shouldShowFrame && clickedIndex >= 0)
+            {
+                ShowFrame(clickedIndex);
+            }
+        }
+
+        private void lvTimeline_MouseLeave(object? sender, EventArgs e)
+        {
+            if (!isTimelineRangeDragging)
+            {
+                timelineDragEdgeDirection = 0;
+                timelineDragTimer.Stop();
+            }
+        }
+
+        private void timelineDragTimer_Tick(object? sender, EventArgs e)
+        {
+            if (!isTimelineRangeDragging || !hasTimelineRangeDragMoved || timelineDragEdgeDirection == 0) return;
+
+            int nextIndex = Math.Clamp(timelineDragCurrentIndex + timelineDragEdgeDirection, 0, tubFrames.Count - 1);
+            if (nextIndex == timelineDragCurrentIndex) return;
+
+            UpdateTimelineDragRange(nextIndex);
+            UpdateTimelineForFrame(nextIndex);
+        }
+
+        private void StopTimelineRangeDrag()
+        {
+            if (!isTimelineRangeDragging) return;
+
+            isTimelineRangeDragging = false;
+            timelineDragEdgeDirection = 0;
+            timelineDragTimer.Stop();
+            lvTimeline.Capture = false;
+            if (hasTimelineRangeDragMoved)
+            {
+                ApplyTimelineRangeSelection();
+            }
+        }
+
+        private void UpdateTimelineDragRange(int currentIndex)
+        {
+            timelineDragCurrentIndex = Math.Clamp(currentIndex, 0, tubFrames.Count - 1);
+            rangeStart = timelineDragStartIndex;
+            rangeEnd = timelineDragCurrentIndex;
+            UpdateRangeLabel();
+            ApplyTimelineRangeSelection();
+        }
+
+        private void ApplyTimelineRangeSelection()
+        {
+            if (lvTimeline.Items.Count == 0) return;
+
+            isUpdatingTimelineSelection = true;
+            try
+            {
+                if (rangeStart < 0 && rangeEnd < 0)
+                {
+                    foreach (ListViewItem item in lvTimeline.Items) item.Selected = false;
+                    return;
+                }
+
+                (int lo, int hi) = GetEffectiveRange();
+                foreach (ListViewItem item in lvTimeline.Items)
+                {
+                    if (item.Tag is not int frameIndex) continue;
+                    item.Selected = frameIndex >= lo && frameIndex <= hi;
+                    item.Focused = frameIndex == timelineDragCurrentIndex;
+                }
+
+                int visibleIndex = timelineDragCurrentIndex - currentTimelineStart;
+                if (visibleIndex >= 0 && visibleIndex < lvTimeline.Items.Count)
+                {
+                    lvTimeline.Items[visibleIndex].EnsureVisible();
+                }
+            }
+            finally
+            {
+                isUpdatingTimelineSelection = false;
+            }
+        }
+
         private void ShowFrame(int index)
         {
             if (index < 0 || index >= tubFrames.Count) return;
@@ -1103,6 +1420,7 @@ namespace DataManager
             if (timelineItemIndex >= 0 && timelineItemIndex < lvTimeline.Items.Count)
             {
                 isUpdatingTimelineSelection = true;
+                foreach (ListViewItem item in lvTimeline.Items) item.Selected = false;
                 lvTimeline.Items[timelineItemIndex].Selected = true;
                 lvTimeline.Items[timelineItemIndex].Focused = true;
                 lvTimeline.Items[timelineItemIndex].EnsureVisible();
@@ -1409,6 +1727,7 @@ namespace DataManager
             picDataGraph.SizeMode = PictureBoxSizeMode.StretchImage;
             picDataGraph.Resize += (_, _) => RedrawGraphAfterLayout();
             picDataGraph.MouseMove += picDataGraph_MouseMove;
+            picDataGraph.MouseClick += picDataGraph_MouseClick;
             picDataGraph.MouseLeave += (_, _) => lblGraphHover.Visible = false;
 
             // 그래프 위에 마우스를 올렸을 때 현재 프레임 값을 작은 정보창으로 표시한다.
@@ -1584,17 +1903,14 @@ namespace DataManager
 
         private void picDataGraph_MouseMove(object? sender, MouseEventArgs e)
         {
-            if (graphVisibleFrames.Count == 0 || graphPlotBounds == Rectangle.Empty || !graphPlotBounds.Contains(e.Location))
+            TubFrame? frame = GetGraphFrameAt(e.Location);
+            if (frame == null)
             {
                 lblGraphHover.Visible = false;
+                picDataGraph.Cursor = Cursors.Default;
                 return;
             }
 
-            double ratio = (e.X - graphPlotBounds.Left) / (double)Math.Max(1, graphPlotBounds.Width);
-            int frameIndex = (int)Math.Round(ratio * (graphVisibleFrames.Count - 1));
-            frameIndex = Math.Clamp(frameIndex, 0, graphVisibleFrames.Count - 1);
-
-            TubFrame frame = graphVisibleFrames[frameIndex];
             lblGraphHover.Text = $"프레임 {frame.FrameNumber:D6}\n조향각 {frame.Angle:0.000}\n속도 {frame.Throttle:0.000}";
 
             int x = Math.Min(e.X + 14, picDataGraph.ClientSize.Width - lblGraphHover.Width - 8);
@@ -1602,6 +1918,39 @@ namespace DataManager
             lblGraphHover.Location = new Point(Math.Max(8, x), Math.Max(8, y));
             lblGraphHover.Visible = true;
             lblGraphHover.BringToFront();
+            picDataGraph.Cursor = Cursors.Hand;
+        }
+
+        private void picDataGraph_MouseClick(object? sender, MouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Left) return;
+
+            TubFrame? frame = GetGraphFrameAt(e.Location);
+            if (frame == null) return;
+
+            int tubIndex = tubFrames.IndexOf(frame);
+            if (tubIndex < 0)
+            {
+                tubIndex = tubFrames.FindIndex(item => item.FrameNumber == frame.FrameNumber);
+            }
+
+            if (tubIndex >= 0)
+            {
+                ShowFrame(tubIndex);
+            }
+        }
+
+        private TubFrame? GetGraphFrameAt(Point location)
+        {
+            if (graphVisibleFrames.Count == 0 || graphPlotBounds == Rectangle.Empty || !graphPlotBounds.Contains(location))
+            {
+                return null;
+            }
+
+            double ratio = (location.X - graphPlotBounds.Left) / (double)Math.Max(1, graphPlotBounds.Width);
+            int frameIndex = (int)Math.Round(ratio * (graphVisibleFrames.Count - 1));
+            frameIndex = Math.Clamp(frameIndex, 0, graphVisibleFrames.Count - 1);
+            return graphVisibleFrames[frameIndex];
         }
 
         private static void DrawCenteredGraphMessage(Graphics graphics, Size size, string message)
@@ -1615,7 +1964,11 @@ namespace DataManager
 
         private void AddLog(string message) => txtLog.AppendText(Environment.NewLine + message);
         private void lstFrames_SelectedIndexChanged(object sender, EventArgs e) => ShowFrame(lstFrames.SelectedIndex);
-        private void lvTimeline_SelectedIndexChanged(object sender, EventArgs e) { if (!isUpdatingTimelineSelection && lvTimeline.SelectedItems.Count > 0 && lvTimeline.SelectedItems[0].Tag is int index) ShowFrame(index); }
+        private void lvTimeline_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            if (isUpdatingTimelineSelection || isTimelineRangeDragging) return;
+            if (lvTimeline.SelectedItems.Count > 0 && lvTimeline.SelectedItems[0].Tag is int index) ShowFrame(index);
+        }
         private void trackFrame_Scroll(object sender, EventArgs e) => ShowFrame(trackFrame.Value);
         private void btnFirst_Click(object? sender, EventArgs e) { int i = FirstActiveIndex(); if (i >= 0) ShowFrame(i); }
         private void btnPrev_Click(object? sender, EventArgs e) { int i = PrevActiveIndex(trackFrame.Value); if (i >= 0) ShowFrame(i); }
@@ -2254,7 +2607,9 @@ namespace DataManager
 
         private void picFrame_Click(object sender, EventArgs e)
         {
+            if (!suppressNextFrameClick) return;
 
+            suppressNextFrameClick = false;
         }
     }
 }
