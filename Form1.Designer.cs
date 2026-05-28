@@ -349,7 +349,7 @@
             groupTimeline.Margin = new Padding(4);
             groupTimeline.Name = "groupTimeline";
             groupTimeline.Padding = new Padding(4);
-            groupTimeline.Size = new Size(2397, 98);
+            groupTimeline.Size = new Size(2397, 131);
             groupTimeline.TabIndex = 6;
             groupTimeline.TabStop = false;
             groupTimeline.Text = "썸네일 타임라인";
@@ -361,7 +361,7 @@
             lvTimeline.Margin = new Padding(4);
             lvTimeline.MultiSelect = false;
             lvTimeline.Name = "lvTimeline";
-            lvTimeline.Size = new Size(2389, 59);
+            lvTimeline.Size = new Size(2389, 92);
             lvTimeline.TabIndex = 0;
             lvTimeline.UseCompatibleStateImageBehavior = false;
             lvTimeline.SelectedIndexChanged += lvTimeline_SelectedIndexChanged;
@@ -372,11 +372,11 @@
             tabMain.Controls.Add(tabCleaner);
             tabMain.Controls.Add(tabGraph);
             tabMain.Controls.Add(tabTrainTest);
-            tabMain.Location = new Point(45, 1161);
+            tabMain.Location = new Point(45, 1194);
             tabMain.Margin = new Padding(4);
             tabMain.Name = "tabMain";
             tabMain.SelectedIndex = 0;
-            tabMain.Size = new Size(2397, 347);
+            tabMain.Size = new Size(2397, 314);
             tabMain.TabIndex = 7;
             // 
             // tabCleaner
@@ -393,7 +393,7 @@
             tabCleaner.Margin = new Padding(4);
             tabCleaner.Name = "tabCleaner";
             tabCleaner.Padding = new Padding(4);
-            tabCleaner.Size = new Size(2381, 293);
+            tabCleaner.Size = new Size(2381, 260);
             tabCleaner.TabIndex = 0;
             tabCleaner.Text = "데이터 정리";
             tabCleaner.UseVisualStyleBackColor = true;
@@ -415,7 +415,7 @@
             groupBoxTrash.Margin = new Padding(4);
             groupBoxTrash.Name = "groupBoxTrash";
             groupBoxTrash.Padding = new Padding(4);
-            groupBoxTrash.Size = new Size(921, 285);
+            groupBoxTrash.Size = new Size(921, 244);
             groupBoxTrash.TabIndex = 20;
             groupBoxTrash.TabStop = false;
             groupBoxTrash.Text = "휴지통";
@@ -423,7 +423,7 @@
             // lblTrashPercent
             // 
             lblTrashPercent.AutoSize = true;
-            lblTrashPercent.Location = new Point(861, 235);
+            lblTrashPercent.Location = new Point(433, 202);
             lblTrashPercent.Name = "lblTrashPercent";
             lblTrashPercent.Size = new Size(53, 28);
             lblTrashPercent.TabIndex = 22;
@@ -432,7 +432,7 @@
             // lblTrashProgress
             // 
             lblTrashProgress.AutoSize = true;
-            lblTrashProgress.Location = new Point(447, 235);
+            lblTrashProgress.Location = new Point(19, 202);
             lblTrashProgress.Name = "lblTrashProgress";
             lblTrashProgress.Size = new Size(141, 28);
             lblTrashProgress.TabIndex = 21;
@@ -440,7 +440,7 @@
             // 
             // progressBarTrash
             // 
-            progressBarTrash.Location = new Point(596, 235);
+            progressBarTrash.Location = new Point(168, 202);
             progressBarTrash.Name = "progressBarTrash";
             progressBarTrash.Size = new Size(259, 30);
             progressBarTrash.Style = ProgressBarStyle.Continuous;
@@ -450,7 +450,7 @@
             // 
             lblTrastList.AutoSize = true;
             lblTrastList.Font = new Font("나눔고딕", 8.999999F, FontStyle.Regular, GraphicsUnit.Point, 129);
-            lblTrastList.Location = new Point(535, 36);
+            lblTrastList.Location = new Point(550, 26);
             lblTrastList.Margin = new Padding(4, 0, 4, 0);
             lblTrastList.Name = "lblTrastList";
             lblTrastList.Size = new Size(111, 28);
@@ -460,10 +460,10 @@
             // btnEmptyTrash
             // 
             btnEmptyTrash.Font = new Font("나눔고딕", 10.125F);
-            btnEmptyTrash.Location = new Point(41, 137);
+            btnEmptyTrash.Location = new Point(41, 87);
             btnEmptyTrash.Margin = new Padding(4);
             btnEmptyTrash.Name = "btnEmptyTrash";
-            btnEmptyTrash.Size = new Size(337, 56);
+            btnEmptyTrash.Size = new Size(337, 45);
             btnEmptyTrash.TabIndex = 18;
             btnEmptyTrash.Text = "휴지통 비우기";
             btnEmptyTrash.UseVisualStyleBackColor = true;
@@ -471,7 +471,7 @@
             // btnRestore
             // 
             btnRestore.Font = new Font("나눔고딕", 10.125F);
-            btnRestore.Location = new Point(235, 60);
+            btnRestore.Location = new Point(235, 34);
             btnRestore.Margin = new Padding(4);
             btnRestore.Name = "btnRestore";
             btnRestore.Size = new Size(143, 45);
@@ -482,10 +482,10 @@
             // btnReloadTub
             // 
             btnReloadTub.Font = new Font("나눔고딕", 10.125F);
-            btnReloadTub.Location = new Point(41, 217);
+            btnReloadTub.Location = new Point(41, 146);
             btnReloadTub.Margin = new Padding(4);
             btnReloadTub.Name = "btnReloadTub";
-            btnReloadTub.Size = new Size(337, 56);
+            btnReloadTub.Size = new Size(337, 46);
             btnReloadTub.TabIndex = 16;
             btnReloadTub.Text = "Tub 다시 불러오기";
             btnReloadTub.UseVisualStyleBackColor = true;
@@ -494,16 +494,16 @@
             // 
             lstTrash.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Right;
             lstTrash.FormattingEnabled = true;
-            lstTrash.Location = new Point(535, 83);
+            lstTrash.Location = new Point(550, 58);
             lstTrash.Margin = new Padding(4);
             lstTrash.Name = "lstTrash";
-            lstTrash.Size = new Size(346, 88);
+            lstTrash.Size = new Size(346, 172);
             lstTrash.TabIndex = 15;
             // 
             // btnDelete
             // 
             btnDelete.Font = new Font("나눔고딕", 10.125F);
-            btnDelete.Location = new Point(41, 60);
+            btnDelete.Location = new Point(41, 34);
             btnDelete.Margin = new Padding(4);
             btnDelete.Name = "btnDelete";
             btnDelete.Size = new Size(151, 45);
@@ -515,7 +515,7 @@
             // 
             chkAbnormalAngle.AutoSize = true;
             chkAbnormalAngle.Font = new Font("나눔고딕", 10.875F);
-            chkAbnormalAngle.Location = new Point(617, 243);
+            chkAbnormalAngle.Location = new Point(615, 219);
             chkAbnormalAngle.Margin = new Padding(4);
             chkAbnormalAngle.Name = "chkAbnormalAngle";
             chkAbnormalAngle.Size = new Size(217, 38);
@@ -527,7 +527,7 @@
             // 
             chkMissingImage.AutoSize = true;
             chkMissingImage.Font = new Font("나눔고딕", 10.875F);
-            chkMissingImage.Location = new Point(617, 186);
+            chkMissingImage.Location = new Point(615, 162);
             chkMissingImage.Margin = new Padding(4);
             chkMissingImage.Name = "chkMissingImage";
             chkMissingImage.Size = new Size(190, 38);
@@ -539,7 +539,7 @@
             // 
             chkThrottleZero.AutoSize = true;
             chkThrottleZero.Font = new Font("나눔고딕", 10.875F);
-            chkThrottleZero.Location = new Point(617, 126);
+            chkThrottleZero.Location = new Point(615, 102);
             chkThrottleZero.Margin = new Padding(4);
             chkThrottleZero.Name = "chkThrottleZero";
             chkThrottleZero.Size = new Size(189, 38);
@@ -552,7 +552,7 @@
             btnFilter.Font = new Font("나눔고딕", 10.875F, FontStyle.Regular, GraphicsUnit.Point, 129);
             btnFilter.Image = Properties.Resources.icons8_filter_48;
             btnFilter.ImageAlign = ContentAlignment.MiddleLeft;
-            btnFilter.Location = new Point(617, 44);
+            btnFilter.Location = new Point(602, 34);
             btnFilter.Margin = new Padding(4);
             btnFilter.Name = "btnFilter";
             btnFilter.Padding = new Padding(5, 0, 0, 0);
@@ -565,11 +565,11 @@
             // lblRange
             // 
             lblRange.AutoSize = true;
-            lblRange.Font = new Font("나눔고딕", 12F, FontStyle.Regular, GraphicsUnit.Point, 129);
-            lblRange.Location = new Point(46, 157);
+            lblRange.Font = new Font("나눔고딕", 10.875F, FontStyle.Regular, GraphicsUnit.Point, 129);
+            lblRange.Location = new Point(46, 130);
             lblRange.Margin = new Padding(4, 0, 4, 0);
             lblRange.Name = "lblRange";
-            lblRange.Size = new Size(171, 36);
+            lblRange.Size = new Size(157, 34);
             lblRange.TabIndex = 9;
             lblRange.Text = "범위: 0 ~ 0";
             // 
@@ -601,7 +601,7 @@
             tabGraph.Margin = new Padding(4);
             tabGraph.Name = "tabGraph";
             tabGraph.Padding = new Padding(4);
-            tabGraph.Size = new Size(2381, 293);
+            tabGraph.Size = new Size(2381, 260);
             tabGraph.TabIndex = 1;
             tabGraph.Text = "그래프";
             tabGraph.UseVisualStyleBackColor = true;
@@ -619,7 +619,7 @@
             tabTrainTest.Location = new Point(8, 46);
             tabTrainTest.Margin = new Padding(4);
             tabTrainTest.Name = "tabTrainTest";
-            tabTrainTest.Size = new Size(2381, 293);
+            tabTrainTest.Size = new Size(2381, 260);
             tabTrainTest.TabIndex = 2;
             tabTrainTest.Text = "학습/테스트";
             tabTrainTest.UseVisualStyleBackColor = true;
@@ -638,7 +638,7 @@
             grpPredictResult.Font = new Font("나눔고딕", 8.999999F, FontStyle.Regular, GraphicsUnit.Point, 129);
             grpPredictResult.Location = new Point(1261, 13);
             grpPredictResult.Name = "grpPredictResult";
-            grpPredictResult.Size = new Size(343, 277);
+            grpPredictResult.Size = new Size(343, 241);
             grpPredictResult.TabIndex = 30;
             grpPredictResult.TabStop = false;
             grpPredictResult.Text = "예측 결과";
@@ -647,7 +647,7 @@
             // 
             panel4.BackColor = Color.LightGray;
             panel4.ForeColor = Color.LightGray;
-            panel4.Location = new Point(0, 202);
+            panel4.Location = new Point(0, 183);
             panel4.Name = "panel4";
             panel4.Size = new Size(343, 1);
             panel4.TabIndex = 25;
@@ -655,12 +655,12 @@
             // lblTrainStatus2
             // 
             lblTrainStatus2.AutoSize = true;
-            lblTrainStatus2.Font = new Font("나눔고딕", 10.125F, FontStyle.Bold, GraphicsUnit.Point, 129);
+            lblTrainStatus2.Font = new Font("나눔고딕 ExtraBold", 8.999999F, FontStyle.Bold, GraphicsUnit.Point, 129);
             lblTrainStatus2.ForeColor = Color.Green;
-            lblTrainStatus2.Location = new Point(100, 224);
+            lblTrainStatus2.Location = new Point(96, 201);
             lblTrainStatus2.Margin = new Padding(4, 0, 4, 0);
             lblTrainStatus2.Name = "lblTrainStatus2";
-            lblTrainStatus2.Size = new Size(122, 31);
+            lblTrainStatus2.Size = new Size(111, 28);
             lblTrainStatus2.TabIndex = 24;
             lblTrainStatus2.Text = "준비 완료";
             // 
@@ -668,7 +668,7 @@
             // 
             lblErrorValue.AutoSize = true;
             lblErrorValue.Font = new Font("나눔고딕", 10.125F);
-            lblErrorValue.Location = new Point(24, 157);
+            lblErrorValue.Location = new Point(25, 137);
             lblErrorValue.Margin = new Padding(4, 0, 4, 0);
             lblErrorValue.Name = "lblErrorValue";
             lblErrorValue.Size = new Size(64, 31);
@@ -680,7 +680,7 @@
             lblErrorValue2.AutoSize = true;
             lblErrorValue2.Font = new Font("나눔고딕", 10.125F, FontStyle.Bold, GraphicsUnit.Point, 129);
             lblErrorValue2.ForeColor = Color.Red;
-            lblErrorValue2.Location = new Point(232, 160);
+            lblErrorValue2.Location = new Point(233, 140);
             lblErrorValue2.Margin = new Padding(4, 0, 4, 0);
             lblErrorValue2.Name = "lblErrorValue2";
             lblErrorValue2.Size = new Size(70, 31);
@@ -692,7 +692,7 @@
             lblPredictAngle2.AutoSize = true;
             lblPredictAngle2.Font = new Font("나눔고딕", 10.125F, FontStyle.Bold, GraphicsUnit.Point, 129);
             lblPredictAngle2.ForeColor = Color.RoyalBlue;
-            lblPredictAngle2.Location = new Point(232, 106);
+            lblPredictAngle2.Location = new Point(233, 86);
             lblPredictAngle2.Margin = new Padding(4, 0, 4, 0);
             lblPredictAngle2.Name = "lblPredictAngle2";
             lblPredictAngle2.Size = new Size(70, 31);
@@ -704,7 +704,7 @@
             lblRealAngle2.AutoSize = true;
             lblRealAngle2.Font = new Font("나눔고딕", 10.125F, FontStyle.Bold, GraphicsUnit.Point, 129);
             lblRealAngle2.ForeColor = Color.RoyalBlue;
-            lblRealAngle2.Location = new Point(232, 57);
+            lblRealAngle2.Location = new Point(233, 37);
             lblRealAngle2.Margin = new Padding(4, 0, 4, 0);
             lblRealAngle2.Name = "lblRealAngle2";
             lblRealAngle2.Size = new Size(70, 31);
@@ -714,11 +714,11 @@
             // lblTrainStatus
             // 
             lblTrainStatus.AutoSize = true;
-            lblTrainStatus.Font = new Font("나눔고딕", 10.125F);
-            lblTrainStatus.Location = new Point(25, 224);
+            lblTrainStatus.Font = new Font("나눔고딕", 8.999999F, FontStyle.Regular, GraphicsUnit.Point, 129);
+            lblTrainStatus.Location = new Point(21, 201);
             lblTrainStatus.Margin = new Padding(4, 0, 4, 0);
             lblTrainStatus.Name = "lblTrainStatus";
-            lblTrainStatus.Size = new Size(72, 31);
+            lblTrainStatus.Size = new Size(65, 28);
             lblTrainStatus.TabIndex = 15;
             lblTrainStatus.Text = "상태:";
             // 
@@ -726,7 +726,7 @@
             // 
             lblPredictAngle.AutoSize = true;
             lblPredictAngle.Font = new Font("나눔고딕", 10.125F);
-            lblPredictAngle.Location = new Point(24, 106);
+            lblPredictAngle.Location = new Point(25, 86);
             lblPredictAngle.Margin = new Padding(4, 0, 4, 0);
             lblPredictAngle.Name = "lblPredictAngle";
             lblPredictAngle.Size = new Size(147, 31);
@@ -737,7 +737,7 @@
             // 
             lblRealAngle.AutoSize = true;
             lblRealAngle.Font = new Font("나눔고딕", 10.125F);
-            lblRealAngle.Location = new Point(24, 57);
+            lblRealAngle.Location = new Point(25, 37);
             lblRealAngle.Margin = new Padding(4, 0, 4, 0);
             lblRealAngle.Name = "lblRealAngle";
             lblRealAngle.Size = new Size(147, 31);
@@ -750,7 +750,7 @@
             grpTrainProgress.Controls.Add(lblProgress);
             grpTrainProgress.Controls.Add(progressBarTrain);
             grpTrainProgress.Font = new Font("나눔고딕", 8.999999F, FontStyle.Regular, GraphicsUnit.Point, 129);
-            grpTrainProgress.Location = new Point(726, 156);
+            grpTrainProgress.Location = new Point(726, 132);
             grpTrainProgress.Name = "grpTrainProgress";
             grpTrainProgress.Size = new Size(481, 137);
             grpTrainProgress.TabIndex = 29;
@@ -807,13 +807,13 @@
             btnTrain.ForeColor = Color.White;
             btnTrain.Image = Properties.Resources.icons8_play_30__2_;
             btnTrain.ImageAlign = ContentAlignment.MiddleLeft;
-            btnTrain.Location = new Point(33, 48);
+            btnTrain.Location = new Point(31, 37);
             btnTrain.Margin = new Padding(4);
             btnTrain.Name = "btnTrain";
             btnTrain.Padding = new Padding(15, 0, 0, 0);
             btnTrain.Size = new Size(191, 53);
             btnTrain.TabIndex = 11;
-            btnTrain.Text = "학습 시작";
+            btnTrain.Text = "　학습 시작";
             btnTrain.UseVisualStyleBackColor = false;
             btnTrain.Click += btnTrain_Click;
             // 
@@ -825,13 +825,13 @@
             btnStopTask.ForeColor = Color.Red;
             btnStopTask.Image = Properties.Resources.icons8_stop_30__1_;
             btnStopTask.ImageAlign = ContentAlignment.MiddleLeft;
-            btnStopTask.Location = new Point(258, 48);
+            btnStopTask.Location = new Point(258, 37);
             btnStopTask.Margin = new Padding(6);
             btnStopTask.Name = "btnStopTask";
             btnStopTask.Padding = new Padding(15, 0, 0, 0);
             btnStopTask.Size = new Size(191, 53);
             btnStopTask.TabIndex = 25;
-            btnStopTask.Text = "학습 중지";
+            btnStopTask.Text = "　학습 중지";
             btnStopTask.UseVisualStyleBackColor = false;
             // 
             // grpTestImage
@@ -839,7 +839,7 @@
             grpTestImage.Controls.Add(picTestImage);
             grpTestImage.Controls.Add(btnSelectTestImage);
             grpTestImage.Font = new Font("나눔고딕", 8.999999F, FontStyle.Regular, GraphicsUnit.Point, 129);
-            grpTestImage.Location = new Point(15, 156);
+            grpTestImage.Location = new Point(17, 126);
             grpTestImage.Name = "grpTestImage";
             grpTestImage.Size = new Size(670, 134);
             grpTestImage.TabIndex = 27;
@@ -849,7 +849,7 @@
             // picTestImage
             // 
             picTestImage.BackColor = Color.Black;
-            picTestImage.Location = new Point(402, 23);
+            picTestImage.Location = new Point(407, 24);
             picTestImage.Name = "picTestImage";
             picTestImage.Size = new Size(229, 104);
             picTestImage.TabIndex = 15;
@@ -873,7 +873,7 @@
             grpTrainSetting.Font = new Font("나눔고딕", 8.999999F, FontStyle.Regular, GraphicsUnit.Point, 129);
             grpTrainSetting.Location = new Point(17, 13);
             grpTrainSetting.Name = "grpTrainSetting";
-            grpTrainSetting.Size = new Size(670, 137);
+            grpTrainSetting.Size = new Size(670, 112);
             grpTrainSetting.TabIndex = 26;
             grpTrainSetting.TabStop = false;
             grpTrainSetting.Text = "학습 설정";
@@ -881,7 +881,7 @@
             // btnSelectModel
             // 
             btnSelectModel.Font = new Font("나눔고딕", 10.125F, FontStyle.Regular, GraphicsUnit.Point, 129);
-            btnSelectModel.Location = new Point(17, 46);
+            btnSelectModel.Location = new Point(17, 35);
             btnSelectModel.Margin = new Padding(4);
             btnSelectModel.Name = "btnSelectModel";
             btnSelectModel.Size = new Size(177, 53);
@@ -894,11 +894,11 @@
             // 
             lblLog.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Right;
             lblLog.AutoSize = true;
-            lblLog.Font = new Font("나눔고딕", 10.125F, FontStyle.Regular, GraphicsUnit.Point, 129);
+            lblLog.Font = new Font("나눔고딕", 8.999999F, FontStyle.Regular, GraphicsUnit.Point, 129);
             lblLog.Location = new Point(1650, 13);
             lblLog.Margin = new Padding(4, 0, 4, 0);
             lblLog.Name = "lblLog";
-            lblLog.Size = new Size(64, 31);
+            lblLog.Size = new Size(58, 28);
             lblLog.TabIndex = 21;
             lblLog.Text = "로그";
             // 
@@ -907,13 +907,13 @@
             txtLog.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Right;
             txtLog.BackColor = SystemColors.ButtonHighlight;
             txtLog.Font = new Font("나눔고딕", 8.999999F, FontStyle.Regular, GraphicsUnit.Point, 0);
-            txtLog.Location = new Point(1650, 59);
+            txtLog.Location = new Point(1650, 50);
             txtLog.Margin = new Padding(4);
             txtLog.Multiline = true;
             txtLog.Name = "txtLog";
             txtLog.ReadOnly = true;
             txtLog.ScrollBars = ScrollBars.Vertical;
-            txtLog.Size = new Size(701, 220);
+            txtLog.Size = new Size(701, 192);
             txtLog.TabIndex = 20;
             txtLog.Text = "준비 완료...\r\n";
             // 
@@ -985,7 +985,7 @@
             // 
             // picFrame
             // 
-            picFrame.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
+            picFrame.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
             picFrame.BackColor = Color.Black;
             picFrame.BorderStyle = BorderStyle.FixedSingle;
             picFrame.Location = new Point(39, 40);
