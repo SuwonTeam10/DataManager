@@ -58,7 +58,8 @@ namespace DataManager
                 // ★ 과거에 새겨진 100번 강제 문신(찌꺼기)을 지워서 원래의 '조기 종료'로 원상복구!
                 string cleanConfigCmd = "if [ -f myconfig.py ]; then sed -i '/EARLY_STOP_PATIENCE/d' myconfig.py; fi";
 
-                string trainCmd = $"{venvCmd}python -u train.py --tubs $DIR --model models/mypilot.h5 && echo '---TRAINING_COMPLETE---'";
+                // ★ docopt 에러 방지를 위해 등호(=)와 따옴표 명시적 추가 완료!
+                string trainCmd = $"{venvCmd}python -u train.py --tubs=\"$DIR\" --model=\"models/mypilot.h5\" && echo '---TRAINING_COMPLETE---'";
 
                 string fullCmd = $"cd '{wslPath}' && {patchCmd} && {ensureEnvCmd} && {findTubsCmd} && {ensureModelsDirCmd} && {cleanConfigCmd} && {trainCmd}";
 
@@ -147,13 +148,12 @@ namespace DataManager
                 }
                 catch (Exception ex)
                 {
-                    // ★ wsl 자체가 실행 안 될 때 침묵하지 않고 에러를 뱉어냅니다!
                     onLogReceived($"[Error] 로컬(WSL) 환경 실행 실패! WSL이 설치되어 있는지 확인하세요.\n상세오류: {ex.Message}");
                 }
             }
 
             public void Stop() => Cancel();
-            public void Cancel() { try { if (_process != null && !_process.HasExited) _process.Kill(); } catch { } }
+            public void Cancel() { try { if (_process != null && _process.HasExited) _process.Kill(); } catch { } }
         }
 
         // ==========================================
@@ -187,7 +187,8 @@ namespace DataManager
 
                 string cleanConfigCmd = "if [ -f myconfig.py ]; then sed -i '/EARLY_STOP_PATIENCE/d' myconfig.py; fi";
 
-                string trainCmd = $"{venvCmd}python -u train.py --tubs $DIR --model models/mypilot.h5 && echo '---TRAINING_COMPLETE---'";
+                // ★ docopt 에러 방지를 위해 등호(=)와 따옴표 명시적 추가 완료!
+                string trainCmd = $"{venvCmd}python -u train.py --tubs=\"$DIR\" --model=\"models/mypilot.h5\" && echo '---TRAINING_COMPLETE---'";
 
                 RunRemoteCommand(path, $"{patchCmd} && {ensureEnvCmd} && {findTubsCmd} && {ensureModelsDirCmd} && {cleanConfigCmd} && {trainCmd}", onLogReceived);
             }
