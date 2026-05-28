@@ -119,7 +119,12 @@ namespace DataManager
             btnDelete.Click += btnDelete_Click;
             btnRestore.Click += btnRestore_Click;
             btnEmptyTrash.Click += btnEmptyTrash_Click;
-            lstTrash.SelectionMode = SelectionMode.MultiExtended;
+            lstFrames.SelectionMode = SelectionMode.MultiExtended;
+            lstTrash.CheckOnClick = false;
+            lstTrash.MouseDown += LstTrash_MouseDown;
+            lstTrash.MouseMove += LstTrash_MouseMove;
+            lstTrash.MouseUp += LstTrash_MouseUp;
+            lstTrash.SelectedIndexChanged += LstTrash_SelectedIndexChanged;
 
             // 타임라인 썸네일 이미지 리스트 설정
             timelineImages.ImageSize = new Size(TimelineThumbWidth, TimelineThumbHeight);
@@ -1711,6 +1716,62 @@ namespace DataManager
             lstFrames.Items[index] = tubFrames[index];
         }
 
+        // 휴지통(CheckedListBox) 드래그 다중 체크 상태
+        private bool trashDragging;
+        private bool trashDragTargetState;
+        private int trashDragLastIndex = -1;
+
+        private void LstTrash_MouseDown(object? sender, MouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Left) return;
+            int index = lstTrash.IndexFromPoint(e.Location);
+            if (index < 0 || index >= lstTrash.Items.Count) { trashDragging = false; return; }
+
+            bool newState = !lstTrash.GetItemChecked(index);
+            lstTrash.SetItemChecked(index, newState);
+            trashDragTargetState = newState;
+            trashDragLastIndex = index;
+            trashDragging = true;
+        }
+
+        private void LstTrash_MouseMove(object? sender, MouseEventArgs e)
+        {
+            if (!trashDragging || (e.Button & MouseButtons.Left) == 0) return;
+            int index = lstTrash.IndexFromPoint(e.Location);
+            if (index < 0 || index >= lstTrash.Items.Count) return;
+            ApplyTrashDragTo(index);
+        }
+
+        // 오토스크롤(커서를 가장자리에 두면 리스트가 자동으로 스크롤되는 동작) 시에는
+        // 실제 마우스 이동이 없어서 MouseMove가 안 오고, native SelectionMode.One 로직이
+        // SelectedIndex만 갱신한다. 따라서 SelectedIndexChanged도 같이 후킹해 드래그를 따라가게 한다.
+        private void LstTrash_SelectedIndexChanged(object? sender, EventArgs e)
+        {
+            if (!trashDragging) return;
+            int index = lstTrash.SelectedIndex;
+            if (index < 0) return;
+            ApplyTrashDragTo(index);
+        }
+
+        // 드래그 중 인덱스가 점프(빠른 드래그/오토스크롤)할 때 마지막 위치~현재 위치 사이를 일괄 적용.
+        private void ApplyTrashDragTo(int index)
+        {
+            if (index == trashDragLastIndex) return;
+            int start = Math.Min(trashDragLastIndex, index);
+            int end = Math.Max(trashDragLastIndex, index);
+            for (int i = start; i <= end; i++)
+            {
+                lstTrash.SetItemChecked(i, trashDragTargetState);
+            }
+            trashDragLastIndex = index;
+        }
+
+        private void LstTrash_MouseUp(object? sender, MouseEventArgs e)
+        {
+            trashDragging = false;
+            trashDragLastIndex = -1;
+        }
+
         // ==========================================
         // 6. 데이터 필터링 (범위 지정 + 조건 필터)
         // ==========================================
@@ -1862,13 +1923,25 @@ namespace DataManager
             }
             else
             {
-                int index = lstFrames.SelectedIndex;
-                if (index < 0)
+                // SelectedIndices는 라이브 컬렉션이라, MoveToTrash → RefreshFrameListItem의
+                // lstFrames.Items[i] 재대입이 해당 인덱스의 선택을 해제(앵커는 제외)한다.
+                // 그 결과 라이브 컬렉션 그대로 순회하면 일부 항목이 누락되므로 스냅샷으로 떠서 순회한다.
+                List<int> indices = new List<int>();
+                foreach (int idx in lstFrames.SelectedIndices) indices.Add(idx);
+                if (indices.Count == 0)
                 {
                     MessageBox.Show("삭제할 프레임을 목록에서 선택하거나 [시작 지정]/[끝 지정]으로 범위를 정하세요.", "삭제", MessageBoxButtons.OK, MessageBoxIcon.Information);
                     return;
                 }
-                if (MoveToTrash(index, "수동 삭제")) moved++;
+                if (indices.Count > 1)
+                {
+                    DialogResult res = MessageBox.Show($"선택한 {indices.Count}개 프레임을 휴지통으로 이동하시겠습니까?", "삭제", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+                    if (res == DialogResult.No) return;
+                }
+                foreach (int index in indices)
+                {
+                    if (MoveToTrash(index, "수동 삭제")) moved++;
+                }
             }
 
             RebuildTrashList();
@@ -1878,13 +1951,13 @@ namespace DataManager
 
         private void btnRestore_Click(object? sender, EventArgs e)
         {
-            if (lstTrash.SelectedItems.Count == 0)
+            if (lstTrash.CheckedItems.Count == 0)
             {
-                MessageBox.Show("복원할 항목을 휴지통 목록에서 선택하세요.", "복원", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show("복원할 항목을 휴지통 목록에서 체크하세요.", "복원", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
 
-            List<TrashEntry> selected = lstTrash.SelectedItems.Cast<TrashEntry>().ToList();
+            List<TrashEntry> selected = lstTrash.CheckedItems.Cast<TrashEntry>().ToList();
             foreach (TrashEntry entry in selected) RestoreFromTrash(entry.Frame);
             RebuildTrashList();
             RenderTubGraph();
