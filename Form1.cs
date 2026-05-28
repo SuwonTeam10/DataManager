@@ -49,8 +49,23 @@ namespace DataManager
         private int currentTimelineVisibleCount = -1;
         private bool isUpdatingTimelineSelection;
         private int playbackFrameStep = 1;
-        private int tubNavigatorBaseHeight;
-        private int frameListBaseHeight;
+        private const int DefaultNavigatorHeight = 517;
+        private const int MinNavigatorHeight = 360;
+        private const int TimelinePanelHeight = 86;
+        private const int TimelineMinimumPanelHeight = 42;
+        private const int DefaultTabPanelHeight = 220;
+        private const int MinimumTabVisibleHeight = 130;
+        private const int LayoutGap = 8;
+        private const int FrameResizeBarHeight = 0;
+        private const int FrameResizeGripHeight = 12;
+        private int navigatorHeight = DefaultNavigatorHeight;
+        private bool isResizingNavigator;
+        private bool suppressNextFrameClick;
+        private int resizeStartMouseY;
+        private int resizeStartNavigatorHeight;
+        private const int MinimumResponsiveFormWidth = 1320;
+        private const int LeftDataPanelGap = 12;
+        private const int MinimumDataInfoPanelHeight = 264;
 
         // 데이터 정리(필터/삭제) 대상 범위. -1은 미지정.
         private int rangeStart = -1;
@@ -109,6 +124,10 @@ namespace DataManager
                 RedrawGraphAfterLayout();
             };
             picFrame.Paint += picFrame_Paint;
+            picFrame.MouseDown += picFrame_MouseDown;
+            picFrame.MouseMove += picFrame_MouseMove;
+            picFrame.MouseLeave += picFrame_MouseLeave;
+            picFrame.MouseUp += picFrame_MouseUp;
             chkShowRealAngle.CheckedChanged += (_, _) => picFrame.Invalidate();
             chkShowPredictAngle.CheckedChanged += (_, _) => picFrame.Invalidate();
 
@@ -139,22 +158,168 @@ namespace DataManager
 
             InitializeGraphControls();
             picTestImage.SizeMode = PictureBoxSizeMode.Zoom;
-            tubNavigatorBaseHeight = groupTubNavigator.Height;
-            frameListBaseHeight = groupFrameList.Height;
+            MinimumSize = new Size(Math.Max(MinimumSize.Width, MinimumResponsiveFormWidth), MinimumSize.Height);
+            groupTubNavigator.Resize += (_, _) => ArrangeNavigatorControls();
+            Shown += (_, _) =>
+            {
+                // 실행 직후 기본 높이만 데이터 정보 판넬 아래와 맞춘다. 이후에는 사용자가 드래그로 조절한다.
+                navigatorHeight = Math.Max(MinNavigatorHeight, groupDataView.Bottom - groupTubNavigator.Top);
+                ArrangeTimelineAndTabs();
+            };
             ArrangeTimelineAndTabs();
         }
 
         private void ArrangeTimelineAndTabs()
         {
-            if (tubNavigatorBaseHeight <= 0 || frameListBaseHeight <= 0) return;
+            int bottomGap = 8;
+            int resizeBarTopGap = 2;
+            int minimumNavigatorHeight = GetMinimumNavigatorHeight();
+            int appliedNavigatorHeight = Math.Max(navigatorHeight, minimumNavigatorHeight);
+            int tabHeight = DefaultTabPanelHeight;
+            int timelineHeight = TimelinePanelHeight;
 
-            groupTubNavigator.Height = tubNavigatorBaseHeight;
-            groupFrameList.Height = frameListBaseHeight;
+            int availableBelowNavigator = ClientSize.Height
+                - bottomGap
+                - groupTubNavigator.Top
+                - appliedNavigatorHeight
+                - resizeBarTopGap
+                - FrameResizeBarHeight
+                - (LayoutGap * 2);
 
-            int gap = 8;
-            groupTimeline.Top = groupTubNavigator.Bottom + gap;
-            tabMain.Top = groupTimeline.Bottom + gap;
-            tabMain.Height = Math.Max(120, ClientSize.Height - tabMain.Top - gap);
+            int shortage = (timelineHeight + tabHeight) - availableBelowNavigator;
+            if (shortage > 0)
+            {
+                int tabShrink = Math.Min(shortage, tabHeight - MinimumTabVisibleHeight);
+                tabHeight -= tabShrink;
+                shortage -= tabShrink;
+            }
+
+            if (shortage > 0)
+            {
+                int timelineShrink = Math.Min(shortage, timelineHeight - TimelineMinimumPanelHeight);
+                timelineHeight -= timelineShrink;
+                shortage -= timelineShrink;
+            }
+
+            if (shortage > 0)
+            {
+                appliedNavigatorHeight = Math.Max(minimumNavigatorHeight, appliedNavigatorHeight - shortage);
+            }
+
+            tabMain.Height = tabHeight;
+            tabMain.Top = ClientSize.Height - tabMain.Height - bottomGap;
+
+            groupTimeline.Height = timelineHeight;
+            groupTimeline.Top = tabMain.Top - groupTimeline.Height - LayoutGap;
+            groupTimeline.BringToFront();
+
+            groupTubNavigator.Height = appliedNavigatorHeight;
+            groupFrameList.Height = appliedNavigatorHeight;
+            ArrangeLeftDataPanels(groupTubNavigator.Bottom);
+
+            ArrangeNavigatorControls();
+        }
+
+        private int GetMinimumNavigatorHeight()
+        {
+            return Math.Max(MinNavigatorHeight, groupBoxDataLoad.Height + LeftDataPanelGap + MinimumDataInfoPanelHeight);
+        }
+
+        private void ArrangeLeftDataPanels(int targetBottom)
+        {
+            groupBoxDataLoad.Top = groupTubNavigator.Top;
+            groupDataView.Top = groupBoxDataLoad.Bottom + LeftDataPanelGap;
+            groupDataView.Height = Math.Max(MinimumDataInfoPanelHeight, targetBottom - groupDataView.Top);
+        }
+
+        private void ArrangeNavigatorControls()
+        {
+            int width = groupTubNavigator.ClientSize.Width;
+            int height = groupTubNavigator.ClientSize.Height;
+            if (width <= 0 || height <= 0) return;
+
+            int sidePadding = 24;
+            int buttonHeight = 42;
+            int controlY = Math.Max(220, height - 123);
+            int trackY = Math.Min(height - 65, controlY + 58);
+
+            lblCurrentFrame.Location = new Point(45, controlY);
+            lblCurrentFrame2.Location = new Point(53, controlY + 27);
+
+            int speedWidth = 184;
+            int speedX = width - sidePadding - speedWidth;
+            lblSpeed.Location = new Point(speedX, controlY - 7);
+            cmbPlaySpeed.SetBounds(speedX, controlY + 21, 80, 28);
+            chkAutoPlay.SetBounds(speedX + 96, controlY + 18, 88, 28);
+
+            int leftReserved = 150;
+            int rightReserved = speedWidth + 24;
+            int areaLeft = leftReserved;
+            int areaRight = Math.Max(areaLeft, width - sidePadding - rightReserved);
+            int areaWidth = areaRight - areaLeft;
+
+            int gap = Math.Clamp(areaWidth / 32, 8, 14);
+            int smallWidth = Math.Clamp((areaWidth - 122 - (gap * 4)) / 4, 52, 73);
+            int playWidth = Math.Clamp(areaWidth - (smallWidth * 4) - (gap * 4), 122, 158);
+            int totalWidth = (smallWidth * 4) + playWidth + (gap * 4);
+            int x = areaLeft + Math.Max(0, (areaWidth - totalWidth) / 2);
+
+            btnFirst.SetBounds(x, controlY, smallWidth, buttonHeight);
+            x += smallWidth + gap;
+            btnPrev.SetBounds(x, controlY, smallWidth, buttonHeight);
+            x += smallWidth + gap;
+            btnPlayStop.SetBounds(x, controlY, playWidth, buttonHeight);
+            x += playWidth + gap;
+            btnNext.SetBounds(x, controlY, smallWidth, buttonHeight);
+            x += smallWidth + gap;
+            btnLast.SetBounds(x, controlY, smallWidth, buttonHeight);
+
+            trackFrame.SetBounds(37, trackY, Math.Max(120, width - 73), trackFrame.Height);
+        }
+
+        private bool IsFrameResizeGrip(Point location)
+        {
+            return location.Y >= picFrame.ClientSize.Height - FrameResizeGripHeight;
+        }
+
+        private void picFrame_MouseDown(object? sender, MouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Left || !IsFrameResizeGrip(e.Location)) return;
+
+            isResizingNavigator = true;
+            suppressNextFrameClick = true;
+            resizeStartMouseY = PointToClient(Cursor.Position).Y;
+            resizeStartNavigatorHeight = groupTubNavigator.Height;
+            picFrame.Capture = true;
+            picFrame.Cursor = Cursors.HSplit;
+        }
+
+        private void picFrame_MouseMove(object? sender, MouseEventArgs e)
+        {
+            if (!isResizingNavigator)
+            {
+                picFrame.Cursor = IsFrameResizeGrip(e.Location) ? Cursors.HSplit : Cursors.Default;
+                return;
+            }
+
+            int currentMouseY = PointToClient(Cursor.Position).Y;
+            navigatorHeight = resizeStartNavigatorHeight + currentMouseY - resizeStartMouseY;
+            ArrangeTimelineAndTabs();
+        }
+
+        private void picFrame_MouseLeave(object? sender, EventArgs e)
+        {
+            if (!isResizingNavigator)
+            {
+                picFrame.Cursor = Cursors.Default;
+            }
+        }
+
+        private void picFrame_MouseUp(object? sender, MouseEventArgs e)
+        {
+            isResizingNavigator = false;
+            picFrame.Capture = false;
+            picFrame.Cursor = IsFrameResizeGrip(e.Location) ? Cursors.HSplit : Cursors.Default;
         }
 
         private void Form1_Load(object sender, EventArgs e)
@@ -2212,7 +2377,9 @@ namespace DataManager
 
         private void picFrame_Click(object sender, EventArgs e)
         {
+            if (!suppressNextFrameClick) return;
 
+            suppressNextFrameClick = false;
         }
     }
 }
