@@ -48,6 +48,12 @@ namespace DataManager
         private int currentTimelineStart = -1;
         private int currentTimelineVisibleCount = -1;
         private bool isUpdatingTimelineSelection;
+        private bool isTimelineRangeDragging;
+        private bool hasTimelineRangeDragMoved;
+        private int timelineDragStartIndex = -1;
+        private int timelineDragCurrentIndex = -1;
+        private int timelineDragEdgeDirection;
+        private readonly System.Windows.Forms.Timer timelineDragTimer = new();
         private int playbackFrameStep = 1;
         private const int DefaultNavigatorHeight = 517;
         private const int MinNavigatorHeight = 360;
@@ -150,11 +156,18 @@ namespace DataManager
             lvTimeline.LabelWrap = false;
             lvTimeline.Scrollable = false;
             lvTimeline.HideSelection = false;
-            lvTimeline.MultiSelect = false;
+            lvTimeline.MultiSelect = true;
             lvTimeline.ShowItemToolTips = true;
             lvTimeline.HandleCreated += (_, _) => ApplyTimelineIconSpacing();
             lvTimeline.Resize += (_, _) => ReloadTimelineForCurrentFrame();
+            lvTimeline.MouseDown += lvTimeline_MouseDown;
+            lvTimeline.MouseMove += lvTimeline_MouseMove;
+            lvTimeline.MouseUp += lvTimeline_MouseUp;
+            lvTimeline.MouseLeave += lvTimeline_MouseLeave;
             ApplyTimelineIconSpacing();
+
+            timelineDragTimer.Interval = 120;
+            timelineDragTimer.Tick += timelineDragTimer_Tick;
 
             InitializeGraphControls();
             picTestImage.SizeMode = PictureBoxSizeMode.Zoom;
@@ -1226,6 +1239,11 @@ namespace DataManager
                 }
             }
             finally { lvTimeline.EndUpdate(); }
+
+            if (hasTimelineRangeDragMoved)
+            {
+                ApplyTimelineRangeSelection();
+            }
         }
 
         private int GetTimelineVisibleCount()
@@ -1246,6 +1264,140 @@ namespace DataManager
             UpdateTimelineForFrame(frameIndex);
         }
 
+        private void lvTimeline_MouseDown(object? sender, MouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Left || tubFrames.Count == 0) return;
+
+            ListViewItem? item = lvTimeline.GetItemAt(e.X, e.Y);
+            if (item?.Tag is not int frameIndex) return;
+
+            isTimelineRangeDragging = true;
+            hasTimelineRangeDragMoved = false;
+            timelineDragStartIndex = frameIndex;
+            timelineDragCurrentIndex = frameIndex;
+            lvTimeline.Capture = true;
+        }
+
+        private void lvTimeline_MouseMove(object? sender, MouseEventArgs e)
+        {
+            if (!isTimelineRangeDragging) return;
+
+            int edgeMargin = 18;
+            timelineDragEdgeDirection = e.X >= lvTimeline.ClientSize.Width - edgeMargin
+                ? 1
+                : e.X <= edgeMargin
+                    ? -1
+                    : 0;
+
+            if (timelineDragEdgeDirection == 0)
+            {
+                timelineDragTimer.Stop();
+            }
+            else if (!timelineDragTimer.Enabled)
+            {
+                timelineDragTimer.Start();
+            }
+
+            int x = Math.Clamp(e.X, 0, Math.Max(0, lvTimeline.ClientSize.Width - 1));
+            int y = Math.Clamp(e.Y, 0, Math.Max(0, lvTimeline.ClientSize.Height - 1));
+            ListViewItem? item = lvTimeline.GetItemAt(x, y);
+            if (item?.Tag is int frameIndex)
+            {
+                if (!hasTimelineRangeDragMoved && frameIndex == timelineDragStartIndex) return;
+
+                hasTimelineRangeDragMoved = true;
+                UpdateTimelineDragRange(frameIndex);
+            }
+        }
+
+        private void lvTimeline_MouseUp(object? sender, MouseEventArgs e)
+        {
+            int clickedIndex = timelineDragStartIndex;
+            bool shouldShowFrame = isTimelineRangeDragging && !hasTimelineRangeDragMoved;
+            StopTimelineRangeDrag();
+
+            if (shouldShowFrame && clickedIndex >= 0)
+            {
+                ShowFrame(clickedIndex);
+            }
+        }
+
+        private void lvTimeline_MouseLeave(object? sender, EventArgs e)
+        {
+            if (!isTimelineRangeDragging)
+            {
+                timelineDragEdgeDirection = 0;
+                timelineDragTimer.Stop();
+            }
+        }
+
+        private void timelineDragTimer_Tick(object? sender, EventArgs e)
+        {
+            if (!isTimelineRangeDragging || !hasTimelineRangeDragMoved || timelineDragEdgeDirection == 0) return;
+
+            int nextIndex = Math.Clamp(timelineDragCurrentIndex + timelineDragEdgeDirection, 0, tubFrames.Count - 1);
+            if (nextIndex == timelineDragCurrentIndex) return;
+
+            UpdateTimelineDragRange(nextIndex);
+            UpdateTimelineForFrame(nextIndex);
+        }
+
+        private void StopTimelineRangeDrag()
+        {
+            if (!isTimelineRangeDragging) return;
+
+            isTimelineRangeDragging = false;
+            timelineDragEdgeDirection = 0;
+            timelineDragTimer.Stop();
+            lvTimeline.Capture = false;
+            if (hasTimelineRangeDragMoved)
+            {
+                ApplyTimelineRangeSelection();
+            }
+        }
+
+        private void UpdateTimelineDragRange(int currentIndex)
+        {
+            timelineDragCurrentIndex = Math.Clamp(currentIndex, 0, tubFrames.Count - 1);
+            rangeStart = timelineDragStartIndex;
+            rangeEnd = timelineDragCurrentIndex;
+            UpdateRangeLabel();
+            ApplyTimelineRangeSelection();
+        }
+
+        private void ApplyTimelineRangeSelection()
+        {
+            if (lvTimeline.Items.Count == 0) return;
+
+            isUpdatingTimelineSelection = true;
+            try
+            {
+                if (rangeStart < 0 && rangeEnd < 0)
+                {
+                    foreach (ListViewItem item in lvTimeline.Items) item.Selected = false;
+                    return;
+                }
+
+                (int lo, int hi) = GetEffectiveRange();
+                foreach (ListViewItem item in lvTimeline.Items)
+                {
+                    if (item.Tag is not int frameIndex) continue;
+                    item.Selected = frameIndex >= lo && frameIndex <= hi;
+                    item.Focused = frameIndex == timelineDragCurrentIndex;
+                }
+
+                int visibleIndex = timelineDragCurrentIndex - currentTimelineStart;
+                if (visibleIndex >= 0 && visibleIndex < lvTimeline.Items.Count)
+                {
+                    lvTimeline.Items[visibleIndex].EnsureVisible();
+                }
+            }
+            finally
+            {
+                isUpdatingTimelineSelection = false;
+            }
+        }
+
         private void ShowFrame(int index)
         {
             if (index < 0 || index >= tubFrames.Count) return;
@@ -1263,6 +1415,7 @@ namespace DataManager
             if (timelineItemIndex >= 0 && timelineItemIndex < lvTimeline.Items.Count)
             {
                 isUpdatingTimelineSelection = true;
+                foreach (ListViewItem item in lvTimeline.Items) item.Selected = false;
                 lvTimeline.Items[timelineItemIndex].Selected = true;
                 lvTimeline.Items[timelineItemIndex].Focused = true;
                 lvTimeline.Items[timelineItemIndex].EnsureVisible();
@@ -1806,7 +1959,11 @@ namespace DataManager
 
         private void AddLog(string message) => txtLog.AppendText(Environment.NewLine + message);
         private void lstFrames_SelectedIndexChanged(object sender, EventArgs e) => ShowFrame(lstFrames.SelectedIndex);
-        private void lvTimeline_SelectedIndexChanged(object sender, EventArgs e) { if (!isUpdatingTimelineSelection && lvTimeline.SelectedItems.Count > 0 && lvTimeline.SelectedItems[0].Tag is int index) ShowFrame(index); }
+        private void lvTimeline_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            if (isUpdatingTimelineSelection || isTimelineRangeDragging) return;
+            if (lvTimeline.SelectedItems.Count > 0 && lvTimeline.SelectedItems[0].Tag is int index) ShowFrame(index);
+        }
         private void trackFrame_Scroll(object sender, EventArgs e) => ShowFrame(trackFrame.Value);
         private void btnFirst_Click(object? sender, EventArgs e) { int i = FirstActiveIndex(); if (i >= 0) ShowFrame(i); }
         private void btnPrev_Click(object? sender, EventArgs e) { int i = PrevActiveIndex(trackFrame.Value); if (i >= 0) ShowFrame(i); }
