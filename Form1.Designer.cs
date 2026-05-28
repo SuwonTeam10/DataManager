@@ -500,7 +500,7 @@
             lstTrash.Location = new Point(344, 52);
             lstTrash.Margin = new Padding(3, 2, 3, 2);
             lstTrash.Name = "lstTrash";
-            lstTrash.Size = new Size(224, 55);
+            lstTrash.Size = new Size(224, 90);
             lstTrash.TabIndex = 15;
             // 
             // btnDelete
