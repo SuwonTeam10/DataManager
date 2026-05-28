@@ -78,9 +78,17 @@ namespace DataManager
         private const int LeftDataPanelGap = 12;
         private const int MinimumDataInfoPanelHeight = 264;
 
+        private enum RangeSelectionOrigin
+        {
+            None,
+            TimelineDrag,
+            ManualButton
+        }
+
         // 데이터 정리(필터/삭제) 대상 범위. -1은 미지정.
         private int rangeStart = -1;
         private int rangeEnd = -1;
+        private RangeSelectionOrigin rangeSelectionOrigin = RangeSelectionOrigin.None;
 
         // 자동 재생 성능을 위한 표시용 이미지 LRU 캐시(메모리 상한 적용). 캐시가 Bitmap 소유권을 가진다.
         private readonly FrameImageCache frameImageCache;
@@ -1123,6 +1131,7 @@ namespace DataManager
             frameImageCache.Clear();
             rangeStart = -1;
             rangeEnd = -1;
+            rangeSelectionOrigin = RangeSelectionOrigin.None;
             UpdateRangeLabel();
 
             try
@@ -1380,6 +1389,7 @@ namespace DataManager
 
             if (shouldShowFrame && clickedIndex >= 0)
             {
+                ClearRangeForSingleFrameNavigation();
                 ShowFrame(clickedIndex);
             }
         }
@@ -1423,6 +1433,7 @@ namespace DataManager
             timelineDragCurrentIndex = Math.Clamp(currentIndex, 0, tubFrames.Count - 1);
             rangeStart = timelineDragStartIndex;
             rangeEnd = timelineDragCurrentIndex;
+            rangeSelectionOrigin = RangeSelectionOrigin.TimelineDrag;
             UpdateRangeLabel();
             ApplyTimelineRangeSelection();
         }
@@ -1460,21 +1471,53 @@ namespace DataManager
             }
         }
 
-        private void ShowFrame(int index)
+        private void ClearRangeSelection()
+        {
+            rangeStart = -1;
+            rangeEnd = -1;
+            rangeSelectionOrigin = RangeSelectionOrigin.None;
+            timelineDragStartIndex = -1;
+            timelineDragCurrentIndex = -1;
+            hasTimelineRangeDragMoved = false;
+            UpdateRangeLabel();
+        }
+
+        private void ClearRangeForSingleFrameNavigation()
+        {
+            if (rangeSelectionOrigin == RangeSelectionOrigin.TimelineDrag)
+            {
+                ClearRangeSelection();
+                return;
+            }
+
+            if (rangeSelectionOrigin == RangeSelectionOrigin.ManualButton && rangeStart >= 0 && rangeEnd >= 0)
+            {
+                ClearRangeSelection();
+            }
+        }
+
+        private void ShowFrame(int index, bool syncFrameListSelection = true, bool syncTimelineSelection = true)
         {
             if (index < 0 || index >= tubFrames.Count) return;
 
             TubFrame frame = tubFrames[index];
 
-            lstFrames.SelectedIndexChanged -= lstFrames_SelectedIndexChanged;
-            lstFrames.SelectedIndex = index;
-            lstFrames.SelectedIndexChanged += lstFrames_SelectedIndexChanged;
+            if (syncFrameListSelection)
+            {
+                lstFrames.SelectedIndexChanged -= lstFrames_SelectedIndexChanged;
+                if (index < lstFrames.Items.Count)
+                {
+                    lstFrames.ClearSelected();
+                    lstFrames.SetSelected(index, true);
+                }
+                lstFrames.SelectedIndexChanged += lstFrames_SelectedIndexChanged;
+            }
 
             trackFrame.Value = index;
             UpdateTimelineForFrame(index);
 
             int timelineItemIndex = index - currentTimelineStart;
-            if (timelineItemIndex >= 0 && timelineItemIndex < lvTimeline.Items.Count)
+            if (syncTimelineSelection && timelineItemIndex >= 0 && timelineItemIndex < lvTimeline.Items.Count)
             {
                 isUpdatingTimelineSelection = true;
                 foreach (ListViewItem item in lvTimeline.Items) item.Selected = false;
@@ -2041,11 +2084,23 @@ namespace DataManager
         }
 
         private void AddLog(string message) => txtLog.AppendText(Environment.NewLine + message);
-        private void lstFrames_SelectedIndexChanged(object sender, EventArgs e) => ShowFrame(lstFrames.SelectedIndex);
+        private void lstFrames_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            ClearRangeForSingleFrameNavigation();
+            if (lstFrames.SelectedIndex >= 0)
+            {
+                ShowFrame(lstFrames.SelectedIndex, syncFrameListSelection: false);
+            }
+        }
+
         private void lvTimeline_SelectedIndexChanged(object sender, EventArgs e)
         {
             if (isUpdatingTimelineSelection || isTimelineRangeDragging) return;
-            if (lvTimeline.SelectedItems.Count > 0 && lvTimeline.SelectedItems[0].Tag is int index) ShowFrame(index);
+            if (lvTimeline.SelectedItems.Count > 0 && lvTimeline.SelectedItems[0].Tag is int index)
+            {
+                ClearRangeForSingleFrameNavigation();
+                ShowFrame(index);
+            }
         }
         private void trackFrame_Scroll(object sender, EventArgs e) => ShowFrame(trackFrame.Value);
         private void btnFirst_Click(object? sender, EventArgs e) { int i = FirstActiveIndex(); if (i >= 0) ShowFrame(i); }
@@ -2210,6 +2265,7 @@ namespace DataManager
         {
             if (tubFrames.Count == 0) return;
             rangeStart = trackFrame.Value;
+            rangeSelectionOrigin = RangeSelectionOrigin.ManualButton;
             UpdateRangeLabel();
         }
 
@@ -2217,6 +2273,7 @@ namespace DataManager
         {
             if (tubFrames.Count == 0) return;
             rangeEnd = trackFrame.Value;
+            rangeSelectionOrigin = RangeSelectionOrigin.ManualButton;
             UpdateRangeLabel();
         }
 
@@ -2342,7 +2399,8 @@ namespace DataManager
             if (tubFrames.Count == 0) return;
 
             int moved = 0;
-            if (rangeStart >= 0 || rangeEnd >= 0)
+            bool usedRange = rangeStart >= 0 || rangeEnd >= 0;
+            if (usedRange)
             {
                 (int lo, int hi) = GetEffectiveRange();
                 DialogResult res = MessageBox.Show($"범위 {lo}~{hi}의 프레임을 휴지통으로 이동하시겠습니까?", "삭제", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
@@ -2377,6 +2435,10 @@ namespace DataManager
 
             RebuildTrashList();
             RenderTubGraph();
+            if (usedRange && moved > 0)
+            {
+                ClearRangeSelection();
+            }
             AddLog($"{moved}개 프레임을 휴지통으로 이동했습니다.");
         }
 
