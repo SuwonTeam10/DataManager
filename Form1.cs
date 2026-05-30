@@ -31,6 +31,11 @@ namespace DataManager
         private System.Windows.Forms.Timer playTimer;
         private bool _isUpdatingRadio = false;
         private ToolStripMenuItem menuProfile;
+        private int _trainCount = 0;
+        private int _testCount = 0;
+        private ToolStripMenuItem infoTrain;
+        private ToolStripMenuItem infoTest;
+        private ToolStripMenuItem menuAttempts;
 
         private string configPath = "";
         private string tubPath = "";
@@ -48,13 +53,42 @@ namespace DataManager
         private int currentTimelineStart = -1;
         private int currentTimelineVisibleCount = -1;
         private bool isUpdatingTimelineSelection;
+        private bool isTimelineRangeDragging;
+        private bool hasTimelineRangeDragMoved;
+        private int timelineDragStartIndex = -1;
+        private int timelineDragCurrentIndex = -1;
+        private int timelineDragEdgeDirection;
+        private readonly System.Windows.Forms.Timer timelineDragTimer = new();
         private int playbackFrameStep = 1;
-        private int tubNavigatorBaseHeight;
-        private int frameListBaseHeight;
+        private const int DefaultNavigatorHeight = 517;
+        private const int MinNavigatorHeight = 360;
+        private const int TimelinePanelHeight = 86;
+        private const int TimelineMinimumPanelHeight = 42;
+        private const int DefaultTabPanelHeight = 220;
+        private const int MinimumTabVisibleHeight = 130;
+        private const int LayoutGap = 8;
+        private const int FrameResizeBarHeight = 0;
+        private const int FrameResizeGripHeight = 12;
+        private int navigatorHeight = DefaultNavigatorHeight;
+        private bool isResizingNavigator;
+        private bool suppressNextFrameClick;
+        private int resizeStartMouseY;
+        private int resizeStartNavigatorHeight;
+        private const int MinimumResponsiveFormWidth = 1320;
+        private const int LeftDataPanelGap = 12;
+        private const int MinimumDataInfoPanelHeight = 264;
+
+        private enum RangeSelectionOrigin
+        {
+            None,
+            TimelineDrag,
+            ManualButton
+        }
 
         // 데이터 정리(필터/삭제) 대상 범위. -1은 미지정.
         private int rangeStart = -1;
         private int rangeEnd = -1;
+        private RangeSelectionOrigin rangeSelectionOrigin = RangeSelectionOrigin.None;
 
         // 자동 재생 성능을 위한 표시용 이미지 LRU 캐시(메모리 상한 적용). 캐시가 Bitmap 소유권을 가진다.
         private readonly FrameImageCache frameImageCache;
@@ -109,6 +143,10 @@ namespace DataManager
                 RedrawGraphAfterLayout();
             };
             picFrame.Paint += picFrame_Paint;
+            picFrame.MouseDown += picFrame_MouseDown;
+            picFrame.MouseMove += picFrame_MouseMove;
+            picFrame.MouseLeave += picFrame_MouseLeave;
+            picFrame.MouseUp += picFrame_MouseUp;
             chkShowRealAngle.CheckedChanged += (_, _) => picFrame.Invalidate();
             chkShowPredictAngle.CheckedChanged += (_, _) => picFrame.Invalidate();
 
@@ -119,7 +157,13 @@ namespace DataManager
             btnDelete.Click += btnDelete_Click;
             btnRestore.Click += btnRestore_Click;
             btnEmptyTrash.Click += btnEmptyTrash_Click;
-            lstTrash.SelectionMode = SelectionMode.MultiExtended;
+            lstFrames.SelectionMode = SelectionMode.MultiExtended;
+            lstTrash.CheckOnClick = false;
+            lstTrash.MouseDown += LstTrash_MouseDown;
+            lstTrash.MouseMove += LstTrash_MouseMove;
+            lstTrash.MouseUp += LstTrash_MouseUp;
+            lstTrash.SelectedIndexChanged += LstTrash_SelectedIndexChanged;
+            tabCleaner.Resize += (_, _) => ArrangeCleanerControls();
 
             // 타임라인 썸네일 이미지 리스트 설정
             timelineImages.ImageSize = new Size(TimelineThumbWidth, TimelineThumbHeight);
@@ -131,30 +175,246 @@ namespace DataManager
             lvTimeline.LabelWrap = false;
             lvTimeline.Scrollable = false;
             lvTimeline.HideSelection = false;
-            lvTimeline.MultiSelect = false;
+            lvTimeline.MultiSelect = true;
             lvTimeline.ShowItemToolTips = true;
             lvTimeline.HandleCreated += (_, _) => ApplyTimelineIconSpacing();
             lvTimeline.Resize += (_, _) => ReloadTimelineForCurrentFrame();
+            lvTimeline.MouseDown += lvTimeline_MouseDown;
+            lvTimeline.MouseMove += lvTimeline_MouseMove;
+            lvTimeline.MouseUp += lvTimeline_MouseUp;
+            lvTimeline.MouseLeave += lvTimeline_MouseLeave;
             ApplyTimelineIconSpacing();
+
+            timelineDragTimer.Interval = 120;
+            timelineDragTimer.Tick += timelineDragTimer_Tick;
 
             InitializeGraphControls();
             picTestImage.SizeMode = PictureBoxSizeMode.Zoom;
-            tubNavigatorBaseHeight = groupTubNavigator.Height;
-            frameListBaseHeight = groupFrameList.Height;
+            MinimumSize = new Size(Math.Max(MinimumSize.Width, MinimumResponsiveFormWidth), MinimumSize.Height);
+            groupTubNavigator.Resize += (_, _) => ArrangeNavigatorControls();
+            Shown += (_, _) =>
+            {
+                // 실행 직후 기본 높이만 데이터 정보 판넬 아래와 맞춘다. 이후에는 사용자가 드래그로 조절한다.
+                navigatorHeight = Math.Max(MinNavigatorHeight, groupDataView.Bottom - groupTubNavigator.Top);
+                ArrangeTimelineAndTabs();
+                ArrangeCleanerControls();
+            };
             ArrangeTimelineAndTabs();
+            ArrangeCleanerControls();
         }
 
         private void ArrangeTimelineAndTabs()
         {
-            if (tubNavigatorBaseHeight <= 0 || frameListBaseHeight <= 0) return;
+            int bottomGap = 8;
+            int resizeBarTopGap = 2;
+            int minimumNavigatorHeight = GetMinimumNavigatorHeight();
+            int appliedNavigatorHeight = Math.Max(navigatorHeight, minimumNavigatorHeight);
+            int tabHeight = DefaultTabPanelHeight;
+            int timelineHeight = TimelinePanelHeight;
 
-            groupTubNavigator.Height = tubNavigatorBaseHeight;
-            groupFrameList.Height = frameListBaseHeight;
+            int availableBelowNavigator = ClientSize.Height
+                - bottomGap
+                - groupTubNavigator.Top
+                - appliedNavigatorHeight
+                - resizeBarTopGap
+                - FrameResizeBarHeight
+                - (LayoutGap * 2);
 
-            int gap = 8;
-            groupTimeline.Top = groupTubNavigator.Bottom + gap;
-            tabMain.Top = groupTimeline.Bottom + gap;
-            tabMain.Height = Math.Max(120, ClientSize.Height - tabMain.Top - gap);
+            int shortage = (timelineHeight + tabHeight) - availableBelowNavigator;
+            if (shortage > 0)
+            {
+                int tabShrink = Math.Min(shortage, tabHeight - MinimumTabVisibleHeight);
+                tabHeight -= tabShrink;
+                shortage -= tabShrink;
+            }
+
+            if (shortage > 0)
+            {
+                int timelineShrink = Math.Min(shortage, timelineHeight - TimelineMinimumPanelHeight);
+                timelineHeight -= timelineShrink;
+                shortage -= timelineShrink;
+            }
+
+            if (shortage > 0)
+            {
+                appliedNavigatorHeight = Math.Max(minimumNavigatorHeight, appliedNavigatorHeight - shortage);
+            }
+
+            tabMain.Height = tabHeight;
+            tabMain.Top = ClientSize.Height - tabMain.Height - bottomGap;
+
+            groupTimeline.Height = timelineHeight;
+            groupTimeline.Top = tabMain.Top - groupTimeline.Height - LayoutGap;
+            groupTimeline.BringToFront();
+
+            groupTubNavigator.Height = appliedNavigatorHeight;
+            groupFrameList.Height = appliedNavigatorHeight;
+            ArrangeLeftDataPanels(groupTubNavigator.Bottom);
+
+            ArrangeNavigatorControls();
+        }
+
+        private int GetMinimumNavigatorHeight()
+        {
+            return Math.Max(MinNavigatorHeight, groupBoxDataLoad.Height + LeftDataPanelGap + MinimumDataInfoPanelHeight);
+        }
+
+        private void ArrangeLeftDataPanels(int targetBottom)
+        {
+            groupBoxDataLoad.Top = groupTubNavigator.Top;
+            groupDataView.Top = groupBoxDataLoad.Bottom + LeftDataPanelGap;
+            groupDataView.Height = Math.Max(MinimumDataInfoPanelHeight, targetBottom - groupDataView.Top);
+        }
+
+        private void ArrangeNavigatorControls()
+        {
+            int width = groupTubNavigator.ClientSize.Width;
+            int height = groupTubNavigator.ClientSize.Height;
+            if (width <= 0 || height <= 0) return;
+
+            float layoutScale = GetNavigatorLayoutScale(width, height);
+            int sidePadding = ScaleLayout(24, layoutScale);
+            int imageTop = ScaleLayout(25, layoutScale);
+            int imageSidePadding = ScaleLayout(25, layoutScale);
+            int buttonHeight = ScaleLayout(42, layoutScale);
+            int comboHeight = ScaleLayout(28, layoutScale);
+            int speedComboWidth = ScaleLayout(80, layoutScale);
+            int autoPlayWidth = ScaleLayout(88, layoutScale);
+            int speedGap = ScaleLayout(16, layoutScale);
+            int speedWidth = speedComboWidth + speedGap + autoPlayWidth;
+            int controlsBottomPadding = ScaleLayout(82, layoutScale);
+            int controlY = Math.Max(ScaleLayout(220, layoutScale), height - controlsBottomPadding - buttonHeight);
+            int labelValueGap = ScaleLayout(27, layoutScale);
+            int trackY = Math.Min(height - ScaleLayout(65, layoutScale), controlY + ScaleLayout(58, layoutScale));
+
+            int imageBottom = Math.Max(imageTop + ScaleLayout(160, layoutScale), controlY - ScaleLayout(18, layoutScale));
+            picFrame.SetBounds(
+                imageSidePadding,
+                imageTop,
+                Math.Max(160, width - (imageSidePadding * 2)),
+                Math.Max(120, imageBottom - imageTop));
+
+            lblCurrentFrame.Location = new Point(ScaleLayout(45, layoutScale), controlY);
+            lblCurrentFrame2.Location = new Point(ScaleLayout(53, layoutScale), controlY + labelValueGap);
+
+            int speedX = width - sidePadding - speedWidth;
+            lblSpeed.Location = new Point(speedX, controlY - ScaleLayout(7, layoutScale));
+            cmbPlaySpeed.SetBounds(speedX, controlY + ScaleLayout(21, layoutScale), speedComboWidth, comboHeight);
+            chkAutoPlay.SetBounds(speedX + speedComboWidth + speedGap, controlY + ScaleLayout(18, layoutScale), autoPlayWidth, comboHeight);
+
+            int leftReserved = ScaleLayout(150, layoutScale);
+            int rightReserved = speedWidth + sidePadding;
+            int areaLeft = leftReserved;
+            int areaRight = Math.Max(areaLeft, width - sidePadding - rightReserved);
+            int areaWidth = areaRight - areaLeft;
+
+            int gap = Math.Clamp(areaWidth / 32, ScaleLayout(8, layoutScale), ScaleLayout(18, layoutScale));
+            int smallWidth = Math.Clamp((areaWidth - ScaleLayout(122, layoutScale) - (gap * 4)) / 4, ScaleLayout(52, layoutScale), ScaleLayout(92, layoutScale));
+            int playWidth = Math.Clamp(areaWidth - (smallWidth * 4) - (gap * 4), ScaleLayout(122, layoutScale), ScaleLayout(210, layoutScale));
+            int totalWidth = (smallWidth * 4) + playWidth + (gap * 4);
+            int x = areaLeft + Math.Max(0, (areaWidth - totalWidth) / 2);
+
+            btnFirst.SetBounds(x, controlY, smallWidth, buttonHeight);
+            x += smallWidth + gap;
+            btnPrev.SetBounds(x, controlY, smallWidth, buttonHeight);
+            x += smallWidth + gap;
+            btnPlayStop.SetBounds(x, controlY, playWidth, buttonHeight);
+            x += playWidth + gap;
+            btnNext.SetBounds(x, controlY, smallWidth, buttonHeight);
+            x += smallWidth + gap;
+            btnLast.SetBounds(x, controlY, smallWidth, buttonHeight);
+
+            trackFrame.SetBounds(
+                ScaleLayout(37, layoutScale),
+                trackY,
+                Math.Max(120, width - ScaleLayout(73, layoutScale)),
+                trackFrame.Height);
+        }
+
+        private static float GetNavigatorLayoutScale(int width, int height)
+        {
+            float widthScale = width / 900f;
+            float heightScale = height / 520f;
+            return Math.Clamp(Math.Min(widthScale, heightScale * 1.15f), 1f, 1.35f);
+        }
+
+        private static int ScaleLayout(int value, float scale)
+        {
+            return (int)Math.Round(value * scale);
+        }
+
+        private void ArrangeCleanerControls()
+        {
+            if (tabCleaner.ClientSize.Width <= 0 || tabCleaner.ClientSize.Height <= 0) return;
+
+            int margin = 8;
+            int trashHeight = Math.Max(178, tabCleaner.ClientSize.Height - (margin * 2));
+            groupBoxTrash.Height = trashHeight;
+
+            int bottomRowY = trashHeight - 31;
+            lblTrashProgress.Top = bottomRowY + 3;
+            progressBarTrash.Top = bottomRowY + 3;
+            lblTrashPercent.Top = bottomRowY + 3;
+
+            lstTrash.Height = Math.Max(90, bottomRowY - lstTrash.Top - 5);
+        }
+
+        private bool IsFrameResizeGrip(Point location)
+        {
+            return location.Y >= picFrame.ClientSize.Height - FrameResizeGripHeight;
+        }
+
+        private void picFrame_MouseDown(object? sender, MouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Left || !IsFrameResizeGrip(e.Location)) return;
+
+            isResizingNavigator = true;
+            suppressNextFrameClick = true;
+            resizeStartMouseY = PointToClient(Cursor.Position).Y;
+            resizeStartNavigatorHeight = groupTubNavigator.Height;
+            picFrame.Capture = true;
+            picFrame.Cursor = Cursors.HSplit;
+        }
+
+        private void picFrame_MouseMove(object? sender, MouseEventArgs e)
+        {
+            if (!isResizingNavigator)
+            {
+                picFrame.Cursor = IsFrameResizeGrip(e.Location) ? Cursors.HSplit : Cursors.Default;
+                return;
+            }
+
+            int currentMouseY = PointToClient(Cursor.Position).Y;
+            navigatorHeight = resizeStartNavigatorHeight + currentMouseY - resizeStartMouseY;
+            ArrangeTimelineAndTabs();
+        }
+
+        private void picFrame_MouseLeave(object? sender, EventArgs e)
+        {
+            if (!isResizingNavigator)
+            {
+                picFrame.Cursor = Cursors.Default;
+            }
+        }
+
+        private void picFrame_MouseUp(object? sender, MouseEventArgs e)
+        {
+            isResizingNavigator = false;
+            picFrame.Capture = false;
+            picFrame.Cursor = IsFrameResizeGrip(e.Location) ? Cursors.HSplit : Cursors.Default;
+        }
+
+        // UI 스레드 안전하게 상태 라벨을 바꿔주는 도우미
+        private void UpdateStatusLabel(string text, Color color)
+        {
+            if (lblStatus2 != null)
+            {
+                lblStatus2.Invoke(new Action(() =>
+                {
+                    lblStatus2.Text = text;
+                    lblStatus2.ForeColor = color;
+                }));
+            }
         }
 
         private void Form1_Load(object sender, EventArgs e)
@@ -185,52 +445,45 @@ namespace DataManager
             menuStrip.Padding = new Padding(5, 5, 5, 5);
             this.MainMenuStrip = menuStrip;
             this.Controls.Add(menuStrip);
-
             menuStrip.BringToFront();
 
-            // 1. Donkeycar 사용 설명서 메뉴 
+            // ★ 설명서를 상황별로 명확하게 분리!
             ToolStripMenuItem menuManual = new ToolStripMenuItem("📖 Donkeycar 사용 설명서");
-            menuManual.DropDownItems.Add("1. [서버 연결 설정]에서 로컬/원격 선택 후 접속");
-            menuManual.DropDownItems.Add("2. [설정 파일 열기] 클릭하여 mycar 폴더(작업 기준점) 설정");
-            menuManual.DropDownItems.Add("3. [Tub 데이터 열기]로 주행 데이터(data 폴더) 불러오기");
-            menuManual.DropDownItems.Add("4. [데이터 정리] 탭에서 불필요한 데이터(속도 0 등) 필터링 및 휴지통 비우기");
-            menuManual.DropDownItems.Add("5. [학습/테스트] 탭에서 [학습 시작] 클릭 (완료 시 models/mypilot.h5 자동 저장)");
-            menuManual.DropDownItems.Add("6. [모델 선택] -> [테스트 이미지 선택] 후 [모델 테스트 실행]으로 검증");
+            menuManual.DropDownItems.Add("[공통] 1. 이상한 주행 데이터 필터/삭제로 휴지통 비우기");
+            menuManual.DropDownItems.Add("[공통] 2. [학습 시작] 클릭 (완료 시 models/mypilot.h5 생성)");
+            menuManual.DropDownItems.Add("-");
+            menuManual.DropDownItems.Add("[로컬 모드] 폴더를 고를 때 'Linux' 탭이나 \\\\wsl.localhost\\ 주소를 이용하세요.");
+            menuManual.DropDownItems.Add("[원격 서버] 경로는 프로그램이 알아서 똑똑하게 자동 설정합니다. (그냥 예 누르시면 됩니다)");
             menuManual.MouseEnter += (s, e) => menuManual.ShowDropDown();
 
-            // 2. 단축키 메뉴
             ToolStripMenuItem menuHotkeys = new ToolStripMenuItem("⌨️ 단축키 안내");
-            menuHotkeys.DropDownItems.Add("Space Bar : 자동 재생 / 정지 토글 (예정)");
-            menuHotkeys.DropDownItems.Add("← / → 방향키 : 프레임 1칸씩 이동 (예정)");
+            menuHotkeys.DropDownItems.Add("Space Bar : 자동 재생 / 정지 토글");
+            menuHotkeys.DropDownItems.Add("← / → 방향키 : 프레임 1칸씩 이동");
             menuHotkeys.MouseEnter += (s, e) => menuHotkeys.ShowDropDown();
 
-            // 3. 우측 상단 로그인 프로필 메뉴
-            menuProfile = new ToolStripMenuItem("👤 로컬 모드 (로그아웃 상태)");
-            menuProfile.Alignment = ToolStripItemAlignment.Right;
-            menuProfile.Font = new Font("맑은 고딕", 9, FontStyle.Bold);
-            menuProfile.DropDownDirection = ToolStripDropDownDirection.BelowLeft;
+            menuAttempts = new ToolStripMenuItem("📊 오늘의 시도");
+            menuAttempts.Alignment = ToolStripItemAlignment.Right;
+            menuAttempts.Font = new Font("맑은 고딕", 9, FontStyle.Bold);
+            menuAttempts.DropDownDirection = ToolStripDropDownDirection.BelowLeft;
 
-            ToolStripMenuItem infoRole = new ToolStripMenuItem("상태: 로컬 환경 대기 중");
-            infoRole.Enabled = false;
-
-            ToolStripMenuItem infoTrain = new ToolStripMenuItem("오늘 학습 시도: 0회");
+            infoTrain = new ToolStripMenuItem($"학습 시도: {_trainCount}회");
             infoTrain.Enabled = false;
+            infoTest = new ToolStripMenuItem($"모델 테스트 시도: {_testCount}회");
+            infoTest.Enabled = false;
 
-            ToolStripSeparator separator = new ToolStripSeparator();
-
-            ToolStripMenuItem menuLogout = new ToolStripMenuItem("🛑 원격 서버 로그아웃");
-            menuLogout.Click += menuLogout_Click;
-
-            menuProfile.DropDownItems.Add(infoRole);
-            menuProfile.DropDownItems.Add(infoTrain);
-            menuProfile.DropDownItems.Add(separator);
-            menuProfile.DropDownItems.Add(menuLogout);
-
-            menuProfile.MouseEnter += (s, e) => menuProfile.ShowDropDown();
+            menuAttempts.DropDownItems.Add(infoTrain);
+            menuAttempts.DropDownItems.Add(infoTest);
+            menuAttempts.MouseEnter += (s, e) => menuAttempts.ShowDropDown();
 
             menuStrip.Items.Add(menuManual);
             menuStrip.Items.Add(menuHotkeys);
-            menuStrip.Items.Add(menuProfile);
+            menuStrip.Items.Add(menuAttempts);
+
+            if (btnDisconnect != null)
+            {
+                btnDisconnect.Click -= btnDisconnect_Click;
+                btnDisconnect.Click += btnDisconnect_Click;
+            }
         }
 
         // ==========================================
@@ -248,20 +501,16 @@ namespace DataManager
                     {
                         try
                         {
+                            // ★ 이 두 줄이 실수로 지워졌었습니다! (서버 접속 엔진 가동)
                             _executor = new ICE.RemoteExecutor(loginForm.Host, loginForm.User, loginForm.Pass);
                             loggedInUser = loginForm.User;
 
-                            // lblProfile 찌꺼기 싹 지우고 menuProfile로 대체
-                            menuProfile.Text = $"👤 {loginForm.User} 접속중";
-                            menuProfile.ForeColor = Color.Blue; // 글씨를 파란색으로!
-                            menuProfile.Tag = loginForm.Host;   // 나중에 로그아웃할 때 쓰려고 IP를 살짝 숨겨둠
-
-                            // 하위 메뉴 첫 번째 줄에 접속 IP 띄우기
-                            if (menuProfile.DropDownItems.Count > 0 && menuProfile.DropDownItems[0] is ToolStripMenuItem ipMenuItem)
+                            if (lblUser2 != null)
                             {
-                                ipMenuItem.Text = $"접속 IP: {loginForm.Host}";
+                                lblUser2.Text = loginForm.User;
+                                lblUser2.ForeColor = Color.Blue;
                             }
-
+                            UpdateStatusLabel("원격 연결됨", Color.Green);
                             return;
                         }
                         catch (Exception ex)
@@ -368,16 +617,23 @@ namespace DataManager
         {
             if (rdoRemote.Checked)
             {
+                if (string.IsNullOrEmpty(loggedInUser))
+                {
+                    MessageBox.Show("원격 서버에 먼저 로그인(연결)해 주세요!", "로그인 필요", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
                 configPath = $"/home/{loggedInUser}/mycar";
                 lblConfigPath.Text = configPath;
-                MessageBox.Show($"[원격 모드 설정 완료]\n\n{loggedInUser}님의 서버 폴더({configPath})로\n작업 기준점이 똑똑하게 자동 설정되었습니다!\n\n이제 다음 단계인 'Tub 데이터 열기'를 진행해 주세요.", "설정 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show($"[원격 모드]\n{loggedInUser}님의 서버 폴더({configPath})로 작업 기준점이 설정되었습니다!\n\n이제 'Tub 데이터 열기'를 진행해 주세요.", "설정 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
 
-            MessageBox.Show("로컬(윈도우) 환경에서 작업할 준비를 합니다.\n\n이어서 뜨는 폴더 선택 창에서\n'manage.py' 파일이 들어있는 동키카 기본 폴더(mycar)를 선택해 주세요.", "작업 폴더 선택 안내", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            // ★ 로컬 모드일 때 우분투(WSL) 폴더 찾는 방법 상세 안내!
+            MessageBox.Show("[로컬(WSL) 모드 안내]\n\n윈도우 탐색기가 열리면, 좌측 폴더 목록 맨 아래의 'Linux' 아이콘을 클릭하거나 상단 주소창에 아래 경로를 직접 입력하세요.\n\n👉 \\\\wsl.localhost\\Ubuntu-22.04\\home\\(사용자명)\\mycar\n\n해당 mycar 폴더를 찾아 선택해 주시면 됩니다.", "WSL 폴더 선택 안내", MessageBoxButtons.OK, MessageBoxIcon.Information);
+
             using (FolderBrowserDialog dlg = new FolderBrowserDialog())
             {
-                dlg.Description = "manage.py 파일이 있는 mycar 폴더를 찾아 선택해주세요.";
+                dlg.Description = "manage.py 파일이 있는 우분투 내부의 mycar 폴더를 찾아 선택해주세요.";
                 if (dlg.ShowDialog() == DialogResult.OK)
                 {
                     configPath = dlg.SelectedPath;
@@ -385,7 +641,6 @@ namespace DataManager
                 }
             }
         }
-
         // 학습/테스트 강제 중지 버튼 클릭 이벤트
         private void btnStopTask_Click(object sender, EventArgs e)
         {
@@ -419,15 +674,24 @@ namespace DataManager
                 return;
             }
 
-            DialogResult res = MessageBox.Show($"원격 서버({configPath})에서 AI 모델 학습을 시작하시겠습니까?\n(학습에는 시간이 오래 걸릴 수 있습니다.)", "학습 시작 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+            // ★ 로컬/원격 환경에 맞춘 동적 알림창!
+            string modeText = rdoRemote.Checked ? "원격 서버" : "로컬(WSL)";
+            DialogResult res = MessageBox.Show($"{modeText}({configPath})에서 AI 모델 학습을 시작하시겠습니까?\n(학습에는 시간이 오래 걸릴 수 있습니다.)", "학습 시작 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
             if (res == DialogResult.No) return;
 
             txtLog.AppendText(Environment.NewLine + "[Train] AI 모델 학습을 시작합니다...");
 
+            UpdateStatusLabel("학습 중", Color.DarkOrange);
+
+            // ★ 카운트는 버튼 누를 때 한 번만 오르도록 여기서만 처리! (UpdateChartRealTime 안의 카운트 증가 코드는 지워주세요!)
+            _trainCount++;
+            if (infoTrain != null) infoTrain.Text = $"오늘 학습 시도: {_trainCount}회";
+
             bool useVenv = chkUseVenv != null ? chkUseVenv.Checked : true;
             _executor.ExecuteTrain(configPath, useVenv, (log) =>
             {
-                this.Invoke(new Action(() => { UpdateChartRealTime(log); }));
+                // 프리징 방지를 위해 BeginInvoke 사용
+                this.BeginInvoke(new Action(() => { UpdateChartRealTime(log); }));
             });
         }
 
@@ -435,44 +699,38 @@ namespace DataManager
         {
             if (string.IsNullOrEmpty(logText)) return;
 
-            //  1. 로그 클리너: 파이썬의 무의미한 진행률 ==== 및 깨진 문자 렌더링 무시 (UI 렉 방지)
-            if (logText.Contains('\r') || logText.Contains('\b') || logText.Count(c => c == '=') > 10 || logText.Contains(""))
-            {
-                return;
-            }
+            bool isJunkLog = logText.Contains('\r') || logText.Contains('\b') || logText.Count(c => c == '=') > 10 || logText.Contains("\u001b");
+            if (!isJunkLog) txtLog.AppendText(logText + Environment.NewLine);
 
-            txtLog.AppendText(logText + Environment.NewLine);
-
-            // 2. 에러 발생 시 알림
             if (logText.Contains("[Errno 2]") || logText.Contains("Error") || logText.Contains("Exception"))
             {
-                MessageBox.Show($"학습 중 파이썬 오류가 발생했습니다.\n로그 창을 확인해주세요.\n\n내용: {logText}", "학습 오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show($"학습 중 파이썬 오류가 발생했습니다.\n\n내용: {logText}", "학습 오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                UpdateStatusLabel("대기 중", Color.Green);
                 return;
             }
 
-            // 3. 로그 정리 및 안내 팝업 (저장 경로 및 다음 단계 상세 안내)
-            if (logText.Contains("Saved model") || logText.Contains("Finished") || logText.Contains("Stopping early") || logText.ToLower().Contains("model saved"))
+            // ★ 성공 감지기 (파이썬이 완전히 종료되었을 때 딱 1번만 실행됨)
+            if (logText.Trim() == "---TRAINING_COMPLETE---")
             {
                 if (progressBarTrain != null) progressBarTrain.Value = progressBarTrain.Maximum;
-                if (lblProgressPercent != null) lblProgressPercent.Text = "100%"; // 완료 시 100% 텍스트 강제 적용
+                if (lblProgressPercent != null) lblProgressPercent.Text = "100%";
 
                 txtLog.AppendText(Environment.NewLine + "--------------------------------------------------");
                 txtLog.AppendText(Environment.NewLine + "✅ [학습 완료] AI 모델 생성이 끝났습니다.");
                 txtLog.AppendText(Environment.NewLine + $"📁 자동 저장 위치: {configPath}/models/mypilot.h5");
                 txtLog.AppendText(Environment.NewLine + "--------------------------------------------------" + Environment.NewLine);
 
-                MessageBox.Show($"🎉 AI 모델 학습이 무사히 완료되었습니다!\n\n[자동 저장 위치]\n{configPath}/models/mypilot.h5\n\n[다음 단계 안내]\n1. 좌측의 [모델 선택] 버튼을 누르세요. (자동으로 세팅됩니다.)\n2. [테스트 이미지 선택]을 누르고 주행 데이터 폴더를 고르세요.\n3. [모델 테스트 실행] 버튼을 눌러 AI가 예측 조향각을 잘 뽑아내는지 확인해보세요!", "학습 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show($"🎉 AI 모델 학습이 성공적으로 완료되었습니다!\n\n[자동 저장 위치]\n{configPath}/models/mypilot.h5\n\n[다음 단계 안내]\n1. 좌측의 [모델 선택] 버튼을 누르세요. (자동으로 세팅됩니다.)\n2. [테스트 이미지 선택]을 누르세요. (원격 서버 폴더 자동 세팅)\n3. [모델 테스트 실행] 버튼을 눌러보세요!", "학습 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                UpdateStatusLabel("대기 중", Color.Green);
             }
 
-            // 4. Loss 값 추출 (그래프용 - 현재는 주석 처리됨)
-            Match matchLoss = Regex.Match(logText, @"loss:\s*([0-9]*\.?[0-9]+)");
-            if (matchLoss.Success)
+            // ★ 실패 감지기 (메모리 부족 등으로 튕겼을 때)
+            else if (logText.Contains("Killed") || logText.Contains("Segmentation fault"))
             {
-                double lossValue = Convert.ToDouble(matchLoss.Groups[1].Value);
-                // chartLoss.Series["Loss"].Points.AddY(lossValue); 
+                MessageBox.Show("🚨 학습이 비정상적으로 종료되었습니다. (메모리 부족 등)\n학습 옵션을 조절하거나 서버 상태를 확인하세요.", "학습 실패", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                UpdateStatusLabel("대기 중", Color.Green);
             }
 
-            // 5. 진행률 바 및 % 텍스트 정상화 (Epoch n/m 형태 감지)
             Match epochMatch = Regex.Match(logText, @"Epoch\s+(\d+)/(\d+)");
             if (epochMatch.Success && progressBarTrain != null)
             {
@@ -481,7 +739,6 @@ namespace DataManager
                 progressBarTrain.Maximum = total;
                 progressBarTrain.Value = current <= total ? current : total;
 
-                // ★ 퍼센트 라벨 업데이트 로직 추가!
                 if (lblProgressPercent != null)
                 {
                     int percent = (int)((double)current / total * 100);
@@ -492,39 +749,66 @@ namespace DataManager
 
         private void btnSelectModel_Click(object sender, EventArgs e)
         {
-            if (rdoRemote.Checked)
+            // ★ 학습하지 않고 모델을 선택할 경우를 대비한 강력한 경고 문구 추가!
+            DialogResult res = MessageBox.Show("기본 모델 경로(models/mypilot.h5)를 자동으로 지정하시겠습니까?\n\n💡 주의: 아직 AI 학습을 한 번도 완료하지 않아 파일이 없다면, 테스트 실행 시 파이썬 오류가 발생합니다!\n\n(아니요를 누르면 윈도우에서 직접 선택합니다.)", "모델 설정", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
+            if (res == DialogResult.Cancel) return;
+
+            if (res == DialogResult.Yes)
             {
                 modelPath = "models/mypilot.h5";
-                MessageBox.Show($"[원격 모드]\n서버의 기본 학습 모델로 지정되었습니다:\n{modelPath}", "모델 선택", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                txtLog.AppendText(Environment.NewLine + $"[Info] 선택된 모델: {modelPath}");
-                return;
+                txtLog.AppendText(Environment.NewLine + $"[Info] 기본 모델 자동 설정: {modelPath}");
+                MessageBox.Show($"모델이 설정되었습니다:\n{modelPath}");
             }
-
-            using (OpenFileDialog dlg = new OpenFileDialog())
+            else if (res == DialogResult.No)
             {
-                dlg.Title = "테스트할 Donkeycar 모델(.h5) 선택";
-                dlg.Filter = "Keras Models (*.h5)|*.h5|All files (*.*)|*.*";
-                if (dlg.ShowDialog() == DialogResult.OK)
+                if (rdoRemote.Checked)
                 {
-                    modelPath = dlg.FileName;
-                    MessageBox.Show($"모델이 선택되었습니다:\n{modelPath}");
+                    MessageBox.Show("원격(서버) 모드에서는 윈도우의 파일을 지정할 수 없습니다.\n자동으로 기본 모델을 사용합니다.", "안내", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    modelPath = "models/mypilot.h5";
+                }
+                else
+                {
+                    using (OpenFileDialog dlg = new OpenFileDialog() { Filter = "Keras Models (*.h5)|*.h5|All files (*.*)|*.*" })
+                    {
+                        if (dlg.ShowDialog() == DialogResult.OK)
+                        {
+                            modelPath = dlg.FileName;
+                            MessageBox.Show($"모델이 선택되었습니다:\n{modelPath}");
+                        }
+                    }
                 }
             }
         }
 
         private void btnSelectTestImage_Click(object sender, EventArgs e)
         {
-            using (FolderBrowserDialog dlg = new FolderBrowserDialog())
-            {
-                dlg.Description = "테스트할 이미지들이 들어있는 폴더(예: data3/images)를 선택하세요.";
-                if (!string.IsNullOrEmpty(tubPath)) dlg.SelectedPath = tubPath;
+            DialogResult res = MessageBox.Show("현재 화면에 열려있는 'Tub 데이터'를 그대로 테스트 이미지로 사용하시겠습니까?\n\n(아니요를 누르면 다른 폴더를 직접 선택합니다.)", "테스트 이미지 설정", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
+            if (res == DialogResult.Cancel) return;
 
-                if (dlg.ShowDialog() == DialogResult.OK)
+            if (res == DialogResult.Yes)
+            {
+                if (string.IsNullOrEmpty(tubPath)) { MessageBox.Show("열려있는 Tub 데이터가 없습니다."); return; }
+                testImagePath = rdoRemote.Checked ? "data/" : tubPath;
+                ShowTestImagePreview(FindFirstTestImagePath());
+                txtLog.AppendText(Environment.NewLine + $"[Info] 현재 데이터로 테스트 설정: {testImagePath}");
+            }
+            else if (res == DialogResult.No)
+            {
+                if (rdoRemote.Checked)
                 {
-                    testImagePath = dlg.SelectedPath;
-                    ShowTestImagePreview(FindFirstTestImagePath());
-                    MessageBox.Show($"테스트 이미지 폴더가 선택되었습니다:\n{testImagePath}", "선택 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                    txtLog.AppendText(Environment.NewLine + $"[Info] 선택된 테스트 폴더: {testImagePath}");
+                    MessageBox.Show("원격(서버) 모드에서는 윈도우 탐색기를 띄울 수 없습니다.\n자동으로 서버의 기본 data/ 폴더를 사용합니다.", "안내", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    testImagePath = "data/";
+                }
+                else
+                {
+                    using (FolderBrowserDialog dlg = new FolderBrowserDialog())
+                    {
+                        if (dlg.ShowDialog() == DialogResult.OK)
+                        {
+                            testImagePath = dlg.SelectedPath;
+                            ShowTestImagePreview(FindFirstTestImagePath());
+                        }
+                    }
                 }
             }
         }
@@ -559,10 +843,15 @@ namespace DataManager
             ResetModelTestResult();
             ShowTestImagePreview(FindFirstTestImagePath());
 
+            UpdateStatusLabel("모델 테스트 중", Color.DarkOrange);
+            _testCount++;
+            if (infoTest != null) infoTest.Text = $"오늘 테스트 시도: {_testCount}회";
+
             bool useVenv = chkUseVenv != null ? chkUseVenv.Checked : true;
             _executor.ExecuteTest(configPath, modelPath, testImagePath, useVenv, (log) =>
             {
-                this.Invoke(new Action(() => HandleModelTestLog(log)));
+                // 프리징 방지를 위해 BeginInvoke 사용
+                this.BeginInvoke(new Action(() => HandleModelTestLog(log)));
             });
         }
 
@@ -583,6 +872,15 @@ namespace DataManager
         private void HandleModelTestLog(string logText)
         {
             if (string.IsNullOrWhiteSpace(logText)) return;
+
+            // ★ 인성님 요청: 모델 파일이 없을 때 팝업창으로 강력하게 알려주기!
+            if (logText.StartsWith("[NO_MODEL]"))
+            {
+                string missingPath = logText.Substring(10).Trim();
+                MessageBox.Show($"지정된 경로에 AI 모델(.h5) 파일이 존재하지 않습니다.\n\n경로: {missingPath}\n\n아직 학습이 완료되지 않았거나 파일이 지워졌습니다. 먼저 [학습 시작]을 눌러 모델을 생성해 주세요.", "모델 파일 없음", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                UpdateStatusLabel("대기 중", Color.Green);
+                return;
+            }
 
             txtLog.AppendText(Environment.NewLine + logText);
 
@@ -609,8 +907,16 @@ namespace DataManager
                 }, out double predictAngle))
             {
                 latestTestPredictAngle = predictAngle;
-                lblPredictAngle2.Text = predictAngle.ToString("0.000");
-                StorePredictedAngleForImage(imagePath ?? imageReference ?? latestTestImagePath, predictAngle);
+                string? predictionImageReference = imagePath ?? imageReference ?? latestTestImagePath;
+                StorePredictedAngleForImage(predictionImageReference, predictAngle);
+                if (TryFindTubFrameByImageReference(predictionImageReference, out TubFrame? predictedFrame) && predictedFrame is not null)
+                {
+                    UpdatePredictionResultLabels(predictedFrame, predictAngle);
+                }
+                else
+                {
+                    lblPredictAngle2.Text = predictAngle.ToString("0.000");
+                }
                 picFrame.Invalidate();
             }
 
@@ -632,6 +938,7 @@ namespace DataManager
             {
                 lblTrainStatus2.Text = "테스트 완료";
                 lblTrainStatus2.ForeColor = Color.Green;
+                UpdateStatusLabel("대기 중", Color.Green);
             }
             else if (logText.Contains("Error", StringComparison.OrdinalIgnoreCase)
                 || logText.Contains("Exception", StringComparison.OrdinalIgnoreCase)
@@ -639,6 +946,7 @@ namespace DataManager
             {
                 lblTrainStatus2.Text = "오류";
                 lblTrainStatus2.ForeColor = Color.Red;
+                UpdateStatusLabel("대기 중", Color.Green);
             }
         }
 
@@ -722,6 +1030,45 @@ namespace DataManager
 
             predictAngle = 0;
             return false;
+        }
+
+        private bool TryFindTubFrameByImageReference(string? imagePath, out TubFrame? frame)
+        {
+            HashSet<string> keys = GetImagePredictionKeys(imagePath).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            foreach (TubFrame candidate in tubFrames)
+            {
+                foreach (string frameKey in GetImagePredictionKeys(candidate.ImagePath).Concat(GetImagePredictionKeys(candidate.ImageFileName)))
+                {
+                    if (keys.Contains(frameKey))
+                    {
+                        frame = candidate;
+                        return true;
+                    }
+                }
+            }
+
+            frame = null;
+            return false;
+        }
+
+        private void UpdatePredictionResultLabels(TubFrame frame)
+        {
+            if (TryGetPredictedAngleForFrame(frame, out double predictAngle))
+            {
+                UpdatePredictionResultLabels(frame, predictAngle);
+                return;
+            }
+
+            lblRealAngle2.Text = frame.Angle.ToString("0.000");
+            lblPredictAngle2.Text = "-";
+            lblErrorValue2.Text = "-";
+        }
+
+        private void UpdatePredictionResultLabels(TubFrame frame, double predictAngle)
+        {
+            lblRealAngle2.Text = frame.Angle.ToString("0.000");
+            lblPredictAngle2.Text = predictAngle.ToString("0.000");
+            lblErrorValue2.Text = Math.Abs(frame.Angle - predictAngle).ToString("0.000");
         }
 
         private static IEnumerable<string> GetImagePredictionKeys(string? imagePath)
@@ -883,6 +1230,7 @@ namespace DataManager
             frameImageCache.Clear();
             rangeStart = -1;
             rangeEnd = -1;
+            rangeSelectionOrigin = RangeSelectionOrigin.None;
             UpdateRangeLabel();
 
             try
@@ -1061,6 +1409,11 @@ namespace DataManager
                 }
             }
             finally { lvTimeline.EndUpdate(); }
+
+            if (hasTimelineRangeDragMoved)
+            {
+                ApplyTimelineRangeSelection();
+            }
         }
 
         private int GetTimelineVisibleCount()
@@ -1081,23 +1434,192 @@ namespace DataManager
             UpdateTimelineForFrame(frameIndex);
         }
 
-        private void ShowFrame(int index)
+        private void lvTimeline_MouseDown(object? sender, MouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Left || tubFrames.Count == 0) return;
+
+            ListViewItem? item = lvTimeline.GetItemAt(e.X, e.Y);
+            if (item?.Tag is not int frameIndex) return;
+
+            isTimelineRangeDragging = true;
+            hasTimelineRangeDragMoved = false;
+            timelineDragStartIndex = frameIndex;
+            timelineDragCurrentIndex = frameIndex;
+            lvTimeline.Capture = true;
+        }
+
+        private void lvTimeline_MouseMove(object? sender, MouseEventArgs e)
+        {
+            if (!isTimelineRangeDragging) return;
+
+            int edgeMargin = 18;
+            timelineDragEdgeDirection = e.X >= lvTimeline.ClientSize.Width - edgeMargin
+                ? 1
+                : e.X <= edgeMargin
+                    ? -1
+                    : 0;
+
+            if (timelineDragEdgeDirection == 0)
+            {
+                timelineDragTimer.Stop();
+            }
+            else if (!timelineDragTimer.Enabled)
+            {
+                timelineDragTimer.Start();
+            }
+
+            int x = Math.Clamp(e.X, 0, Math.Max(0, lvTimeline.ClientSize.Width - 1));
+            int y = Math.Clamp(e.Y, 0, Math.Max(0, lvTimeline.ClientSize.Height - 1));
+            ListViewItem? item = lvTimeline.GetItemAt(x, y);
+            if (item?.Tag is int frameIndex)
+            {
+                if (!hasTimelineRangeDragMoved && frameIndex == timelineDragStartIndex) return;
+
+                hasTimelineRangeDragMoved = true;
+                UpdateTimelineDragRange(frameIndex);
+            }
+        }
+
+        private void lvTimeline_MouseUp(object? sender, MouseEventArgs e)
+        {
+            int clickedIndex = timelineDragStartIndex;
+            bool shouldShowFrame = isTimelineRangeDragging && !hasTimelineRangeDragMoved;
+            StopTimelineRangeDrag();
+
+            if (shouldShowFrame && clickedIndex >= 0)
+            {
+                ClearRangeForSingleFrameNavigation();
+                ShowFrame(clickedIndex);
+            }
+        }
+
+        private void lvTimeline_MouseLeave(object? sender, EventArgs e)
+        {
+            if (!isTimelineRangeDragging)
+            {
+                timelineDragEdgeDirection = 0;
+                timelineDragTimer.Stop();
+            }
+        }
+
+        private void timelineDragTimer_Tick(object? sender, EventArgs e)
+        {
+            if (!isTimelineRangeDragging || !hasTimelineRangeDragMoved || timelineDragEdgeDirection == 0) return;
+
+            int nextIndex = Math.Clamp(timelineDragCurrentIndex + timelineDragEdgeDirection, 0, tubFrames.Count - 1);
+            if (nextIndex == timelineDragCurrentIndex) return;
+
+            UpdateTimelineDragRange(nextIndex);
+            UpdateTimelineForFrame(nextIndex);
+        }
+
+        private void StopTimelineRangeDrag()
+        {
+            if (!isTimelineRangeDragging) return;
+
+            isTimelineRangeDragging = false;
+            timelineDragEdgeDirection = 0;
+            timelineDragTimer.Stop();
+            lvTimeline.Capture = false;
+            if (hasTimelineRangeDragMoved)
+            {
+                ApplyTimelineRangeSelection();
+            }
+        }
+
+        private void UpdateTimelineDragRange(int currentIndex)
+        {
+            timelineDragCurrentIndex = Math.Clamp(currentIndex, 0, tubFrames.Count - 1);
+            rangeStart = timelineDragStartIndex;
+            rangeEnd = timelineDragCurrentIndex;
+            rangeSelectionOrigin = RangeSelectionOrigin.TimelineDrag;
+            UpdateRangeLabel();
+            ApplyTimelineRangeSelection();
+        }
+
+        private void ApplyTimelineRangeSelection()
+        {
+            if (lvTimeline.Items.Count == 0) return;
+
+            isUpdatingTimelineSelection = true;
+            try
+            {
+                if (rangeStart < 0 && rangeEnd < 0)
+                {
+                    foreach (ListViewItem item in lvTimeline.Items) item.Selected = false;
+                    return;
+                }
+
+                (int lo, int hi) = GetEffectiveRange();
+                foreach (ListViewItem item in lvTimeline.Items)
+                {
+                    if (item.Tag is not int frameIndex) continue;
+                    item.Selected = frameIndex >= lo && frameIndex <= hi;
+                    item.Focused = frameIndex == timelineDragCurrentIndex;
+                }
+
+                int visibleIndex = timelineDragCurrentIndex - currentTimelineStart;
+                if (visibleIndex >= 0 && visibleIndex < lvTimeline.Items.Count)
+                {
+                    lvTimeline.Items[visibleIndex].EnsureVisible();
+                }
+            }
+            finally
+            {
+                isUpdatingTimelineSelection = false;
+            }
+        }
+
+        private void ClearRangeSelection()
+        {
+            rangeStart = -1;
+            rangeEnd = -1;
+            rangeSelectionOrigin = RangeSelectionOrigin.None;
+            timelineDragStartIndex = -1;
+            timelineDragCurrentIndex = -1;
+            hasTimelineRangeDragMoved = false;
+            UpdateRangeLabel();
+        }
+
+        private void ClearRangeForSingleFrameNavigation()
+        {
+            if (rangeSelectionOrigin == RangeSelectionOrigin.TimelineDrag)
+            {
+                ClearRangeSelection();
+                return;
+            }
+
+            if (rangeSelectionOrigin == RangeSelectionOrigin.ManualButton && rangeStart >= 0 && rangeEnd >= 0)
+            {
+                ClearRangeSelection();
+            }
+        }
+
+        private void ShowFrame(int index, bool syncFrameListSelection = true, bool syncTimelineSelection = true)
         {
             if (index < 0 || index >= tubFrames.Count) return;
 
             TubFrame frame = tubFrames[index];
 
-            lstFrames.SelectedIndexChanged -= lstFrames_SelectedIndexChanged;
-            lstFrames.SelectedIndex = index;
-            lstFrames.SelectedIndexChanged += lstFrames_SelectedIndexChanged;
+            if (syncFrameListSelection)
+            {
+                lstFrames.SelectedIndexChanged -= lstFrames_SelectedIndexChanged;
+                if (index < lstFrames.Items.Count)
+                {
+                    lstFrames.ClearSelected();
+                    lstFrames.SetSelected(index, true);
+                }
+                lstFrames.SelectedIndexChanged += lstFrames_SelectedIndexChanged;
+            }
 
             trackFrame.Value = index;
             UpdateTimelineForFrame(index);
 
             int timelineItemIndex = index - currentTimelineStart;
-            if (timelineItemIndex >= 0 && timelineItemIndex < lvTimeline.Items.Count)
+            if (syncTimelineSelection && timelineItemIndex >= 0 && timelineItemIndex < lvTimeline.Items.Count)
             {
                 isUpdatingTimelineSelection = true;
+                foreach (ListViewItem item in lvTimeline.Items) item.Selected = false;
                 lvTimeline.Items[timelineItemIndex].Selected = true;
                 lvTimeline.Items[timelineItemIndex].Focused = true;
                 lvTimeline.Items[timelineItemIndex].EnsureVisible();
@@ -1110,7 +1632,29 @@ namespace DataManager
             if (!File.Exists(frame.ImagePath)) missingImageFrames.Add(index);
 
             UpdateFrameInfoLabels(frame, index);
+            UpdatePredictionResultLabels(frame);
             picFrame.Invalidate();
+        }
+
+
+        private void btnDisconnect_Click(object? sender, EventArgs e)
+        {
+            if (rdoRemote.Checked)
+            {
+                DialogResult result = MessageBox.Show($"현재 접속 중인 원격 서버의 연결을 끊고 로컬 모드로 전환하시겠습니까?", "로그아웃", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+                if (result == DialogResult.Yes)
+                {
+                    _isUpdatingRadio = true;
+                    rdoLocal.Checked = true;
+                    _executor.Stop();
+                    _executor = new ICE.LocalExecutor();
+                    _isUpdatingRadio = false;
+
+                    loggedInUser = "";
+                    if (lblUser2 != null) { lblUser2.Text = "없음"; lblUser2.ForeColor = Color.Black; }
+                    UpdateStatusLabel("로컬 대기중", Color.Black);
+                }
+            }
         }
 
         private void picFrame_Paint(object? sender, PaintEventArgs e)
@@ -1125,12 +1669,12 @@ namespace DataManager
             TubFrame frame = tubFrames[trackFrame.Value];
             if (chkShowRealAngle.Checked)
             {
-                DrawSteeringAngleLine(e.Graphics, imageRect, frame.Angle, Color.LimeGreen, "실제");
+                DrawSteeringAngleLine(e.Graphics, imageRect, frame.Angle, Color.LimeGreen, "실제", 1.0f, -1);
             }
 
             if (chkShowPredictAngle.Checked && TryGetPredictedAngleForFrame(frame, out double framePredictAngle))
             {
-                DrawSteeringAngleLine(e.Graphics, imageRect, framePredictAngle, Color.DeepSkyBlue, "예측");
+                DrawSteeringAngleLine(e.Graphics, imageRect, framePredictAngle, Color.DeepSkyBlue, "예측", 0.72f, 1);
             }
         }
 
@@ -1157,12 +1701,12 @@ namespace DataManager
             }
         }
 
-        private static void DrawSteeringAngleLine(Graphics graphics, Rectangle imageRect, double angle, Color color, string label)
+        private static void DrawSteeringAngleLine(Graphics graphics, Rectangle imageRect, double angle, Color color, string label, float lengthScale, int labelSide)
         {
             double clampedAngle = Math.Clamp(angle, -1.0, 1.0);
             PointF start = new PointF(imageRect.Left + imageRect.Width / 2f, imageRect.Bottom - imageRect.Height * 0.12f);
-            float lineLength = imageRect.Height * 0.45f;
-            float endX = start.X + (float)(clampedAngle * imageRect.Width * 0.35);
+            float lineLength = imageRect.Height * 0.45f * lengthScale;
+            float endX = start.X + (float)(clampedAngle * imageRect.Width * 0.35 * lengthScale);
             float endY = start.Y - lineLength;
             PointF end = new PointF(endX, endY);
 
@@ -1185,7 +1729,11 @@ namespace DataManager
             using Font font = new Font("나눔고딕", 9F, FontStyle.Bold);
             string text = $"{label} {angle:0.000}";
             SizeF textSize = graphics.MeasureString(text, font);
-            RectangleF labelRect = new RectangleF(end.X + 8, end.Y - textSize.Height / 2, textSize.Width + 8, textSize.Height + 4);
+            float labelX = labelSide < 0 ? end.X - textSize.Width - 16 : end.X + 8;
+            float labelY = end.Y - textSize.Height / 2 + (labelSide > 0 ? textSize.Height + 6 : -textSize.Height - 6);
+            labelX = Math.Clamp(labelX, imageRect.Left + 4, imageRect.Right - textSize.Width - 12);
+            labelY = Math.Clamp(labelY, imageRect.Top + 4, imageRect.Bottom - textSize.Height - 8);
+            RectangleF labelRect = new RectangleF(labelX, labelY, textSize.Width + 8, textSize.Height + 4);
             graphics.FillRectangle(textBack, labelRect);
             graphics.DrawString(text, font, textBrush, labelRect.Left + 4, labelRect.Top + 2);
         }
@@ -1404,6 +1952,7 @@ namespace DataManager
             picDataGraph.SizeMode = PictureBoxSizeMode.StretchImage;
             picDataGraph.Resize += (_, _) => RedrawGraphAfterLayout();
             picDataGraph.MouseMove += picDataGraph_MouseMove;
+            picDataGraph.MouseClick += picDataGraph_MouseClick;
             picDataGraph.MouseLeave += (_, _) => lblGraphHover.Visible = false;
 
             // 그래프 위에 마우스를 올렸을 때 현재 프레임 값을 작은 정보창으로 표시한다.
@@ -1579,17 +2128,14 @@ namespace DataManager
 
         private void picDataGraph_MouseMove(object? sender, MouseEventArgs e)
         {
-            if (graphVisibleFrames.Count == 0 || graphPlotBounds == Rectangle.Empty || !graphPlotBounds.Contains(e.Location))
+            TubFrame? frame = GetGraphFrameAt(e.Location);
+            if (frame == null)
             {
                 lblGraphHover.Visible = false;
+                picDataGraph.Cursor = Cursors.Default;
                 return;
             }
 
-            double ratio = (e.X - graphPlotBounds.Left) / (double)Math.Max(1, graphPlotBounds.Width);
-            int frameIndex = (int)Math.Round(ratio * (graphVisibleFrames.Count - 1));
-            frameIndex = Math.Clamp(frameIndex, 0, graphVisibleFrames.Count - 1);
-
-            TubFrame frame = graphVisibleFrames[frameIndex];
             lblGraphHover.Text = $"프레임 {frame.FrameNumber:D6}\n조향각 {frame.Angle:0.000}\n속도 {frame.Throttle:0.000}";
 
             int x = Math.Min(e.X + 14, picDataGraph.ClientSize.Width - lblGraphHover.Width - 8);
@@ -1597,6 +2143,39 @@ namespace DataManager
             lblGraphHover.Location = new Point(Math.Max(8, x), Math.Max(8, y));
             lblGraphHover.Visible = true;
             lblGraphHover.BringToFront();
+            picDataGraph.Cursor = Cursors.Hand;
+        }
+
+        private void picDataGraph_MouseClick(object? sender, MouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Left) return;
+
+            TubFrame? frame = GetGraphFrameAt(e.Location);
+            if (frame == null) return;
+
+            int tubIndex = tubFrames.IndexOf(frame);
+            if (tubIndex < 0)
+            {
+                tubIndex = tubFrames.FindIndex(item => item.FrameNumber == frame.FrameNumber);
+            }
+
+            if (tubIndex >= 0)
+            {
+                ShowFrame(tubIndex);
+            }
+        }
+
+        private TubFrame? GetGraphFrameAt(Point location)
+        {
+            if (graphVisibleFrames.Count == 0 || graphPlotBounds == Rectangle.Empty || !graphPlotBounds.Contains(location))
+            {
+                return null;
+            }
+
+            double ratio = (location.X - graphPlotBounds.Left) / (double)Math.Max(1, graphPlotBounds.Width);
+            int frameIndex = (int)Math.Round(ratio * (graphVisibleFrames.Count - 1));
+            frameIndex = Math.Clamp(frameIndex, 0, graphVisibleFrames.Count - 1);
+            return graphVisibleFrames[frameIndex];
         }
 
         private static void DrawCenteredGraphMessage(Graphics graphics, Size size, string message)
@@ -1609,8 +2188,24 @@ namespace DataManager
         }
 
         private void AddLog(string message) => txtLog.AppendText(Environment.NewLine + message);
-        private void lstFrames_SelectedIndexChanged(object sender, EventArgs e) => ShowFrame(lstFrames.SelectedIndex);
-        private void lvTimeline_SelectedIndexChanged(object sender, EventArgs e) { if (!isUpdatingTimelineSelection && lvTimeline.SelectedItems.Count > 0 && lvTimeline.SelectedItems[0].Tag is int index) ShowFrame(index); }
+        private void lstFrames_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            ClearRangeForSingleFrameNavigation();
+            if (lstFrames.SelectedIndex >= 0)
+            {
+                ShowFrame(lstFrames.SelectedIndex, syncFrameListSelection: false);
+            }
+        }
+
+        private void lvTimeline_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            if (isUpdatingTimelineSelection || isTimelineRangeDragging) return;
+            if (lvTimeline.SelectedItems.Count > 0 && lvTimeline.SelectedItems[0].Tag is int index)
+            {
+                ClearRangeForSingleFrameNavigation();
+                ShowFrame(index);
+            }
+        }
         private void trackFrame_Scroll(object sender, EventArgs e) => ShowFrame(trackFrame.Value);
         private void btnFirst_Click(object? sender, EventArgs e) { int i = FirstActiveIndex(); if (i >= 0) ShowFrame(i); }
         private void btnPrev_Click(object? sender, EventArgs e) { int i = PrevActiveIndex(trackFrame.Value); if (i >= 0) ShowFrame(i); }
@@ -1711,6 +2306,62 @@ namespace DataManager
             lstFrames.Items[index] = tubFrames[index];
         }
 
+        // 휴지통(CheckedListBox) 드래그 다중 체크 상태
+        private bool trashDragging;
+        private bool trashDragTargetState;
+        private int trashDragLastIndex = -1;
+
+        private void LstTrash_MouseDown(object? sender, MouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Left) return;
+            int index = lstTrash.IndexFromPoint(e.Location);
+            if (index < 0 || index >= lstTrash.Items.Count) { trashDragging = false; return; }
+
+            bool newState = !lstTrash.GetItemChecked(index);
+            lstTrash.SetItemChecked(index, newState);
+            trashDragTargetState = newState;
+            trashDragLastIndex = index;
+            trashDragging = true;
+        }
+
+        private void LstTrash_MouseMove(object? sender, MouseEventArgs e)
+        {
+            if (!trashDragging || (e.Button & MouseButtons.Left) == 0) return;
+            int index = lstTrash.IndexFromPoint(e.Location);
+            if (index < 0 || index >= lstTrash.Items.Count) return;
+            ApplyTrashDragTo(index);
+        }
+
+        // 오토스크롤(커서를 가장자리에 두면 리스트가 자동으로 스크롤되는 동작) 시에는
+        // 실제 마우스 이동이 없어서 MouseMove가 안 오고, native SelectionMode.One 로직이
+        // SelectedIndex만 갱신한다. 따라서 SelectedIndexChanged도 같이 후킹해 드래그를 따라가게 한다.
+        private void LstTrash_SelectedIndexChanged(object? sender, EventArgs e)
+        {
+            if (!trashDragging) return;
+            int index = lstTrash.SelectedIndex;
+            if (index < 0) return;
+            ApplyTrashDragTo(index);
+        }
+
+        // 드래그 중 인덱스가 점프(빠른 드래그/오토스크롤)할 때 마지막 위치~현재 위치 사이를 일괄 적용.
+        private void ApplyTrashDragTo(int index)
+        {
+            if (index == trashDragLastIndex) return;
+            int start = Math.Min(trashDragLastIndex, index);
+            int end = Math.Max(trashDragLastIndex, index);
+            for (int i = start; i <= end; i++)
+            {
+                lstTrash.SetItemChecked(i, trashDragTargetState);
+            }
+            trashDragLastIndex = index;
+        }
+
+        private void LstTrash_MouseUp(object? sender, MouseEventArgs e)
+        {
+            trashDragging = false;
+            trashDragLastIndex = -1;
+        }
+
         // ==========================================
         // 6. 데이터 필터링 (범위 지정 + 조건 필터)
         // ==========================================
@@ -1718,6 +2369,7 @@ namespace DataManager
         {
             if (tubFrames.Count == 0) return;
             rangeStart = trackFrame.Value;
+            rangeSelectionOrigin = RangeSelectionOrigin.ManualButton;
             UpdateRangeLabel();
         }
 
@@ -1725,6 +2377,7 @@ namespace DataManager
         {
             if (tubFrames.Count == 0) return;
             rangeEnd = trackFrame.Value;
+            rangeSelectionOrigin = RangeSelectionOrigin.ManualButton;
             UpdateRangeLabel();
         }
 
@@ -1850,7 +2503,8 @@ namespace DataManager
             if (tubFrames.Count == 0) return;
 
             int moved = 0;
-            if (rangeStart >= 0 || rangeEnd >= 0)
+            bool usedRange = rangeStart >= 0 || rangeEnd >= 0;
+            if (usedRange)
             {
                 (int lo, int hi) = GetEffectiveRange();
                 DialogResult res = MessageBox.Show($"범위 {lo}~{hi}의 프레임을 휴지통으로 이동하시겠습니까?", "삭제", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
@@ -1862,29 +2516,45 @@ namespace DataManager
             }
             else
             {
-                int index = lstFrames.SelectedIndex;
-                if (index < 0)
+                // SelectedIndices는 라이브 컬렉션이라, MoveToTrash → RefreshFrameListItem의
+                // lstFrames.Items[i] 재대입이 해당 인덱스의 선택을 해제(앵커는 제외)한다.
+                // 그 결과 라이브 컬렉션 그대로 순회하면 일부 항목이 누락되므로 스냅샷으로 떠서 순회한다.
+                List<int> indices = new List<int>();
+                foreach (int idx in lstFrames.SelectedIndices) indices.Add(idx);
+                if (indices.Count == 0)
                 {
                     MessageBox.Show("삭제할 프레임을 목록에서 선택하거나 [시작 지정]/[끝 지정]으로 범위를 정하세요.", "삭제", MessageBoxButtons.OK, MessageBoxIcon.Information);
                     return;
                 }
-                if (MoveToTrash(index, "수동 삭제")) moved++;
+                if (indices.Count > 1)
+                {
+                    DialogResult res = MessageBox.Show($"선택한 {indices.Count}개 프레임을 휴지통으로 이동하시겠습니까?", "삭제", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+                    if (res == DialogResult.No) return;
+                }
+                foreach (int index in indices)
+                {
+                    if (MoveToTrash(index, "수동 삭제")) moved++;
+                }
             }
 
             RebuildTrashList();
             RenderTubGraph();
+            if (usedRange && moved > 0)
+            {
+                ClearRangeSelection();
+            }
             AddLog($"{moved}개 프레임을 휴지통으로 이동했습니다.");
         }
 
         private void btnRestore_Click(object? sender, EventArgs e)
         {
-            if (lstTrash.SelectedItems.Count == 0)
+            if (lstTrash.CheckedItems.Count == 0)
             {
-                MessageBox.Show("복원할 항목을 휴지통 목록에서 선택하세요.", "복원", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show("복원할 항목을 휴지통 목록에서 체크하세요.", "복원", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
 
-            List<TrashEntry> selected = lstTrash.SelectedItems.Cast<TrashEntry>().ToList();
+            List<TrashEntry> selected = lstTrash.CheckedItems.Cast<TrashEntry>().ToList();
             foreach (TrashEntry entry in selected) RestoreFromTrash(entry.Frame);
             RebuildTrashList();
             RenderTubGraph();
@@ -2181,7 +2851,9 @@ namespace DataManager
 
         private void picFrame_Click(object sender, EventArgs e)
         {
+            if (!suppressNextFrameClick) return;
 
+            suppressNextFrameClick = false;
         }
     }
 }

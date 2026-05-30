@@ -57,7 +57,7 @@
             btnEmptyTrash = new Button();
             btnRestore = new Button();
             btnReloadTub = new Button();
-            lstTrash = new ListBox();
+            lstTrash = new CheckedListBox();
             btnDelete = new Button();
             chkAbnormalAngle = new CheckBox();
             chkMissingImage = new CheckBox();
@@ -497,7 +497,7 @@
             lstTrash.Location = new Point(550, 58);
             lstTrash.Margin = new Padding(4);
             lstTrash.Name = "lstTrash";
-            lstTrash.Size = new Size(346, 172);
+            lstTrash.Size = new Size(224, 90);
             lstTrash.TabIndex = 15;
             // 
             // btnDelete
@@ -1414,7 +1414,7 @@
         private Button btnEmptyTrash;
         private Button btnRestore;
         private Button btnReloadTub;
-        private ListBox lstTrash;
+        private CheckedListBox lstTrash;
         private Button btnDelete;
         private CheckBox chkAbnormalAngle;
         private CheckBox chkMissingImage;
