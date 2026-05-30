@@ -30,8 +30,8 @@ Tub 데이터 불러오기, 프레임 탐색, 데이터 필터링, 학습 실행
 - Framework: .NET / Windows Forms
 - AI Framework: DonkeyCar
 - Remote: SSH.NET
-- Data Format: catalog_.catalog / record_.json
-- Model Format: .h5
+- Data Format: `catalog_*.catalog` / `record_*.json`
+- Model Format: `.h5`
 - OS: Windows / Ubuntu
 
 -----------------------------------------------------------------------------------------------------------------------------------
