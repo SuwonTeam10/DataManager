@@ -2306,30 +2306,59 @@ namespace DataManager
             lstFrames.Items[index] = tubFrames[index];
         }
 
-        // 휴지통(CheckedListBox) 드래그 다중 체크 상태
+        // 휴지통(CheckedListBox) 클릭/드래그 상태
+        // - 순수 클릭(이동 없음): 텍스트=미리보기만, 체크박스 글리프=단일 토글
+        // - 드래그(다른 항목으로 이동): 시작 지점과 무관하게 다중 토글
+        private bool trashDragArmed;
         private bool trashDragging;
+        private bool trashDownOnGlyph;
         private bool trashDragTargetState;
+        private int trashDragStartIndex = -1;
         private int trashDragLastIndex = -1;
 
         private void LstTrash_MouseDown(object? sender, MouseEventArgs e)
         {
-            if (e.Button != MouseButtons.Left) return;
+            if (e.Button != MouseButtons.Left) { trashDragArmed = false; trashDragging = false; return; }
             int index = lstTrash.IndexFromPoint(e.Location);
-            if (index < 0 || index >= lstTrash.Items.Count) { trashDragging = false; return; }
+            if (index < 0 || index >= lstTrash.Items.Count) { trashDragArmed = false; trashDragging = false; return; }
 
-            bool newState = !lstTrash.GetItemChecked(index);
-            lstTrash.SetItemChecked(index, newState);
-            trashDragTargetState = newState;
+            // 미리보기: 클릭한 항목의 프레임 이미지를 메인 화면에 표시 (체크 상태 불변)
+            ShowTrashFramePreview(index);
+
+            // 토글은 아직 하지 않고 드래그 가능성만 무장한다. 실제 토글 시점은:
+            //  · 드래그(다른 항목으로 이동)로 확정되면 → 그 범위를 다중 토글 (TrashDragConsider)
+            //  · 순수 클릭이고 체크박스 글리프였으면 → MouseUp에서 단일 토글
+            //  · 순수 클릭이고 텍스트였으면 → 토글 없음(미리보기만)
+            trashDragArmed = true;
+            trashDragging = false;
+            trashDragStartIndex = index;
             trashDragLastIndex = index;
-            trashDragging = true;
+            trashDownOnGlyph = IsOnTrashCheckbox(index, e.Location);
+            trashDragTargetState = !lstTrash.GetItemChecked(index);
+        }
+
+        // 휴지통 항목(TrashEntry) → tubFrames 인덱스로 매핑해 메인 화면에 미리보기 표시.
+        private void ShowTrashFramePreview(int trashIndex)
+        {
+            if (trashIndex < 0 || trashIndex >= lstTrash.Items.Count) return;
+            if (lstTrash.Items[trashIndex] is not TrashEntry entry) return;
+            int frameIndex = tubFrames.IndexOf(entry.Frame);
+            if (frameIndex >= 0) ShowFrame(frameIndex);
+        }
+
+        // 클릭 위치가 좌측 체크박스 글리프 영역인지 근사 판정(글리프 폭을 ItemHeight로 근사, DPI/폰트 비례).
+        private bool IsOnTrashCheckbox(int index, Point location)
+        {
+            Rectangle item = lstTrash.GetItemRectangle(index);
+            return location.X <= item.Left + lstTrash.ItemHeight;
         }
 
         private void LstTrash_MouseMove(object? sender, MouseEventArgs e)
         {
-            if (!trashDragging || (e.Button & MouseButtons.Left) == 0) return;
+            if (!trashDragArmed || (e.Button & MouseButtons.Left) == 0) return;
             int index = lstTrash.IndexFromPoint(e.Location);
             if (index < 0 || index >= lstTrash.Items.Count) return;
-            ApplyTrashDragTo(index);
+            TrashDragConsider(index);
         }
 
         // 오토스크롤(커서를 가장자리에 두면 리스트가 자동으로 스크롤되는 동작) 시에는
@@ -2337,9 +2366,24 @@ namespace DataManager
         // SelectedIndex만 갱신한다. 따라서 SelectedIndexChanged도 같이 후킹해 드래그를 따라가게 한다.
         private void LstTrash_SelectedIndexChanged(object? sender, EventArgs e)
         {
-            if (!trashDragging) return;
+            if (!trashDragArmed) return;
+            // 좌클릭이 눌린 상태(드래그/오토스크롤)에서만 드래그로 간주. 키보드 탐색 등은 무장 해제.
+            if ((MouseButtons & MouseButtons.Left) == 0) { trashDragArmed = false; return; }
             int index = lstTrash.SelectedIndex;
             if (index < 0) return;
+            TrashDragConsider(index);
+        }
+
+        // 무장된 상태에서 인덱스가 시작 지점과 달라지면 '드래그'로 확정하고, 시작~현재 범위를 일괄 토글한다.
+        // (같은 항목에 머무르면 아직 클릭으로 간주 — 토글하지 않음)
+        private void TrashDragConsider(int index)
+        {
+            if (!trashDragging)
+            {
+                if (index == trashDragStartIndex) return;   // 이동 없음 → 클릭
+                trashDragging = true;                        // 다른 항목으로 이동 → 드래그 확정
+                trashDragLastIndex = trashDragStartIndex;     // 시작 항목도 포함해서 칠한다
+            }
             ApplyTrashDragTo(index);
         }
 
@@ -2358,6 +2402,13 @@ namespace DataManager
 
         private void LstTrash_MouseUp(object? sender, MouseEventArgs e)
         {
+            // 순수 클릭(드래그 아님)에서 체크박스 글리프를 눌렀다면 단일 토글한다.
+            if (trashDragArmed && !trashDragging && trashDownOnGlyph
+                && trashDragStartIndex >= 0 && trashDragStartIndex < lstTrash.Items.Count)
+            {
+                lstTrash.SetItemChecked(trashDragStartIndex, trashDragTargetState);
+            }
+            trashDragArmed = false;
             trashDragging = false;
             trashDragLastIndex = -1;
         }
