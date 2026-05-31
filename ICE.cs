@@ -54,6 +54,53 @@ namespace DataManager
                 string ensureEnvCmd = $"{venvCmd}pip install -q imgaug 'numpy<2.0'";
                 string findTubsCmd = "if [ -f data/manifest.json ]; then DIR='data/'; elif [ -f data/data3/manifest.json ]; then DIR='data/data3/'; elif [ -f data3/manifest.json ]; then DIR='data3/'; else DIR='data/'; fi";
                 string ensureModelsDirCmd = "mkdir -p models";
+                string resizePyCode =
+                    "import os, shutil, sys\n" +
+                    "from PIL import Image\n" +
+                    "marker='/tmp/datamanager_train_dir.txt'\n" +
+                    "src_arg=next((p for p in ['data/', 'data/data3/', 'data3/'] if os.path.isfile(os.path.join(p, 'manifest.json'))), 'data/')\n" +
+                    "dst_arg='.datamanager_train_160x120'\n" +
+                    "if not src_arg or not dst_arg:\n" +
+                    "  print(f'[Resize Error] resize path missing. src={src_arg!r}, dst={dst_arg!r}', flush=True)\n" +
+                    "  sys.exit(1)\n" +
+                    "src=os.path.abspath(src_arg)\n" +
+                    "dst=os.path.abspath(dst_arg)\n" +
+                    "target=(160,120)\n" +
+                    "resample=getattr(getattr(Image, 'Resampling', Image), 'LANCZOS', Image.BICUBIC)\n" +
+                    "large=[]\n" +
+                    "checked=0\n" +
+                    "for root, dirs, files in os.walk(src):\n" +
+                    "  for name in files:\n" +
+                    "    if not name.lower().endswith(('.jpg','.jpeg','.png','.bmp')): continue\n" +
+                    "    path=os.path.join(root,name)\n" +
+                    "    checked+=1\n" +
+                    "    try:\n" +
+                    "      with Image.open(path) as img:\n" +
+                    "        if img.width > target[0] or img.height > target[1]:\n" +
+                    "          large.append(os.path.relpath(path, src))\n" +
+                    "    except Exception as e:\n" +
+                    "      print(f'[Resize Warning] {path}: {e}', flush=True)\n" +
+                    "if not large:\n" +
+                    "  open(marker, 'w').write(src_arg)\n" +
+                    "  print(f'[Resize] no images larger than 160x120. train with original tub. checked={checked}', flush=True)\n" +
+                    "  sys.exit(0)\n" +
+                    "if os.path.exists(dst): shutil.rmtree(dst)\n" +
+                    "shutil.copytree(src, dst)\n" +
+                    "resized=0\n" +
+                    "for rel in large:\n" +
+                    "  path=os.path.join(dst, rel)\n" +
+                    "  try:\n" +
+                    "    with Image.open(path) as img:\n" +
+                    "      img=img.convert('RGB').resize(target, resample)\n" +
+                    "      img.save(path)\n" +
+                    "      resized+=1\n" +
+                    "  except Exception as e:\n" +
+                    "    print(f'[Resize Warning] {path}: {e}', flush=True)\n" +
+                    "open(marker, 'w').write(dst_arg)\n" +
+                    "print(f'[Resize] created training tub copy: {dst} / checked={checked} / resized={resized}', flush=True)\n";
+                string resizeBase64Code = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(resizePyCode));
+                // 학습 전 이미지 크기를 검사하고, 160x120 초과 이미지가 있을 때만 학습용 tub 복사본을 만듭니다.
+                string resizeTrainTubCmd = $"echo {resizeBase64Code} | base64 -d > /tmp/resize_tub_for_training.py && {venvCmd}python -u /tmp/resize_tub_for_training.py && DIR=$(cat /tmp/datamanager_train_dir.txt) && rm /tmp/resize_tub_for_training.py /tmp/datamanager_train_dir.txt";
 
                 // ★ 과거에 새겨진 100번 강제 문신(찌꺼기)을 지워서 원래의 '조기 종료'로 원상복구!
                 string cleanConfigCmd = "if [ -f myconfig.py ]; then sed -i '/EARLY_STOP_PATIENCE/d' myconfig.py; fi";
@@ -61,7 +108,7 @@ namespace DataManager
                 // ★ docopt 에러 방지를 위해 등호(=)와 따옴표 명시적 추가 완료!
                 string trainCmd = $"{venvCmd}python -u train.py --tubs=\"$DIR\" --model=\"models/mypilot.h5\" && echo '---TRAINING_COMPLETE---'";
 
-                string fullCmd = $"cd '{wslPath}' && {patchCmd} && {ensureEnvCmd} && {findTubsCmd} && {ensureModelsDirCmd} && {cleanConfigCmd} && {trainCmd}";
+                string fullCmd = $"cd '{wslPath}' && {patchCmd} && {ensureEnvCmd} && {findTubsCmd} && {resizeTrainTubCmd} && {ensureModelsDirCmd} && {cleanConfigCmd} && {trainCmd}";
 
                 RunProcess("wsl", $"bash -ic \"{fullCmd}\"", onLogReceived);
             }
@@ -184,13 +231,60 @@ namespace DataManager
                 string ensureEnvCmd = $"{venvCmd}pip install -q imgaug \"numpy<2.0\"";
                 string findTubsCmd = "if [ -f data/manifest.json ]; then DIR=\"data/\"; elif [ -f data/data3/manifest.json ]; then DIR=\"data/data3/\"; elif [ -f data3/manifest.json ]; then DIR=\"data3/\"; else DIR=\"data/\"; fi";
                 string ensureModelsDirCmd = "mkdir -p models";
+                string resizePyCode =
+                    "import os, shutil, sys\n" +
+                    "from PIL import Image\n" +
+                    "marker='/tmp/datamanager_train_dir.txt'\n" +
+                    "src_arg=next((p for p in ['data/', 'data/data3/', 'data3/'] if os.path.isfile(os.path.join(p, 'manifest.json'))), 'data/')\n" +
+                    "dst_arg='.datamanager_train_160x120'\n" +
+                    "if not src_arg or not dst_arg:\n" +
+                    "  print(f'[Resize Error] resize path missing. src={src_arg!r}, dst={dst_arg!r}', flush=True)\n" +
+                    "  sys.exit(1)\n" +
+                    "src=os.path.abspath(src_arg)\n" +
+                    "dst=os.path.abspath(dst_arg)\n" +
+                    "target=(160,120)\n" +
+                    "resample=getattr(getattr(Image, 'Resampling', Image), 'LANCZOS', Image.BICUBIC)\n" +
+                    "large=[]\n" +
+                    "checked=0\n" +
+                    "for root, dirs, files in os.walk(src):\n" +
+                    "  for name in files:\n" +
+                    "    if not name.lower().endswith(('.jpg','.jpeg','.png','.bmp')): continue\n" +
+                    "    path=os.path.join(root,name)\n" +
+                    "    checked+=1\n" +
+                    "    try:\n" +
+                    "      with Image.open(path) as img:\n" +
+                    "        if img.width > target[0] or img.height > target[1]:\n" +
+                    "          large.append(os.path.relpath(path, src))\n" +
+                    "    except Exception as e:\n" +
+                    "      print(f'[Resize Warning] {path}: {e}', flush=True)\n" +
+                    "if not large:\n" +
+                    "  open(marker, 'w').write(src_arg)\n" +
+                    "  print(f'[Resize] no images larger than 160x120. train with original tub. checked={checked}', flush=True)\n" +
+                    "  sys.exit(0)\n" +
+                    "if os.path.exists(dst): shutil.rmtree(dst)\n" +
+                    "shutil.copytree(src, dst)\n" +
+                    "resized=0\n" +
+                    "for rel in large:\n" +
+                    "  path=os.path.join(dst, rel)\n" +
+                    "  try:\n" +
+                    "    with Image.open(path) as img:\n" +
+                    "      img=img.convert('RGB').resize(target, resample)\n" +
+                    "      img.save(path)\n" +
+                    "      resized+=1\n" +
+                    "  except Exception as e:\n" +
+                    "    print(f'[Resize Warning] {path}: {e}', flush=True)\n" +
+                    "open(marker, 'w').write(dst_arg)\n" +
+                    "print(f'[Resize] created training tub copy: {dst} / checked={checked} / resized={resized}', flush=True)\n";
+                string resizeBase64Code = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(resizePyCode));
+                // 학습 전 이미지 크기를 검사하고, 160x120 초과 이미지가 있을 때만 학습용 tub 복사본을 만듭니다.
+                string resizeTrainTubCmd = $"echo {resizeBase64Code} | base64 -d > /tmp/resize_tub_for_training.py && {venvCmd}python -u /tmp/resize_tub_for_training.py && DIR=$(cat /tmp/datamanager_train_dir.txt) && rm /tmp/resize_tub_for_training.py /tmp/datamanager_train_dir.txt";
 
                 string cleanConfigCmd = "if [ -f myconfig.py ]; then sed -i '/EARLY_STOP_PATIENCE/d' myconfig.py; fi";
 
                 // ★ docopt 에러 방지를 위해 등호(=)와 따옴표 명시적 추가 완료!
                 string trainCmd = $"{venvCmd}python -u train.py --tubs=\"$DIR\" --model=\"models/mypilot.h5\" && echo '---TRAINING_COMPLETE---'";
 
-                RunRemoteCommand(path, $"{patchCmd} && {ensureEnvCmd} && {findTubsCmd} && {ensureModelsDirCmd} && {cleanConfigCmd} && {trainCmd}", onLogReceived);
+                RunRemoteCommand(path, $"{patchCmd} && {ensureEnvCmd} && {findTubsCmd} && {resizeTrainTubCmd} && {ensureModelsDirCmd} && {cleanConfigCmd} && {trainCmd}", onLogReceived);
             }
 
             public void ExecuteTest(string path, string modelPath, string testPath, bool useVenv, Action<string> onLogReceived)
