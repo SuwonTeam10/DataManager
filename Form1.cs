@@ -44,8 +44,8 @@ namespace DataManager
         private readonly ImageList timelineImages = new();
         private const int TimelineMinimumVisibleCount = 20;
         private const int TimelineMaximumVisibleCount = 60;
-        private const int TimelineThumbWidth = 48;
-        private const int TimelineThumbHeight = 36;
+        private const int TimelineThumbWidth = 140;
+        private const int TimelineThumbHeight = 105;
         private const int TimelineIconSpacingX = 56;
         private const int TimelineIconSpacingY = 44;
         private const int PlaybackBaseIntervalMs = 100;
@@ -139,7 +139,7 @@ namespace DataManager
             tabMain.SelectedIndexChanged += tabMain_SelectedIndexChanged;
             Resize += (_, _) =>
             {
-                ArrangeTimelineAndTabs();
+                //ArrangeTimelineAndTabs();
                 RedrawGraphAfterLayout();
             };
             picFrame.Paint += picFrame_Paint;
@@ -171,7 +171,7 @@ namespace DataManager
             lvTimeline.LargeImageList = timelineImages;
             lvTimeline.View = View.LargeIcon;
             lvTimeline.Alignment = ListViewAlignment.Left;
-            lvTimeline.AutoArrange = true;
+            lvTimeline.AutoArrange = false;
             lvTimeline.LabelWrap = false;
             lvTimeline.Scrollable = false;
             lvTimeline.HideSelection = false;
@@ -196,10 +196,10 @@ namespace DataManager
             {
                 // 실행 직후 기본 높이만 데이터 정보 판넬 아래와 맞춘다. 이후에는 사용자가 드래그로 조절한다.
                 navigatorHeight = Math.Max(MinNavigatorHeight, groupDataView.Bottom - groupTubNavigator.Top);
-                ArrangeTimelineAndTabs();
+                //ArrangeTimelineAndTabs();
                 ArrangeCleanerControls();
             };
-            ArrangeTimelineAndTabs();
+            //ArrangeTimelineAndTabs();
             ArrangeCleanerControls();
         }
 
@@ -386,7 +386,7 @@ namespace DataManager
 
             int currentMouseY = PointToClient(Cursor.Position).Y;
             navigatorHeight = resizeStartNavigatorHeight + currentMouseY - resizeStartMouseY;
-            ArrangeTimelineAndTabs();
+            //ArrangeTimelineAndTabs();
         }
 
         private void picFrame_MouseLeave(object? sender, EventArgs e)
@@ -2854,6 +2854,16 @@ namespace DataManager
             if (!suppressNextFrameClick) return;
 
             suppressNextFrameClick = false;
+        }
+
+        private void picFrame_Click_1(object sender, EventArgs e)
+        {
+
+        }
+
+        private void lblTubPath_Click(object sender, EventArgs e)
+        {
+
         }
     }
 }
