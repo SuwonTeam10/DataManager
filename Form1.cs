@@ -674,23 +674,32 @@ namespace DataManager
                 return;
             }
 
+            // ★ 새로 추가된 안전장치: 사용자가 데이터를 열지 않고 학습을 누르는 것을 방지합니다!
+            if (string.IsNullOrEmpty(tubPath))
+            {
+                MessageBox.Show("학습할 Tub 데이터를 먼저 열어주세요!", "데이터 누락", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
             // ★ 로컬/원격 환경에 맞춘 동적 알림창!
             string modeText = rdoRemote.Checked ? "원격 서버" : "로컬(WSL)";
-            DialogResult res = MessageBox.Show($"{modeText}({configPath})에서 AI 모델 학습을 시작하시겠습니까?\n(학습에는 시간이 오래 걸릴 수 있습니다.)", "학습 시작 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+            DialogResult res = MessageBox.Show($"{modeText}({configPath})에서 AI 모델 학습을 시작하시겠습니까?\n\n선택된 데이터: {tubPath}\n(학습에는 시간이 오래 걸릴 수 있습니다.)", "학습 시작 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
             if (res == DialogResult.No) return;
 
             txtLog.AppendText(Environment.NewLine + "[Train] AI 모델 학습을 시작합니다...");
 
             UpdateStatusLabel("학습 중", Color.DarkOrange);
 
-            // ★ 카운트는 버튼 누를 때 한 번만 오르도록 여기서만 처리! (UpdateChartRealTime 안의 카운트 증가 코드는 지워주세요!)
+            // ★ 카운트는 버튼 누를 때 한 번만 오르도록 여기서만 처리! (기존 코드 완벽 유지)
             _trainCount++;
             if (infoTrain != null) infoTrain.Text = $"오늘 학습 시도: {_trainCount}회";
 
             bool useVenv = chkUseVenv != null ? chkUseVenv.Checked : true;
-            _executor.ExecuteTrain(configPath, useVenv, (log) =>
+
+            // ★ 수정된 부분: configPath와 함께 tubPath도 파이썬 스크립트로 쏴줍니다!
+            _executor.ExecuteTrain(configPath, tubPath, useVenv, (log) =>
             {
-                // 프리징 방지를 위해 BeginInvoke 사용
+                // 프리징 방지를 위해 BeginInvoke 사용 (기존 코드 완벽 유지)
                 this.BeginInvoke(new Action(() => { UpdateChartRealTime(log); }));
             });
         }

@@ -9,7 +9,8 @@ namespace DataManager
     {
         public interface ICommandExecutor
         {
-            void ExecuteTrain(string path, bool useVenv, Action<string> onLogReceived);
+            // ★ tubPath 인자 추가
+            void ExecuteTrain(string path, string tubPath, bool useVenv, Action<string> onLogReceived);
             void ExecuteTest(string path, string modelPath, string testPath, bool useVenv, Action<string> onLogReceived);
             void Stop();
             void Cancel();
@@ -25,26 +26,23 @@ namespace DataManager
             private string ConvertToWslPath(string winPath)
             {
                 string wslPath = winPath.Replace("\\", "/");
-
-                // 1. 일반 윈도우 드라이브 경로 처리 (예: C:\data -> /mnt/c/data)
                 if (wslPath.Length >= 2 && wslPath[1] == ':')
                 {
                     wslPath = $"/mnt/{char.ToLower(wslPath[0])}{wslPath.Substring(2)}";
                 }
-                // 2. 윈도우11 WSL 네트워크 경로 처리 (예: \\wsl.localhost\Ubuntu-22.04\home\... -> /home/...)
                 else if (wslPath.StartsWith("//wsl$/") || wslPath.StartsWith("//wsl.localhost/"))
                 {
                     string withoutPrefix = wslPath.Replace("//wsl.localhost/", "").Replace("//wsl$/", "");
                     int firstSlashIndex = withoutPrefix.IndexOf('/');
                     if (firstSlashIndex != -1) wslPath = withoutPrefix.Substring(firstSlashIndex);
                 }
-
                 return wslPath;
             }
 
-            public void ExecuteTrain(string path, bool useVenv, Action<string> onLogReceived)
+            public void ExecuteTrain(string path, string tubPath, bool useVenv, Action<string> onLogReceived)
             {
                 string wslPath = ConvertToWslPath(path);
+                string wslTubPath = ConvertToWslPath(tubPath); // ★ 윈도우 경로를 WSL 경로로 변환
                 string venvCmd = useVenv ? "source ~/.bashrc && conda activate e2e_env && " : "";
 
                 string pyCode = "import donkeycar, os\np=os.path.join(os.path.dirname(donkeycar.__file__), 'pipeline', 'sequence.py')\nif os.path.exists(p):\n  c=open(p).read()\n  c=c.replace('class TfmIterator(Generic[R, XOut, YOut],  SizedIterator[Tuple[XOut, YOut]]):', 'class TfmIterator(SizedIterator):')\n  c=c.replace('class TfmTupleIterator(Generic[X, Y, XOut, YOut],  SizedIterator[Tuple[XOut, YOut]]):', 'class TfmTupleIterator(SizedIterator):')\n  c=c.replace('class BaseTfmIterator_(Generic[XOut, YOut],  SizedIterator[Tuple[XOut, YOut]]):', 'class BaseTfmIterator_(SizedIterator):')\n  open(p,'w').write(c)";
@@ -52,13 +50,14 @@ namespace DataManager
                 string patchCmd = $"echo {base64Code} | base64 -d > /tmp/patch_mro.py && {venvCmd}python -u /tmp/patch_mro.py && rm /tmp/patch_mro.py";
 
                 string ensureEnvCmd = $"{venvCmd}pip install -q imgaug 'numpy<2.0'";
-                string findTubsCmd = "if [ -f data/manifest.json ]; then DIR='data/'; elif [ -f data/data3/manifest.json ]; then DIR='data/data3/'; elif [ -f data3/manifest.json ]; then DIR='data3/'; else DIR='data/'; fi";
                 string ensureModelsDirCmd = "mkdir -p models";
+
+                // ★ 기존 findTubsCmd(하드코딩 추측)는 버리고, 선택한 경로(wslTubPath)를 직접 주입합니다!
                 string resizePyCode =
                     "import os, shutil, sys\n" +
                     "from PIL import Image\n" +
                     "marker='/tmp/datamanager_train_dir.txt'\n" +
-                    "src_arg=next((p for p in ['data/', 'data/data3/', 'data3/'] if os.path.isfile(os.path.join(p, 'manifest.json'))), 'data/')\n" +
+                    $"src_arg='{wslTubPath}'\n" +
                     "dst_arg='.datamanager_train_160x120'\n" +
                     "if not src_arg or not dst_arg:\n" +
                     "  print(f'[Resize Error] resize path missing. src={src_arg!r}, dst={dst_arg!r}', flush=True)\n" +
@@ -98,17 +97,16 @@ namespace DataManager
                     "    print(f'[Resize Warning] {path}: {e}', flush=True)\n" +
                     "open(marker, 'w').write(dst_arg)\n" +
                     "print(f'[Resize] created training tub copy: {dst} / checked={checked} / resized={resized}', flush=True)\n";
+
                 string resizeBase64Code = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(resizePyCode));
-                // 학습 전 이미지 크기를 검사하고, 160x120 초과 이미지가 있을 때만 학습용 tub 복사본을 만듭니다.
                 string resizeTrainTubCmd = $"echo {resizeBase64Code} | base64 -d > /tmp/resize_tub_for_training.py && {venvCmd}python -u /tmp/resize_tub_for_training.py && DIR=$(cat /tmp/datamanager_train_dir.txt) && rm /tmp/resize_tub_for_training.py /tmp/datamanager_train_dir.txt";
 
-                // ★ 과거에 새겨진 100번 강제 문신(찌꺼기)을 지워서 원래의 '조기 종료'로 원상복구!
                 string cleanConfigCmd = "if [ -f myconfig.py ]; then sed -i '/EARLY_STOP_PATIENCE/d' myconfig.py; fi";
 
-                // ★ docopt 에러 방지를 위해 등호(=)와 따옴표 명시적 추가 완료!
+                // ★ docopt 에러 방지를 위해 등호(=)와 따옴표 명시적 추가
                 string trainCmd = $"{venvCmd}python -u train.py --tubs=\"$DIR\" --model=\"models/mypilot.h5\" && echo '---TRAINING_COMPLETE---'";
 
-                string fullCmd = $"cd '{wslPath}' && {patchCmd} && {ensureEnvCmd} && {findTubsCmd} && {resizeTrainTubCmd} && {ensureModelsDirCmd} && {cleanConfigCmd} && {trainCmd}";
+                string fullCmd = $"cd '{wslPath}' && {patchCmd} && {ensureEnvCmd} && {resizeTrainTubCmd} && {ensureModelsDirCmd} && {cleanConfigCmd} && {trainCmd}";
 
                 RunProcess("wsl", $"bash -ic \"{fullCmd}\"", onLogReceived);
             }
@@ -126,6 +124,7 @@ namespace DataManager
 
                 string ensureEnvCmd = $"{venvCmd}pip install -q imgaug 'numpy<2.0'";
 
+                // 인성님의 텐서플로우 스케일링 코드(255.0 나누기) 완벽 보존!
                 string pyEvalCode =
                     "import os, sys, json, glob\n" +
                     "os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'\n" +
@@ -200,7 +199,7 @@ namespace DataManager
             }
 
             public void Stop() => Cancel();
-            public void Cancel() { try { if (_process != null && _process.HasExited) _process.Kill(); } catch { } }
+            public void Cancel() { try { if (_process != null && !_process.HasExited) _process.Kill(); } catch { } }
         }
 
         // ==========================================
@@ -220,22 +219,27 @@ namespace DataManager
 
             public void Cancel() { if (_shell != null) _shell.Write("\x03"); }
 
-            public void ExecuteTrain(string path, bool useVenv, Action<string> onLogReceived)
+            public void ExecuteTrain(string path, string tubPath, bool useVenv, Action<string> onLogReceived)
             {
                 string venvCmd = useVenv ? "source ~/.bashrc && conda activate e2e_env && " : "";
+
+                // ★ 원격 접속용 상대경로 폴더명 추출
+                string folderName = System.IO.Path.GetFileName(tubPath.TrimEnd('\\', '/'));
+                string remoteTubPath = $"./{folderName}";
 
                 string pyCode = "import donkeycar, os\np=os.path.join(os.path.dirname(donkeycar.__file__), 'pipeline', 'sequence.py')\nif os.path.exists(p):\n  c=open(p).read()\n  c=c.replace('class TfmIterator(Generic[R, XOut, YOut],  SizedIterator[Tuple[XOut, YOut]]):', 'class TfmIterator(SizedIterator):')\n  c=c.replace('class TfmTupleIterator(Generic[X, Y, XOut, YOut],  SizedIterator[Tuple[XOut, YOut]]):', 'class TfmTupleIterator(SizedIterator):')\n  c=c.replace('class BaseTfmIterator_(Generic[XOut, YOut],  SizedIterator[Tuple[XOut, YOut]]):', 'class BaseTfmIterator_(SizedIterator):')\n  open(p,'w').write(c)";
                 string base64Code = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(pyCode));
                 string patchCmd = $"echo {base64Code} | base64 -d > /tmp/patch_mro.py && {venvCmd}python -u /tmp/patch_mro.py && rm /tmp/patch_mro.py";
 
                 string ensureEnvCmd = $"{venvCmd}pip install -q imgaug \"numpy<2.0\"";
-                string findTubsCmd = "if [ -f data/manifest.json ]; then DIR=\"data/\"; elif [ -f data/data3/manifest.json ]; then DIR=\"data/data3/\"; elif [ -f data3/manifest.json ]; then DIR=\"data3/\"; else DIR=\"data/\"; fi";
                 string ensureModelsDirCmd = "mkdir -p models";
+
+                // ★ 기존의 하드코딩 삭제하고 선택한 원격경로(remoteTubPath) 사용
                 string resizePyCode =
                     "import os, shutil, sys\n" +
                     "from PIL import Image\n" +
                     "marker='/tmp/datamanager_train_dir.txt'\n" +
-                    "src_arg=next((p for p in ['data/', 'data/data3/', 'data3/'] if os.path.isfile(os.path.join(p, 'manifest.json'))), 'data/')\n" +
+                    $"src_arg='{remoteTubPath}'\n" +
                     "dst_arg='.datamanager_train_160x120'\n" +
                     "if not src_arg or not dst_arg:\n" +
                     "  print(f'[Resize Error] resize path missing. src={src_arg!r}, dst={dst_arg!r}', flush=True)\n" +
@@ -275,8 +279,8 @@ namespace DataManager
                     "    print(f'[Resize Warning] {path}: {e}', flush=True)\n" +
                     "open(marker, 'w').write(dst_arg)\n" +
                     "print(f'[Resize] created training tub copy: {dst} / checked={checked} / resized={resized}', flush=True)\n";
+
                 string resizeBase64Code = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(resizePyCode));
-                // 학습 전 이미지 크기를 검사하고, 160x120 초과 이미지가 있을 때만 학습용 tub 복사본을 만듭니다.
                 string resizeTrainTubCmd = $"echo {resizeBase64Code} | base64 -d > /tmp/resize_tub_for_training.py && {venvCmd}python -u /tmp/resize_tub_for_training.py && DIR=$(cat /tmp/datamanager_train_dir.txt) && rm /tmp/resize_tub_for_training.py /tmp/datamanager_train_dir.txt";
 
                 string cleanConfigCmd = "if [ -f myconfig.py ]; then sed -i '/EARLY_STOP_PATIENCE/d' myconfig.py; fi";
@@ -284,7 +288,7 @@ namespace DataManager
                 // ★ docopt 에러 방지를 위해 등호(=)와 따옴표 명시적 추가 완료!
                 string trainCmd = $"{venvCmd}python -u train.py --tubs=\"$DIR\" --model=\"models/mypilot.h5\" && echo '---TRAINING_COMPLETE---'";
 
-                RunRemoteCommand(path, $"{patchCmd} && {ensureEnvCmd} && {findTubsCmd} && {resizeTrainTubCmd} && {ensureModelsDirCmd} && {cleanConfigCmd} && {trainCmd}", onLogReceived);
+                RunRemoteCommand(path, $"{patchCmd} && {ensureEnvCmd} && {resizeTrainTubCmd} && {ensureModelsDirCmd} && {cleanConfigCmd} && {trainCmd}", onLogReceived);
             }
 
             public void ExecuteTest(string path, string modelPath, string testPath, bool useVenv, Action<string> onLogReceived)
