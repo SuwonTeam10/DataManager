@@ -46,8 +46,9 @@ namespace DataManager
         private const int TimelineMaximumVisibleCount = 60;
         private const int TimelineThumbWidth = 140;
         private const int TimelineThumbHeight = 105;
-        private const int TimelineIconSpacingX = 56;
-        private const int TimelineIconSpacingY = 44;
+        // Ensure icon spacing is at least as large as the thumbnail size so items do not overlap
+        private const int TimelineIconSpacingX = TimelineThumbWidth + 12;
+        private const int TimelineIconSpacingY = TimelineThumbHeight + 8;
         private const int PlaybackBaseIntervalMs = 100;
         private const int PlaybackMinimumIntervalMs = 50;
         private int currentTimelineStart = -1;
