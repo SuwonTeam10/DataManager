@@ -423,7 +423,7 @@
             groupBoxTrash.Margin = new Padding(4);
             groupBoxTrash.Name = "groupBoxTrash";
             groupBoxTrash.Padding = new Padding(4);
-            groupBoxTrash.Size = new Size(921, 244);
+            groupBoxTrash.Size = new Size(921, 233);
             groupBoxTrash.TabIndex = 20;
             groupBoxTrash.TabStop = false;
             groupBoxTrash.Text = "휴지통";
@@ -432,7 +432,7 @@
             // 
             lblTrashPercent.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
             lblTrashPercent.AutoSize = true;
-            lblTrashPercent.Location = new Point(433, 186);
+            lblTrashPercent.Location = new Point(441, 172);
             lblTrashPercent.Name = "lblTrashPercent";
             lblTrashPercent.Size = new Size(53, 28);
             lblTrashPercent.TabIndex = 22;
@@ -442,7 +442,7 @@
             // 
             lblTrashProgress.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
             lblTrashProgress.AutoSize = true;
-            lblTrashProgress.Location = new Point(19, 186);
+            lblTrashProgress.Location = new Point(27, 172);
             lblTrashProgress.Name = "lblTrashProgress";
             lblTrashProgress.Size = new Size(141, 28);
             lblTrashProgress.TabIndex = 21;
@@ -451,7 +451,7 @@
             // progressBarTrash
             // 
             progressBarTrash.Anchor = AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
-            progressBarTrash.Location = new Point(168, 186);
+            progressBarTrash.Location = new Point(176, 172);
             progressBarTrash.Name = "progressBarTrash";
             progressBarTrash.Size = new Size(259, 30);
             progressBarTrash.Style = ProgressBarStyle.Continuous;
@@ -509,10 +509,10 @@
             // 
             lstTrash.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
             lstTrash.FormattingEnabled = true;
-            lstTrash.Location = new Point(550, 68);
+            lstTrash.Location = new Point(550, 58);
             lstTrash.Margin = new Padding(4);
             lstTrash.Name = "lstTrash";
-            lstTrash.Size = new Size(328, 164);
+            lstTrash.Size = new Size(328, 132);
             lstTrash.TabIndex = 15;
             // 
             // btnDelete
@@ -531,7 +531,7 @@
             // 
             chkAbnormalAngle.AutoSize = true;
             chkAbnormalAngle.Font = new Font("나눔고딕", 10.875F);
-            chkAbnormalAngle.Location = new Point(615, 219);
+            chkAbnormalAngle.Location = new Point(614, 194);
             chkAbnormalAngle.Margin = new Padding(4);
             chkAbnormalAngle.Name = "chkAbnormalAngle";
             chkAbnormalAngle.Size = new Size(217, 38);
@@ -543,7 +543,7 @@
             // 
             chkMissingImage.AutoSize = true;
             chkMissingImage.Font = new Font("나눔고딕", 10.875F);
-            chkMissingImage.Location = new Point(615, 162);
+            chkMissingImage.Location = new Point(614, 148);
             chkMissingImage.Margin = new Padding(4);
             chkMissingImage.Name = "chkMissingImage";
             chkMissingImage.Size = new Size(190, 38);
@@ -592,7 +592,7 @@
             // btnSetRight
             // 
             btnSetRight.Font = new Font("나눔고딕", 10.875F);
-            btnSetRight.Location = new Point(257, 44);
+            btnSetRight.Location = new Point(258, 34);
             btnSetRight.Margin = new Padding(4);
             btnSetRight.Name = "btnSetRight";
             btnSetRight.Size = new Size(164, 59);
@@ -603,7 +603,7 @@
             // btnSetLeft
             // 
             btnSetLeft.Font = new Font("나눔고딕", 10.875F);
-            btnSetLeft.Location = new Point(46, 44);
+            btnSetLeft.Location = new Point(46, 34);
             btnSetLeft.Margin = new Padding(4);
             btnSetLeft.Name = "btnSetLeft";
             btnSetLeft.Size = new Size(180, 58);
