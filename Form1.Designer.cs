@@ -166,7 +166,7 @@
             // btnLoadTub
             // 
             btnLoadTub.Font = new Font("나눔고딕", 10.875F, FontStyle.Regular, GraphicsUnit.Point, 0);
-            btnLoadTub.Image = new Bitmap((Image)resources.GetObject("btnLoadTub.Image"), new Size(32, 32));
+            btnLoadTub.Image = (Image)resources.GetObject("btnLoadTub.Image");
             btnLoadTub.ImageAlign = ContentAlignment.MiddleLeft;
             btnLoadTub.Location = new Point(18, 231);
             btnLoadTub.Margin = new Padding(4);
@@ -473,10 +473,10 @@
             // 
             btnEmptyTrash.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             btnEmptyTrash.Font = new Font("나눔고딕", 8.999999F, FontStyle.Bold, GraphicsUnit.Point, 129);
-            btnEmptyTrash.Location = new Point(41, 79);
+            btnEmptyTrash.Location = new Point(262, 36);
             btnEmptyTrash.Margin = new Padding(4);
             btnEmptyTrash.Name = "btnEmptyTrash";
-            btnEmptyTrash.Size = new Size(337, 45);
+            btnEmptyTrash.Size = new Size(175, 52);
             btnEmptyTrash.TabIndex = 18;
             btnEmptyTrash.Text = "휴지통 비우기";
             btnEmptyTrash.UseVisualStyleBackColor = true;
@@ -485,10 +485,10 @@
             // 
             btnRestore.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             btnRestore.Font = new Font("나눔고딕", 8.999999F, FontStyle.Bold, GraphicsUnit.Point, 129);
-            btnRestore.Location = new Point(235, 34);
+            btnRestore.Location = new Point(47, 92);
             btnRestore.Margin = new Padding(4);
             btnRestore.Name = "btnRestore";
-            btnRestore.Size = new Size(143, 37);
+            btnRestore.Size = new Size(151, 44);
             btnRestore.TabIndex = 17;
             btnRestore.Text = "복원";
             btnRestore.UseVisualStyleBackColor = true;
@@ -497,10 +497,10 @@
             // 
             btnReloadTub.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             btnReloadTub.Font = new Font("나눔고딕", 8.999999F, FontStyle.Bold, GraphicsUnit.Point, 129);
-            btnReloadTub.Location = new Point(41, 132);
+            btnReloadTub.Location = new Point(262, 96);
             btnReloadTub.Margin = new Padding(4);
             btnReloadTub.Name = "btnReloadTub";
-            btnReloadTub.Size = new Size(337, 39);
+            btnReloadTub.Size = new Size(232, 49);
             btnReloadTub.TabIndex = 16;
             btnReloadTub.Text = "Tub 다시 불러오기";
             btnReloadTub.UseVisualStyleBackColor = true;
@@ -522,7 +522,7 @@
             btnDelete.Location = new Point(41, 34);
             btnDelete.Margin = new Padding(4);
             btnDelete.Name = "btnDelete";
-            btnDelete.Size = new Size(151, 37);
+            btnDelete.Size = new Size(151, 44);
             btnDelete.TabIndex = 14;
             btnDelete.Text = "삭제";
             btnDelete.UseVisualStyleBackColor = true;
@@ -566,7 +566,7 @@
             // btnFilter
             // 
             btnFilter.Font = new Font("나눔고딕", 10.875F, FontStyle.Regular, GraphicsUnit.Point, 129);
-            btnFilter.Image = new Bitmap(Properties.Resources.icons8_filter_48, new Size(32, 32));
+            btnFilter.Image = (Image)resources.GetObject("btnFilter.Image");
             btnFilter.ImageAlign = ContentAlignment.MiddleLeft;
             btnFilter.Location = new Point(602, 34);
             btnFilter.Margin = new Padding(4);
@@ -820,7 +820,7 @@
             btnTrain.BackColor = Color.DodgerBlue;
             btnTrain.Font = new Font("나눔고딕 ExtraBold", 8.999999F, FontStyle.Bold, GraphicsUnit.Point, 129);
             btnTrain.ForeColor = Color.White;
-            btnTrain.Image = new Bitmap(Properties.Resources.icons8_play_30__2_, new Size(32, 32));
+            btnTrain.Image = (Image)resources.GetObject("btnTrain.Image");
             btnTrain.ImageAlign = ContentAlignment.MiddleLeft;
             btnTrain.Location = new Point(31, 37);
             btnTrain.Margin = new Padding(4);
@@ -837,7 +837,7 @@
             btnStopTask.BackColor = Color.White;
             btnStopTask.Font = new Font("나눔고딕", 8.999999F, FontStyle.Bold, GraphicsUnit.Point, 129);
             btnStopTask.ForeColor = Color.Red;
-            btnStopTask.Image = new Bitmap(Properties.Resources.icons8_stop_30__1_, new Size(32, 32));
+            btnStopTask.Image = (Image)resources.GetObject("btnStopTask.Image");
             btnStopTask.ImageAlign = ContentAlignment.MiddleLeft;
             btnStopTask.Location = new Point(258, 37);
             btnStopTask.Margin = new Padding(6);
@@ -935,7 +935,7 @@
             // btnModelTest
             // 
             btnModelTest.Font = new Font("나눔고딕", 10.875F);
-            btnModelTest.Image = new Bitmap((Image)resources.GetObject("btnModelTest.Image"), new Size(32, 32));
+            btnModelTest.Image = (Image)resources.GetObject("btnModelTest.Image");
             btnModelTest.ImageAlign = ContentAlignment.MiddleLeft;
             btnModelTest.Location = new Point(726, 299);
             btnModelTest.Margin = new Padding(4);
@@ -957,7 +957,7 @@
             // btnLoadConfig
             // 
             btnLoadConfig.Font = new Font("나눔고딕", 10.875F, FontStyle.Regular, GraphicsUnit.Point, 0);
-            btnLoadConfig.Image = new Bitmap((Image)resources.GetObject("btnLoadConfig.Image"), new Size(32, 32));
+            btnLoadConfig.Image = (Image)resources.GetObject("btnLoadConfig.Image");
             btnLoadConfig.ImageAlign = ContentAlignment.MiddleLeft;
             btnLoadConfig.Location = new Point(23, 52);
             btnLoadConfig.Margin = new Padding(4);
@@ -1049,7 +1049,7 @@
             btnPlayStop.BackColor = Color.DodgerBlue;
             btnPlayStop.Font = new Font("나눔고딕 ExtraBold", 10.875F, FontStyle.Bold, GraphicsUnit.Point, 129);
             btnPlayStop.ForeColor = Color.White;
-            btnPlayStop.Image = new Bitmap((Image)resources.GetObject("btnPlayStop.Image"), new Size(32, 32));
+            btnPlayStop.Image = (Image)resources.GetObject("btnPlayStop.Image");
             btnPlayStop.ImageAlign = ContentAlignment.MiddleLeft;
             btnPlayStop.Location = new Point(637, 631);
             btnPlayStop.Margin = new Padding(4);
@@ -1225,7 +1225,7 @@
             // 
             btnDisconnect.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             btnDisconnect.Font = new Font("나눔고딕", 8.999999F, FontStyle.Bold, GraphicsUnit.Point, 129);
-            btnDisconnect.Image = new Bitmap((Image)resources.GetObject("btnDisconnect.Image"), new Size(32, 32));
+            btnDisconnect.Image = (Image)resources.GetObject("btnDisconnect.Image");
             btnDisconnect.ImageAlign = ContentAlignment.MiddleLeft;
             btnDisconnect.Location = new Point(2184, 36);
             btnDisconnect.Name = "btnDisconnect";
