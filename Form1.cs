@@ -157,6 +157,7 @@ namespace DataManager
             btnDelete.Click += btnDelete_Click;
             btnRestore.Click += btnRestore_Click;
             btnEmptyTrash.Click += btnEmptyTrash_Click;
+            btnStopTask.Click += btnStopTask_Click;
             lstFrames.SelectionMode = SelectionMode.MultiExtended;
             lstTrash.CheckOnClick = false;
             lstTrash.MouseDown += LstTrash_MouseDown;
@@ -654,8 +655,15 @@ namespace DataManager
 
                     txtLog.AppendText(Environment.NewLine + "🛑 [알림] 사용자에 의해 작업이 강제 중지되었습니다." + Environment.NewLine);
 
-                    // 진행률 바 초기화
+                    // 강제 중지 후 학습/테스트 UI 상태를 대기 상태로 되돌린다.
                     if (progressBarTrain != null) progressBarTrain.Value = 0;
+                    if (lblProgressPercent != null) lblProgressPercent.Text = "0%";
+                    if (lblTrainStatus2 != null)
+                    {
+                        lblTrainStatus2.Text = "준비 완료";
+                        lblTrainStatus2.ForeColor = Color.Green;
+                    }
+                    UpdateStatusLabel("대기 중", Color.Green);
                 }
             }
         }

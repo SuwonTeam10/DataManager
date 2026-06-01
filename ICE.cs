@@ -303,7 +303,34 @@ namespace DataManager
             }
 
             public void Stop() => Cancel();
-            public void Cancel() { try { if (_process != null && !_process.HasExited) _process.Kill(); } catch { } }
+            public void Cancel()
+            {
+                try
+                {
+                    using Process stopProcess = new Process
+                    {
+                        StartInfo = new ProcessStartInfo
+                        {
+                            FileName = "wsl",
+                            Arguments = "bash -lc \"pkill -f 'python.*train.py' || true; pkill -f 'train.py' || true\"",
+                            UseShellExecute = false,
+                            CreateNoWindow = true
+                        }
+                    };
+                    stopProcess.Start();
+                    stopProcess.WaitForExit(3000);
+                }
+                catch { }
+
+                try
+                {
+                    if (_process != null && !_process.HasExited)
+                    {
+                        _process.Kill(true);
+                    }
+                }
+                catch { }
+            }
         }
 
         // ==========================================
