@@ -158,6 +158,7 @@ namespace DataManager
             btnRestore.Click += btnRestore_Click;
             btnEmptyTrash.Click += btnEmptyTrash_Click;
             btnStopTask.Click += btnStopTask_Click;
+            SetupFilterTooltips();
             lstFrames.SelectionMode = SelectionMode.MultiExtended;
             lstTrash.CheckOnClick = false;
             lstTrash.MouseDown += LstTrash_MouseDown;
@@ -202,6 +203,24 @@ namespace DataManager
             };
             //ArrangeTimelineAndTabs();
             ArrangeCleanerControls();
+        }
+
+        private void SetupFilterTooltips()
+        {
+            toolTip1.SetToolTip(chkThrottleZero,
+                "속도(throttle)가 0인 프레임을 찾습니다.\n" +
+                "정지 상태나 출발 전/후 데이터가 포함될 수 있습니다.\n" +
+                "체크 후 [필터 적용]을 누르면 해당 프레임이 휴지통으로 이동합니다.");
+
+            toolTip1.SetToolTip(chkMissingImage,
+                "catalog 또는 record에는 기록이 있지만 실제 이미지 파일을 찾을 수 없는 프레임을 찾습니다.\n" +
+                "이미지가 없으면 학습/테스트에서 오류가 날 수 있습니다.\n" +
+                "체크 후 [필터 적용]을 누르면 해당 프레임이 휴지통으로 이동합니다.");
+
+            toolTip1.SetToolTip(chkAbnormalAngle,
+                "비정상 조향각(angle) 프레임을 찾습니다.\n" +
+                "기준: -1.0~1.0 범위 밖, 평균에서 표준편차의 3배보다 멀리 벗어난 값, 또는 앞뒤 프레임과 0.8 초과로 급변한 값입니다.\n" +
+                "체크 후 [필터 적용]을 누르면 해당 프레임이 휴지통으로 이동합니다.");
         }
 
         private void ArrangeTimelineAndTabs()
