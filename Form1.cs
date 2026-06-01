@@ -1221,7 +1221,8 @@ namespace DataManager
                 return;
             }
 
-            tubPath = selectedTubPath;
+            string actualTubPath = ResolveActualTubPath(selectedTubPath, catalogFiles, recordFiles, isOldRecordTub);
+            tubPath = actualTubPath;
             lblTubPath.Text = tubPath;
 
             btnLoadTub.Enabled = false;
@@ -1247,8 +1248,8 @@ namespace DataManager
                 // Tub 형식에 따라 신버전 catalog 파서 또는 구버전 record JSON 파서를 선택한다.
                 TubLoadResult result = await Task.Run(() =>
                     isOldRecordTub
-                        ? ReadOldTubFrames(selectedTubPath, recordFiles)
-                        : ReadTubFrames(selectedTubPath, catalogFiles));
+                        ? ReadOldTubFrames(actualTubPath, recordFiles)
+                        : ReadTubFrames(actualTubPath, catalogFiles));
                 tubFrames.AddRange(result.Frames);
                 ResetTubView();
 
@@ -1271,6 +1272,23 @@ namespace DataManager
                 btnLoadTub.Enabled = true;
                 btnReloadTub.Enabled = true;
             }
+        }
+
+        private static string ResolveActualTubPath(string selectedTubPath, string[] catalogFiles, string[] recordFiles, bool isOldRecordTub)
+        {
+            // 사용자가 선택한 폴더 또는 catalog/record가 실제로 있는 폴더를 학습용 tub 경로로 사용한다.
+            if (File.Exists(Path.Combine(selectedTubPath, "manifest.json")))
+            {
+                return selectedTubPath;
+            }
+
+            string[] tubFiles = isOldRecordTub ? recordFiles : catalogFiles;
+            if (tubFiles.Length > 0)
+            {
+                return Path.GetDirectoryName(tubFiles[0]) ?? selectedTubPath;
+            }
+
+            return selectedTubPath;
         }
 
         private static TubLoadResult ReadTubFrames(string selectedTubPath, string[] catalogFiles)
