@@ -180,7 +180,6 @@
             // 
             // groupDataView
             // 
-            groupDataView.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left;
             groupDataView.Controls.Add(lblThrottle2);
             groupDataView.Controls.Add(lblAngle2);
             groupDataView.Controls.Add(lblFrame2);
@@ -348,7 +347,6 @@
             // 
             // groupTimeline
             // 
-            groupTimeline.Anchor = AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
             groupTimeline.Controls.Add(lvTimeline);
             groupTimeline.Font = new Font("Microsoft Sans Serif", 10.125F, FontStyle.Regular, GraphicsUnit.Point, 129);
             groupTimeline.Location = new Point(41, 1024);
@@ -376,7 +374,6 @@
             // 
             // tabMain
             // 
-            tabMain.Anchor = AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
             tabMain.Controls.Add(tabCleaner);
             tabMain.Controls.Add(tabGraph);
             tabMain.Controls.Add(tabTrainTest);
@@ -983,17 +980,16 @@
             // 
             // lstFrames
             // 
-            lstFrames.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
+            lstFrames.Dock = DockStyle.Fill;
             lstFrames.FormattingEnabled = true;
-            lstFrames.Location = new Point(8, 81);
+            lstFrames.Location = new Point(4, 32);
             lstFrames.Margin = new Padding(4);
             lstFrames.Name = "lstFrames";
-            lstFrames.Size = new Size(353, 676);
+            lstFrames.Size = new Size(361, 791);
             lstFrames.TabIndex = 0;
             // 
             // groupFrameList
             // 
-            groupFrameList.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Right;
             groupFrameList.Controls.Add(lstFrames);
             groupFrameList.Font = new Font("나눔고딕", 8.999999F, FontStyle.Regular, GraphicsUnit.Point, 0);
             groupFrameList.Location = new Point(2073, 203);
@@ -1098,7 +1094,6 @@
             // 
             // groupTubNavigator
             // 
-            groupTubNavigator.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
             groupTubNavigator.Controls.Add(lblCurrentFrame2);
             groupTubNavigator.Controls.Add(lblCurrentFrame);
             groupTubNavigator.Controls.Add(chkAutoPlay);
@@ -1199,7 +1194,6 @@
             // 
             // groupBox2
             // 
-            groupBox2.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
             groupBox2.Controls.Add(btnDisconnect);
             groupBox2.Controls.Add(lblStatus2);
             groupBox2.Controls.Add(lblStatus);

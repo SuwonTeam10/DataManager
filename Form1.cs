@@ -60,11 +60,11 @@ namespace DataManager
         private int timelineDragEdgeDirection;
         private readonly System.Windows.Forms.Timer timelineDragTimer = new();
         private int playbackFrameStep = 1;
-        private const int DefaultNavigatorHeight = 517;
+        private const int DefaultNavigatorHeight = 827;     //
         private const int MinNavigatorHeight = 360;
-        private const int TimelinePanelHeight = 86;
+        private const int TimelinePanelHeight = 168;    //
         private const int TimelineMinimumPanelHeight = 42;
-        private const int DefaultTabPanelHeight = 220;
+        private const int DefaultTabPanelHeight = 314;  //
         private const int MinimumTabVisibleHeight = 130;
         private const int LayoutGap = 8;
         private const int FrameResizeBarHeight = 0;
@@ -77,6 +77,11 @@ namespace DataManager
         private const int MinimumResponsiveFormWidth = 1320;
         private const int LeftDataPanelGap = 12;
         private const int MinimumDataInfoPanelHeight = 264;
+
+        private const int DesignBaseWidth = 2510;
+        private const int DesignBaseHeight = 1592;
+        private const int ResponsiveGap = 8;
+
 
         private enum RangeSelectionOrigin
         {
@@ -142,7 +147,7 @@ namespace DataManager
             tabMain.SelectedIndexChanged += tabMain_SelectedIndexChanged;
             Resize += (_, _) =>
             {
-                //ArrangeTimelineAndTabs();
+                ApplyResponsiveMainLayout();
                 RedrawGraphAfterLayout();
             };
             picFrame.Paint += picFrame_Paint;
@@ -197,22 +202,24 @@ namespace DataManager
             groupTubNavigator.Resize += (_, _) => ArrangeNavigatorControls();
             Shown += (_, _) =>
             {
-                // 실행 직후 기본 높이만 데이터 정보 판넬 아래와 맞춘다. 이후에는 사용자가 드래그로 조절한다.
+                // 실행 직후 기본 높이만 데이터 정보 판넬 아래와 맞춘다.
                 navigatorHeight = Math.Max(MinNavigatorHeight, groupDataView.Bottom - groupTubNavigator.Top);
-                //ArrangeTimelineAndTabs();
+
+                ApplyResponsiveMainLayout();
                 ArrangeCleanerControls();
 
-            // 버튼 이미지 자동 스케일링 등록 (기본 variant로 등록)
-            RegisterScaledButton(btnTrain);
-            RegisterScaledButton(btnStopTask);
-            RegisterScaledButton(btnDisconnect);
-            RegisterScaledButton(btnPlayStop);
+                // 버튼 이미지 자동 스케일링 등록
+                RegisterScaledButton(btnTrain);
+                RegisterScaledButton(btnStopTask);
+                RegisterScaledButton(btnDisconnect);
+                RegisterScaledButton(btnPlayStop);
 
-            // 폼 크기 변경 또는 DPI 변경 시 스케일 갱신
-            this.Resize += (_, _) => UpdateAllButtonImagesScale();
-            this.DpiChanged += (_, _) => UpdateAllButtonImagesScale();
+                // 폼 크기 변경 또는 DPI 변경 시 스케일 갱신
+                this.Resize += (_, _) => UpdateAllButtonImagesScale();
+                this.DpiChanged += (_, _) => UpdateAllButtonImagesScale();
             };
-            //ArrangeTimelineAndTabs();
+
+            ApplyResponsiveMainLayout();
             ArrangeCleanerControls();
         }
 
@@ -222,8 +229,13 @@ namespace DataManager
             int resizeBarTopGap = 2;
             int minimumNavigatorHeight = GetMinimumNavigatorHeight();
             int appliedNavigatorHeight = Math.Max(navigatorHeight, minimumNavigatorHeight);
-            int tabHeight = DefaultTabPanelHeight;
-            int timelineHeight = TimelinePanelHeight;
+            int extraHeight = Math.Max(0, ClientSize.Height - 881);
+
+            int tabHeight = DefaultTabPanelHeight + (extraHeight * 30 / 100);
+            int timelineHeight = TimelinePanelHeight + (extraHeight * 15 / 100);
+
+            tabHeight = Math.Max(MinimumTabVisibleHeight, tabHeight);
+            timelineHeight = Math.Max(TimelineMinimumPanelHeight, timelineHeight);
 
             int availableBelowNavigator = ClientSize.Height
                 - bottomGap
@@ -266,6 +278,61 @@ namespace DataManager
 
             ArrangeNavigatorControls();
         }
+
+
+        private void ApplyResponsiveMainLayout()
+        {
+            if (ClientSize.Width <= 0 || ClientSize.Height <= 0) return;
+
+            int gap = ResponsiveGap;
+
+            float scaleX = ClientSize.Width / (float)DesignBaseWidth;
+            float scaleY = ClientSize.Height / (float)DesignBaseHeight;
+
+            int Sx(int value) => (int)Math.Round(value * scaleX);
+            int Sy(int value) => (int)Math.Round(value * scaleY);
+
+            // 200% 디자인 기준 위치/크기 비율 적용
+            groupBox2.SetBounds(
+                Sx(56), Sy(42),
+                Sx(2397), Sy(111)
+            );
+
+            groupBoxDataLoad.SetBounds(
+                Sx(56), Sy(165),
+                Sx(433), Sy(386)
+            );
+
+            groupDataView.SetBounds(
+                Sx(56), Sy(563),
+                Sx(429), Sy(408)
+            );
+
+            groupTubNavigator.SetBounds(
+                Sx(503), Sy(165),
+                Sx(1562), Sy(827)
+            );
+
+            groupFrameList.SetBounds(
+                Sx(2080), Sy(165),
+                Sx(369), Sy(827)
+            );
+
+            groupTimeline.SetBounds(
+                Sx(56), Sy(1005),
+                Sx(2397), Sy(168)
+            );
+
+            tabMain.SetBounds(
+                Sx(56), Sy(1185),
+                Sx(2397), Sy(314)
+            );
+
+            ArrangeNavigatorControls();
+            ArrangeCleanerControls();
+            ReloadTimelineForCurrentFrame();
+        }
+
 
         private int GetMinimumNavigatorHeight()
         {
