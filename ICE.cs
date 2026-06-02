@@ -143,10 +143,14 @@ namespace DataManager
                     "        if not line.strip(): continue\n" +
                     "        record=json.loads(line)\n" +
                     "        image_name=record.get('cam/image_array')\n" +
-                    "        if isinstance(image_name, str) and image_name and not os.path.exists(os.path.join(dst, image_name)):\n" +
-                    "          candidate=os.path.join('images', os.path.basename(image_name))\n" +
-                    "          if os.path.exists(os.path.join(dst, candidate)):\n" +
-                    "            record['cam/image_array']=candidate\n" +
+                    "        if isinstance(image_name, str) and image_name:\n" +
+                    "          basename=os.path.basename(image_name)\n" +
+                    "          direct_path=os.path.join(dst, image_name)\n" +
+                    "          images_path=os.path.join(dst, 'images', basename)\n" +
+                    "          if os.path.exists(direct_path) or os.path.exists(images_path):\n" +
+                    "            pass\n" +
+                    "          elif image_name != basename and os.path.exists(os.path.join(dst, basename)):\n" +
+                    "            record['cam/image_array']=basename\n" +
                     "            changed_catalog=True\n" +
                     "            image_path_fixed+=1\n" +
                     "        updated_records.append(record)\n" +
