@@ -44,10 +44,9 @@ namespace DataManager
         private readonly ImageList timelineImages = new();
         private const int TimelineMinimumVisibleCount = 20;
         private const int TimelineMaximumVisibleCount = 60;
-        private const int TimelineThumbWidth = 140;
-        private const int TimelineThumbHeight = 105;
-        private const int TimelineIconSpacingX = 56;
-        private const int TimelineIconSpacingY = 44;
+        private const int TimelineMinimumIconSpacingX = 56;
+        private const int TimelineMinimumIconSpacingY = 44;
+        private const int TimelineIconPadding = 2;
         private const int PlaybackBaseIntervalMs = 100;
         private const int PlaybackMinimumIntervalMs = 50;
         private int currentTimelineStart = -1;
@@ -61,11 +60,11 @@ namespace DataManager
         private readonly System.Windows.Forms.Timer timelineDragTimer = new();
         private int playbackFrameStep = 1;
         private const int DefaultNavigatorHeight = 517;
-        private const int MinNavigatorHeight = 360;
-        private const int TimelinePanelHeight = 86;
-        private const int TimelineMinimumPanelHeight = 42;
+        private const int MinNavigatorHeight = 300;
+        private const int TimelinePanelHeight = 108;
+        private const int TimelineMinimumPanelHeight = 50;
         private const int DefaultTabPanelHeight = 220;
-        private const int MinimumTabVisibleHeight = 130;
+        private const int MinimumTabPanelHeight = 130;
         private const int LayoutGap = 8;
         private const int FrameResizeBarHeight = 0;
         private const int FrameResizeGripHeight = 12;
@@ -146,7 +145,7 @@ namespace DataManager
             tabMain.SelectedIndexChanged += tabMain_SelectedIndexChanged;
             Resize += (_, _) =>
             {
-                //ArrangeTimelineAndTabs();
+                ArrangeTimelineAndTabs();
                 RedrawGraphAfterLayout();
             };
             picFrame.Paint += picFrame_Paint;
@@ -175,7 +174,7 @@ namespace DataManager
             tabCleaner.Resize += (_, _) => ArrangeCleanerControls();
 
             // 타임라인 썸네일 이미지 리스트 설정
-            timelineImages.ImageSize = new Size(TimelineThumbWidth, TimelineThumbHeight);
+            timelineImages.ImageSize = GetTimelineThumbnailSize();
             timelineImages.ColorDepth = ColorDepth.Depth32Bit;
             lvTimeline.LargeImageList = timelineImages;
             lvTimeline.View = View.LargeIcon;
@@ -206,10 +205,10 @@ namespace DataManager
             {
                 // 실행 직후 기본 높이만 데이터 정보 판넬 아래와 맞춘다. 이후에는 사용자가 드래그로 조절한다.
                 navigatorHeight = Math.Max(MinNavigatorHeight, groupDataView.Bottom - groupTubNavigator.Top);
-                //ArrangeTimelineAndTabs();
+                ArrangeTimelineAndTabs();
                 ArrangeCleanerControls();
             };
-            //ArrangeTimelineAndTabs();
+            ArrangeTimelineAndTabs();
             ArrangeCleanerControls();
         }
 
@@ -235,23 +234,15 @@ namespace DataManager
         {
             int bottomGap = 8;
             int resizeBarTopGap = 2;
-            int minimumNavigatorHeight = GetMinimumNavigatorHeight();
+            int minimumNavigatorHeight = MinNavigatorHeight;
             int appliedNavigatorHeight = Math.Max(navigatorHeight, minimumNavigatorHeight);
             int tabHeight = DefaultTabPanelHeight;
             int timelineHeight = TimelinePanelHeight;
 
-            int availableBelowNavigator = ClientSize.Height
-                - bottomGap
-                - groupTubNavigator.Top
-                - appliedNavigatorHeight
-                - resizeBarTopGap
-                - FrameResizeBarHeight
-                - (LayoutGap * 2);
-
-            int shortage = (timelineHeight + tabHeight) - availableBelowNavigator;
+            int shortage = GetLowerLayoutShortage(appliedNavigatorHeight, timelineHeight, tabHeight, bottomGap, resizeBarTopGap);
             if (shortage > 0)
             {
-                int tabShrink = Math.Min(shortage, tabHeight - MinimumTabVisibleHeight);
+                int tabShrink = Math.Min(shortage, tabHeight - MinimumTabPanelHeight);
                 tabHeight -= tabShrink;
                 shortage -= tabShrink;
             }
@@ -265,7 +256,9 @@ namespace DataManager
 
             if (shortage > 0)
             {
-                appliedNavigatorHeight = Math.Max(minimumNavigatorHeight, appliedNavigatorHeight - shortage);
+                int navigatorShrink = Math.Min(shortage, appliedNavigatorHeight - minimumNavigatorHeight);
+                appliedNavigatorHeight -= navigatorShrink;
+                shortage -= navigatorShrink;
             }
 
             tabMain.Height = tabHeight;
@@ -280,6 +273,32 @@ namespace DataManager
             ArrangeLeftDataPanels(groupTubNavigator.Bottom);
 
             ArrangeNavigatorControls();
+        }
+
+        private int GetLowerLayoutShortage(int navigatorHeightValue, int timelineHeight, int tabHeight, int bottomGap, int resizeBarTopGap)
+        {
+            int availableBelowNavigator = ClientSize.Height
+                - bottomGap
+                - groupTubNavigator.Top
+                - navigatorHeightValue
+                - resizeBarTopGap
+                - FrameResizeBarHeight
+                - (LayoutGap * 2);
+
+            return (timelineHeight + tabHeight) - availableBelowNavigator;
+        }
+
+        private int GetMinimumTabHeight()
+        {
+            int tabHeaderHeight = Math.Max(32, tabMain.Height - tabTrainTest.Height);
+            int trainTestBottom = tabTrainTest.Controls
+                .Cast<Control>()
+                .Where(control => control.Visible)
+                .Select(control => control.Bottom)
+                .DefaultIfEmpty(0)
+                .Max();
+
+            return Math.Max(220, trainTestBottom + tabHeaderHeight + 10);
         }
 
         private int GetMinimumNavigatorHeight()
@@ -304,8 +323,8 @@ namespace DataManager
             int sidePadding = ScaleLayout(24, layoutScale);
             int imageTop = ScaleLayout(25, layoutScale);
             int imageSidePadding = ScaleLayout(25, layoutScale);
-            int buttonHeight = ScaleLayout(42, layoutScale);
-            int comboHeight = ScaleLayout(28, layoutScale);
+            int buttonHeight = Math.Clamp(ScaleLayout(42, layoutScale), 28, 42);
+            int comboHeight = Math.Clamp(ScaleLayout(28, layoutScale), 24, 28);
             int speedComboWidth = ScaleLayout(80, layoutScale);
             int autoPlayWidth = ScaleLayout(88, layoutScale);
             int speedGap = ScaleLayout(16, layoutScale);
@@ -337,8 +356,8 @@ namespace DataManager
             int areaWidth = areaRight - areaLeft;
 
             int gap = Math.Clamp(areaWidth / 32, ScaleLayout(8, layoutScale), ScaleLayout(18, layoutScale));
-            int smallWidth = Math.Clamp((areaWidth - ScaleLayout(122, layoutScale) - (gap * 4)) / 4, ScaleLayout(52, layoutScale), ScaleLayout(92, layoutScale));
-            int playWidth = Math.Clamp(areaWidth - (smallWidth * 4) - (gap * 4), ScaleLayout(122, layoutScale), ScaleLayout(210, layoutScale));
+            int smallWidth = Math.Clamp((areaWidth - ScaleLayout(122, layoutScale) - (gap * 4)) / 4, 42, 92);
+            int playWidth = Math.Clamp(areaWidth - (smallWidth * 4) - (gap * 4), 112, 210);
             int totalWidth = (smallWidth * 4) + playWidth + (gap * 4);
             int x = areaLeft + Math.Max(0, (areaWidth - totalWidth) / 2);
 
@@ -363,7 +382,8 @@ namespace DataManager
         {
             float widthScale = width / 900f;
             float heightScale = height / 520f;
-            return Math.Clamp(Math.Min(widthScale, heightScale * 1.15f), 1f, 1.35f);
+            float largeFrameCompactScale = 1f - (Math.Max(0, height - 520) / 900f);
+            return Math.Clamp(Math.Min(Math.Min(widthScale, heightScale * 1.15f), largeFrameCompactScale), 0.68f, 1f);
         }
 
         private static int ScaleLayout(int value, float scale)
@@ -414,7 +434,7 @@ namespace DataManager
 
             int currentMouseY = PointToClient(Cursor.Position).Y;
             navigatorHeight = resizeStartNavigatorHeight + currentMouseY - resizeStartMouseY;
-            //ArrangeTimelineAndTabs();
+            ArrangeTimelineAndTabs();
         }
 
         private void picFrame_MouseLeave(object? sender, EventArgs e)
@@ -1724,6 +1744,7 @@ namespace DataManager
 
             currentTimelineStart = timelineStart;
             currentTimelineVisibleCount = visibleCount;
+            ApplyTimelineIconSpacing();
             lvTimeline.BeginUpdate();
             lvTimeline.Items.Clear();
             timelineImages.Images.Clear();
@@ -1735,7 +1756,7 @@ namespace DataManager
                 {
                     TubFrame frame = tubFrames[i];
                     string imageKey = i.ToString();
-                    timelineImages.Images.Add(imageKey, CreateTimelineThumbnail(frame.ImagePath));
+                    timelineImages.Images.Add(imageKey, CreateTimelineThumbnail(frame.ImagePath, GetTimelineThumbnailSize()));
                     lvTimeline.Items.Add(new ListViewItem("", imageKey) { Tag = i, ToolTipText = frame.ToString() });
                 }
             }
@@ -1750,7 +1771,9 @@ namespace DataManager
         private int GetTimelineVisibleCount()
         {
             int availableWidth = Math.Max(0, lvTimeline.ClientSize.Width - 8);
-            int countByWidth = availableWidth / TimelineIconSpacingX;
+            int thumbnailHeight = Math.Max(1, lvTimeline.ClientSize.Height - TimelineIconPadding - 4);
+            int desiredSpacingX = Math.Max(TimelineMinimumIconSpacingX, (int)Math.Round(thumbnailHeight * 4d / 3d) + TimelineIconPadding);
+            int countByWidth = availableWidth / desiredSpacingX;
             return Math.Clamp(countByWidth, TimelineMinimumVisibleCount, TimelineMaximumVisibleCount);
         }
 
@@ -2174,27 +2197,50 @@ namespace DataManager
             return new Bitmap(source);
         }
 
-        private static Image CreateTimelineThumbnail(string imagePath)
+        private static Image CreateTimelineThumbnail(string imagePath, Size thumbnailSize)
         {
             if (!File.Exists(imagePath))
             {
-                Bitmap missing = new Bitmap(TimelineThumbWidth, TimelineThumbHeight);
+                Bitmap missing = new Bitmap(thumbnailSize.Width, thumbnailSize.Height);
                 using Graphics graphics = Graphics.FromImage(missing);
                 graphics.Clear(Color.Black);
                 using Pen pen = new Pen(Color.DarkGray);
-                graphics.DrawRectangle(pen, 0, 0, TimelineThumbWidth - 1, TimelineThumbHeight - 1);
+                graphics.DrawRectangle(pen, 0, 0, thumbnailSize.Width - 1, thumbnailSize.Height - 1);
                 return missing;
             }
             using FileStream stream = new FileStream(imagePath, FileMode.Open, FileAccess.Read);
             using Image source = Image.FromStream(stream);
-            return new Bitmap(source, new Size(TimelineThumbWidth, TimelineThumbHeight));
+            return new Bitmap(source, thumbnailSize);
         }
 
         // ListView 기본 큰 아이콘 간격이 넓어서 썸네일이 한 줄에 촘촘히 보이도록 직접 조정한다.
         private void ApplyTimelineIconSpacing()
         {
             if (!lvTimeline.IsHandleCreated) return;
-            SendMessage(lvTimeline.Handle, LvmSetIconSpacing, IntPtr.Zero, MakeLParam(TimelineIconSpacingX, TimelineIconSpacingY));
+            Size thumbnailSize = GetTimelineThumbnailSize();
+            if (timelineImages.ImageSize != thumbnailSize)
+            {
+                timelineImages.ImageSize = thumbnailSize;
+            }
+            Size iconSpacing = GetTimelineIconSpacing();
+            SendMessage(lvTimeline.Handle, LvmSetIconSpacing, IntPtr.Zero, MakeLParam(iconSpacing.Width, iconSpacing.Height));
+        }
+
+        private Size GetTimelineThumbnailSize()
+        {
+            Size iconSpacing = GetTimelineIconSpacing();
+            return new Size(
+                Math.Max(1, iconSpacing.Width - TimelineIconPadding),
+                Math.Max(1, iconSpacing.Height - TimelineIconPadding));
+        }
+
+        private Size GetTimelineIconSpacing()
+        {
+            int visibleCount = currentTimelineVisibleCount > 0 ? currentTimelineVisibleCount : GetTimelineVisibleCount();
+            int availableWidth = Math.Max(TimelineMinimumIconSpacingX, lvTimeline.ClientSize.Width - 8);
+            int spacingX = Math.Max(TimelineMinimumIconSpacingX, availableWidth / Math.Max(1, visibleCount));
+            int spacingY = Math.Max(TimelineMinimumIconSpacingY, lvTimeline.ClientSize.Height - 4);
+            return new Size(spacingX, spacingY);
         }
 
         private static IntPtr MakeLParam(int lowWord, int highWord)
