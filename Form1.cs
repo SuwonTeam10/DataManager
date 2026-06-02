@@ -102,6 +102,13 @@ namespace DataManager
         private readonly Label lblGraphHover = new();
         private Rectangle graphPlotBounds = Rectangle.Empty;
         private List<TubFrame> graphVisibleFrames = new();
+        private readonly Panel panelTrainingLoss = new();
+        private readonly Label lblTrainingLossSummary = new();
+        private readonly Label lblTrainingLossHover = new();
+        private readonly Button btnCloseTrainingLoss = new();
+        private readonly PictureBox picTrainingLossGraph = new();
+        private readonly List<TrainingLossPoint> trainingLossPoints = new();
+        private Rectangle trainingLossPlotBounds = Rectangle.Empty;
         // ==========================================
         // 1. 초기화 및 생성자
         // ==========================================
@@ -190,6 +197,7 @@ namespace DataManager
             timelineDragTimer.Interval = 120;
             timelineDragTimer.Tick += timelineDragTimer_Tick;
 
+            InitializeTrainingLossOverlay();
             InitializeGraphControls();
             picTestImage.SizeMode = PictureBoxSizeMode.Zoom;
             MinimumSize = new Size(Math.Max(MinimumSize.Width, MinimumResponsiveFormWidth), MinimumSize.Height);
@@ -713,6 +721,7 @@ namespace DataManager
             DialogResult res = MessageBox.Show($"{modeText}({configPath})에서 AI 모델 학습을 시작하시겠습니까?\n\n선택된 데이터: {tubPath}\n(학습에는 시간이 오래 걸릴 수 있습니다.)", "학습 시작 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
             if (res == DialogResult.No) return;
 
+            ResetTrainingLossGraph();
             txtLog.AppendText(Environment.NewLine + "[Train] AI 모델 학습을 시작합니다...");
 
             UpdateStatusLabel("학습 중", Color.DarkOrange);
@@ -738,6 +747,8 @@ namespace DataManager
             bool isJunkLog = logText.Contains('\r') || logText.Contains('\b') || logText.Count(c => c == '=') > 10 || logText.Contains("\u001b");
             if (!isJunkLog) txtLog.AppendText(logText + Environment.NewLine);
 
+            CaptureTrainingLoss(logText);
+
             if (logText.Contains("[Errno 2]") || logText.Contains("Error") || logText.Contains("Exception"))
             {
                 MessageBox.Show($"학습 중 파이썬 오류가 발생했습니다.\n\n내용: {logText}", "학습 오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
@@ -756,6 +767,7 @@ namespace DataManager
                 txtLog.AppendText(Environment.NewLine + $"📁 자동 저장 위치: {configPath}/models/mypilot.h5");
                 txtLog.AppendText(Environment.NewLine + "--------------------------------------------------" + Environment.NewLine);
 
+                ShowTrainingLossGraph();
                 MessageBox.Show($"🎉 AI 모델 학습이 성공적으로 완료되었습니다!\n\n[자동 저장 위치]\n{configPath}/models/mypilot.h5\n\n[다음 단계 안내]\n1. 좌측의 [모델 선택] 버튼을 누르세요. (자동으로 세팅됩니다.)\n2. [테스트 이미지 선택]을 누르세요. (원격 서버 폴더 자동 세팅)\n3. [모델 테스트 실행] 버튼을 눌러보세요!", "학습 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 UpdateStatusLabel("대기 중", Color.Green);
             }
@@ -781,6 +793,270 @@ namespace DataManager
                     lblProgressPercent.Text = $"{percent}%";
                 }
             }
+        }
+
+        private void InitializeTrainingLossOverlay()
+        {
+            panelTrainingLoss.Dock = DockStyle.Fill;
+            panelTrainingLoss.BackColor = Color.White;
+            panelTrainingLoss.Padding = new Padding(6, 4, 6, 6);
+            panelTrainingLoss.Visible = false;
+
+            lblTrainingLossSummary.Dock = DockStyle.Top;
+            lblTrainingLossSummary.Height = 28;
+            lblTrainingLossSummary.TextAlign = ContentAlignment.MiddleLeft;
+            lblTrainingLossSummary.Font = new Font("나눔고딕", 9F, FontStyle.Bold);
+
+            btnCloseTrainingLoss.Text = "X";
+            btnCloseTrainingLoss.Size = new Size(28, 24);
+            btnCloseTrainingLoss.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+            btnCloseTrainingLoss.Click += (_, _) => HideTrainingLossGraph();
+
+            picTrainingLossGraph.Dock = DockStyle.Fill;
+            picTrainingLossGraph.BackColor = Color.White;
+            picTrainingLossGraph.BorderStyle = BorderStyle.FixedSingle;
+            picTrainingLossGraph.MouseMove += picTrainingLossGraph_MouseMove;
+            picTrainingLossGraph.MouseClick += picTrainingLossGraph_MouseClick;
+            picTrainingLossGraph.MouseLeave += (_, _) =>
+            {
+                lblTrainingLossHover.Visible = false;
+                picTrainingLossGraph.Cursor = Cursors.Default;
+            };
+            picTrainingLossGraph.Resize += (_, _) =>
+            {
+                if (panelTrainingLoss.Visible) DrawTrainingLossGraph();
+            };
+
+            lblTrainingLossHover.AutoSize = true;
+            lblTrainingLossHover.BackColor = Color.FromArgb(40, 40, 40);
+            lblTrainingLossHover.ForeColor = Color.White;
+            lblTrainingLossHover.Font = new Font(SystemFonts.DefaultFont.FontFamily, 9, FontStyle.Bold);
+            lblTrainingLossHover.Padding = new Padding(8, 5, 8, 5);
+            lblTrainingLossHover.BorderStyle = BorderStyle.FixedSingle;
+            lblTrainingLossHover.Visible = false;
+            picTrainingLossGraph.Controls.Add(lblTrainingLossHover);
+
+            panelTrainingLoss.Controls.Add(picTrainingLossGraph);
+            panelTrainingLoss.Controls.Add(lblTrainingLossSummary);
+            panelTrainingLoss.Controls.Add(btnCloseTrainingLoss);
+            panelTrainingLoss.Resize += (_, _) => PositionTrainingLossCloseButton();
+            groupTimeline.Controls.Add(panelTrainingLoss);
+            PositionTrainingLossCloseButton();
+        }
+
+        private void PositionTrainingLossCloseButton()
+        {
+            btnCloseTrainingLoss.Location = new Point(
+                Math.Max(6, panelTrainingLoss.ClientSize.Width - btnCloseTrainingLoss.Width - 8),
+                5);
+            btnCloseTrainingLoss.BringToFront();
+        }
+
+        private void ResetTrainingLossGraph()
+        {
+            trainingLossPoints.Clear();
+            HideTrainingLossGraph();
+        }
+
+        private void HideTrainingLossGraph()
+        {
+            panelTrainingLoss.Visible = false;
+            lblTrainingLossHover.Visible = false;
+            lvTimeline.Visible = true;
+        }
+
+        private void CaptureTrainingLoss(string logText)
+        {
+            Match lossMatch = Regex.Match(logText, @"\bloss\s*[:=]\s*([-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?)");
+            if (!lossMatch.Success) return;
+
+            if (!double.TryParse(lossMatch.Groups[1].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out double loss))
+            {
+                return;
+            }
+
+            double? valLoss = null;
+            Match valLossMatch = Regex.Match(logText, @"\bval_loss\s*[:=]\s*([-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?)");
+            if (valLossMatch.Success
+                && double.TryParse(valLossMatch.Groups[1].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out double parsedValLoss))
+            {
+                valLoss = parsedValLoss;
+            }
+
+            int frameIndex = MapLossOrderToFrameIndex(trainingLossPoints.Count);
+            trainingLossPoints.Add(new TrainingLossPoint(trainingLossPoints.Count + 1, frameIndex, loss, valLoss));
+        }
+
+        private void ShowTrainingLossGraph()
+        {
+            if (trainingLossPoints.Count == 0)
+            {
+                lblTrainingLossSummary.Text = $"학습 loss 데이터 없음  |  프레임 {tubFrames.Count:N0}개  |  loss가 낮아질수록 예측 오차가 줄어듭니다.";
+            }
+            else
+            {
+                TrainingLossPoint latest = trainingLossPoints[^1];
+                int score = CalculateTrainingScore(latest.Loss);
+                lblTrainingLossSummary.Text =
+                    $"전체 학습 점수 {score}점 ({GetTrainingScoreGrade(score)})  |  프레임 {tubFrames.Count:N0}개  |  최종 loss {latest.Loss:0.#####}  |  loss가 낮아질수록 예측 오차가 줄어듭니다.";
+            }
+
+            lvTimeline.Visible = false;
+            panelTrainingLoss.Visible = true;
+            panelTrainingLoss.BringToFront();
+            DrawTrainingLossGraph();
+        }
+
+        private void DrawTrainingLossGraph()
+        {
+            if (picTrainingLossGraph.ClientSize.Width <= 0 || picTrainingLossGraph.ClientSize.Height <= 0) return;
+
+            Bitmap bitmap = new Bitmap(picTrainingLossGraph.ClientSize.Width, picTrainingLossGraph.ClientSize.Height);
+            using Graphics graphics = Graphics.FromImage(bitmap);
+            graphics.Clear(Color.White);
+            graphics.SmoothingMode = SmoothingMode.AntiAlias;
+
+            if (trainingLossPoints.Count == 0)
+            {
+                trainingLossPlotBounds = Rectangle.Empty;
+                DrawCenteredGraphMessage(graphics, bitmap.Size, "학습 로그에서 loss 값을 찾지 못했습니다.");
+                SetTrainingLossGraphImage(bitmap);
+                return;
+            }
+
+            Rectangle plot = new Rectangle(70, 14, Math.Max(80, bitmap.Width - 98), Math.Max(40, bitmap.Height - 42));
+            trainingLossPlotBounds = plot;
+
+            double minLoss = trainingLossPoints.Min(point => point.Loss);
+            double maxLoss = trainingLossPoints.Max(point => point.Loss);
+            if (Math.Abs(maxLoss - minLoss) < 1e-12)
+            {
+                double pad = Math.Max(0.001, Math.Abs(maxLoss) * 0.1);
+                minLoss = Math.Max(0, minLoss - pad);
+                maxLoss += pad;
+            }
+
+            using Pen framePen = new Pen(Color.FromArgb(120, 120, 120));
+            using Pen gridPen = new Pen(Color.FromArgb(225, 225, 225));
+            using Pen lossPen = new Pen(Color.RoyalBlue, 2f);
+            using Brush textBrush = new SolidBrush(Color.FromArgb(55, 55, 55));
+            using Font smallFont = new Font("나눔고딕", 8F);
+
+            for (int i = 0; i <= 4; i++)
+            {
+                int y = plot.Top + (plot.Height * i / 4);
+                double value = maxLoss - ((maxLoss - minLoss) * i / 4);
+                graphics.DrawLine(gridPen, plot.Left, y, plot.Right, y);
+                graphics.DrawString(value.ToString("0.####", CultureInfo.InvariantCulture), smallFont, textBrush, 8, y - 7);
+            }
+
+            graphics.DrawRectangle(framePen, plot);
+            PointF[] points = trainingLossPoints
+                .Select((_, index) => GetTrainingLossPointLocation(index, minLoss, maxLoss, plot))
+                .ToArray();
+
+            if (points.Length == 1)
+            {
+                graphics.FillEllipse(Brushes.RoyalBlue, points[0].X - 3, points[0].Y - 3, 6, 6);
+            }
+            else
+            {
+                graphics.DrawLines(lossPen, points);
+            }
+
+            graphics.DrawString("loss", smallFont, Brushes.RoyalBlue, plot.Left + 6, plot.Top + 4);
+            graphics.DrawString("학습 진행", smallFont, textBrush, plot.Right - 56, plot.Bottom + 6);
+            SetTrainingLossGraphImage(bitmap);
+        }
+
+        private PointF GetTrainingLossPointLocation(int lossIndex, double minLoss, double maxLoss, Rectangle plot)
+        {
+            double xRatio = trainingLossPoints.Count <= 1 ? 0 : (double)lossIndex / (trainingLossPoints.Count - 1);
+            double yRatio = (trainingLossPoints[lossIndex].Loss - minLoss) / (maxLoss - minLoss);
+            float x = plot.Left + (float)(plot.Width * xRatio);
+            float y = plot.Bottom - (float)(plot.Height * yRatio);
+            return new PointF(x, y);
+        }
+
+        private void SetTrainingLossGraphImage(Bitmap bitmap)
+        {
+            Image? oldImage = picTrainingLossGraph.Image;
+            picTrainingLossGraph.Image = bitmap;
+            oldImage?.Dispose();
+        }
+
+        private void picTrainingLossGraph_MouseMove(object? sender, MouseEventArgs e)
+        {
+            int lossIndex = GetTrainingLossIndexAt(e.Location);
+            if (lossIndex < 0)
+            {
+                lblTrainingLossHover.Visible = false;
+                picTrainingLossGraph.Cursor = Cursors.Default;
+                return;
+            }
+
+            TrainingLossPoint point = trainingLossPoints[lossIndex];
+            string frameText = point.FrameIndex >= 0 && point.FrameIndex < tubFrames.Count
+                ? $"프레임 {tubFrames[point.FrameIndex].FrameNumber:D6}"
+                : "프레임 없음";
+            int score = CalculateTrainingScore(point.Loss);
+            lblTrainingLossHover.Text = $"{frameText}\nloss {point.Loss:0.#####}\n점수 {score}점 ({GetTrainingScoreGrade(score)})";
+            if (point.ValLoss.HasValue) lblTrainingLossHover.Text += $"\nval_loss {point.ValLoss.Value:0.#####}";
+
+            int x = Math.Min(e.X + 14, picTrainingLossGraph.ClientSize.Width - lblTrainingLossHover.Width - 8);
+            int y = Math.Min(e.Y + 14, picTrainingLossGraph.ClientSize.Height - lblTrainingLossHover.Height - 8);
+            lblTrainingLossHover.Location = new Point(Math.Max(8, x), Math.Max(8, y));
+            lblTrainingLossHover.Visible = true;
+            lblTrainingLossHover.BringToFront();
+            picTrainingLossGraph.Cursor = Cursors.Hand;
+        }
+
+        private void picTrainingLossGraph_MouseClick(object? sender, MouseEventArgs e)
+        {
+            int lossIndex = GetTrainingLossIndexAt(e.Location);
+            if (lossIndex < 0) return;
+
+            int frameIndex = trainingLossPoints[lossIndex].FrameIndex;
+            if (frameIndex >= 0 && frameIndex < tubFrames.Count)
+            {
+                ShowFrame(frameIndex);
+            }
+        }
+
+        private int GetTrainingLossIndexAt(Point location)
+        {
+            if (trainingLossPoints.Count == 0 || trainingLossPlotBounds == Rectangle.Empty) return -1;
+            if (!trainingLossPlotBounds.Contains(location)) return -1;
+
+            double ratio = trainingLossPlotBounds.Width <= 0
+                ? 0
+                : (double)(location.X - trainingLossPlotBounds.Left) / trainingLossPlotBounds.Width;
+            int index = (int)Math.Round(ratio * (trainingLossPoints.Count - 1));
+            return Math.Clamp(index, 0, trainingLossPoints.Count - 1);
+        }
+
+        private int MapLossOrderToFrameIndex(int lossOrder)
+        {
+            if (tubFrames.Count == 0) return -1;
+            int estimatedTotal = Math.Max(1, progressBarTrain.Maximum);
+            double ratio = estimatedTotal <= 1 ? 0 : (double)lossOrder / (estimatedTotal - 1);
+            return Math.Clamp((int)Math.Round(ratio * (tubFrames.Count - 1)), 0, tubFrames.Count - 1);
+        }
+
+        private static int CalculateTrainingScore(double loss)
+        {
+            if (double.IsNaN(loss) || double.IsInfinity(loss) || loss < 0) return 0;
+            double score = 100.0 / (1.0 + (loss * 100.0));
+            return Math.Clamp((int)Math.Round(score), 0, 100);
+        }
+
+        private static string GetTrainingScoreGrade(int score)
+        {
+            if (score >= 90) return "매우 좋음";
+            if (score >= 75) return "좋음";
+            if (score >= 60) return "보통";
+            if (score >= 40) return "낮음";
+            return "나쁨";
         }
 
         private void btnSelectModel_Click(object sender, EventArgs e)
@@ -1223,6 +1499,7 @@ namespace DataManager
         private async Task LoadTubAsync(string selectedTubPath)
         {
             SetPlaybackState(false);
+            HideTrainingLossGraph();
 
             // 신버전 Tub은 catalog_*.catalog, 구버전 Tub은 record_*.json 파일을 사용한다.
             // 사용자가 data 폴더를 선택해도 내부 tub 폴더를 찾을 수 있도록 하위 폴더까지 검색한다.
@@ -2830,6 +3107,22 @@ namespace DataManager
             public TubFrame Frame { get; }
             public TrashEntry(TubFrame frame) => Frame = frame;
             public override string ToString() => $"Frame {Frame.FrameNumber:D6} · {Frame.DeleteReason}";
+        }
+
+        private sealed class TrainingLossPoint
+        {
+            public int Order { get; }
+            public int FrameIndex { get; }
+            public double Loss { get; }
+            public double? ValLoss { get; }
+
+            public TrainingLossPoint(int order, int frameIndex, double loss, double? valLoss)
+            {
+                Order = order;
+                FrameIndex = frameIndex;
+                Loss = loss;
+                ValLoss = valLoss;
+            }
         }
 
         // 표시용 이미지 LRU 캐시. 용량을 초과하면 가장 오래 전 사용한 이미지를 Dispose하여 메모리를 제한한다.
