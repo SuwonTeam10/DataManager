@@ -3017,7 +3017,7 @@ namespace DataManager
 
         private void UpdateAutoPlayLoopVisual()
         {
-            chkAutoPlay.BackColor = chkAutoPlay.Checked ? Color.FromArgb(59, 130, 246) : Color.White;
+            chkAutoPlay.BackColor = chkAutoPlay.Checked ? Color.FromArgb(59, 130, 246) : Color.LightSkyBlue;
             chkAutoPlay.ForeColor = chkAutoPlay.Checked ? Color.White : Color.Black;
         }
 
@@ -3039,6 +3039,11 @@ namespace DataManager
         }
 
         private void lblTubPath_Click(object sender, EventArgs e)
+        {
+
+        }
+
+        private void groupDataView_Enter(object sender, EventArgs e)
         {
 
         }
