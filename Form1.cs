@@ -63,6 +63,7 @@ namespace DataManager
         private const int MinNavigatorHeight = 360;
         private const int TimelinePanelHeight = 168;    //
         private const int TimelineMinimumPanelHeight = 42;
+        private const int TrainingLossMinimumPanelHeight = 130;
         private const int DefaultTabPanelHeight = 314;  //
         private const int MinimumTabVisibleHeight = 130;
         private const int LayoutGap = 8;
@@ -259,8 +260,11 @@ namespace DataManager
 
             int tabHeight = GetResponsiveTabHeight();
             int timelineHeight = GetResponsiveTimelineHeight();
+            int timelineMinimumHeight = panelTrainingLoss.Visible
+                ? TrainingLossMinimumPanelHeight
+                : TimelineMinimumPanelHeight;
 
-            timelineHeight = Math.Max(TimelineMinimumPanelHeight, timelineHeight);
+            timelineHeight = Math.Max(timelineMinimumHeight, timelineHeight);
 
             int surplus = -GetLowerLayoutShortage(appliedNavigatorHeight, timelineHeight, tabHeight, bottomGap, resizeBarTopGap);
             if (surplus > 0)
@@ -278,7 +282,7 @@ namespace DataManager
 
             if (shortage > 0)
             {
-                int timelineShrink = Math.Min(shortage, timelineHeight - TimelineMinimumPanelHeight);
+                int timelineShrink = Math.Min(shortage, timelineHeight - timelineMinimumHeight);
                 timelineHeight -= timelineShrink;
                 shortage -= timelineShrink;
             }
@@ -523,7 +527,7 @@ namespace DataManager
             lblTrastList.Location = new Point(listLeft, 16);
             lstTrash.SetBounds(listLeft, 50, listWidth, Math.Max(92, groupBoxTrash.ClientSize.Height - 86));
 
-            int progressTop = Math.Max(btnReloadTub.Bottom + 14, groupBoxTrash.ClientSize.Height - 40);
+            int progressTop = Math.Max(btnReloadTub.Bottom + 14, groupBoxTrash.ClientSize.Height - 36);
             lblTrashProgress.Location = new Point(leftColumn, progressTop + 3);
             progressBarTrash.SetBounds(leftColumn + 104, progressTop + 2, 165, 19);
             lblTrashPercent.Location = new Point(progressBarTrash.Right + 10, progressTop + 3);
@@ -939,13 +943,12 @@ namespace DataManager
 
         private void InitializeTrainingLossOverlay()
         {
-            panelTrainingLoss.Dock = DockStyle.Fill;
+            panelTrainingLoss.Dock = DockStyle.None;
             panelTrainingLoss.BackColor = Color.White;
             panelTrainingLoss.Padding = new Padding(6, 4, 6, 6);
             panelTrainingLoss.Visible = false;
 
-            lblTrainingLossSummary.Dock = DockStyle.Top;
-            lblTrainingLossSummary.Height = 28;
+            lblTrainingLossSummary.Dock = DockStyle.None;
             lblTrainingLossSummary.TextAlign = ContentAlignment.MiddleLeft;
             lblTrainingLossSummary.Font = new Font("나눔고딕", 9F, FontStyle.Bold);
 
@@ -954,9 +957,10 @@ namespace DataManager
             btnCloseTrainingLoss.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             btnCloseTrainingLoss.Click += (_, _) => HideTrainingLossGraph();
 
-            picTrainingLossGraph.Dock = DockStyle.Fill;
+            picTrainingLossGraph.Dock = DockStyle.None;
             picTrainingLossGraph.BackColor = Color.White;
             picTrainingLossGraph.BorderStyle = BorderStyle.FixedSingle;
+            picTrainingLossGraph.SizeMode = PictureBoxSizeMode.Normal;
             picTrainingLossGraph.MouseMove += picTrainingLossGraph_MouseMove;
             picTrainingLossGraph.MouseClick += picTrainingLossGraph_MouseClick;
             picTrainingLossGraph.MouseLeave += (_, _) =>
@@ -981,17 +985,53 @@ namespace DataManager
             panelTrainingLoss.Controls.Add(picTrainingLossGraph);
             panelTrainingLoss.Controls.Add(lblTrainingLossSummary);
             panelTrainingLoss.Controls.Add(btnCloseTrainingLoss);
-            panelTrainingLoss.Resize += (_, _) => PositionTrainingLossCloseButton();
+            panelTrainingLoss.Resize += (_, _) =>
+            {
+                LayoutTrainingLossOverlay();
+                if (panelTrainingLoss.Visible) DrawTrainingLossGraph();
+            };
+            groupTimeline.Resize += (_, _) =>
+            {
+                if (!panelTrainingLoss.Visible) return;
+                LayoutTrainingLossOverlay();
+                DrawTrainingLossGraph();
+            };
             groupTimeline.Controls.Add(panelTrainingLoss);
-            PositionTrainingLossCloseButton();
+            LayoutTrainingLossOverlay();
         }
 
-        private void PositionTrainingLossCloseButton()
+        private void LayoutTrainingLossOverlay()
         {
+            Rectangle timelineBounds = lvTimeline.Bounds;
+            if (timelineBounds.Width <= 0 || timelineBounds.Height <= 0)
+            {
+                timelineBounds = new Rectangle(
+                    groupTimeline.Padding.Left,
+                    groupTimeline.Padding.Top + 18,
+                    Math.Max(1, groupTimeline.ClientSize.Width - groupTimeline.Padding.Horizontal),
+                    Math.Max(1, groupTimeline.ClientSize.Height - groupTimeline.Padding.Vertical - 18));
+            }
+
+            panelTrainingLoss.SetBounds(
+                timelineBounds.Left,
+                timelineBounds.Top,
+                timelineBounds.Width,
+                timelineBounds.Height);
+
+            int left = panelTrainingLoss.Padding.Left;
+            int top = panelTrainingLoss.Padding.Top;
+            int width = Math.Max(1, panelTrainingLoss.ClientSize.Width - panelTrainingLoss.Padding.Horizontal);
+            int summaryWidth = Math.Max(1, width - btnCloseTrainingLoss.Width - 8);
+
+            lblTrainingLossSummary.SetBounds(left, top, summaryWidth, 28);
             btnCloseTrainingLoss.Location = new Point(
                 Math.Max(6, panelTrainingLoss.ClientSize.Width - btnCloseTrainingLoss.Width - 8),
                 5);
             btnCloseTrainingLoss.BringToFront();
+
+            int graphTop = lblTrainingLossSummary.Bottom + 4;
+            int graphHeight = Math.Max(30, panelTrainingLoss.ClientSize.Height - graphTop - panelTrainingLoss.Padding.Bottom);
+            picTrainingLossGraph.SetBounds(left, graphTop, width, graphHeight);
         }
 
         private void ResetTrainingLossGraph()
@@ -1005,6 +1045,7 @@ namespace DataManager
             panelTrainingLoss.Visible = false;
             lblTrainingLossHover.Visible = false;
             lvTimeline.Visible = true;
+            ArrangeTimelineAndTabs();
         }
 
         private void CaptureTrainingLoss(string logText)
@@ -1025,7 +1066,7 @@ namespace DataManager
                 valLoss = parsedValLoss;
             }
 
-            int frameIndex = MapLossOrderToFrameIndex(trainingLossPoints.Count);
+            int frameIndex = MapLossOrderToFrameIndex(trainingLossPoints.Count, trainingLossPoints.Count + 1);
             trainingLossPoints.Add(new TrainingLossPoint(trainingLossPoints.Count + 1, frameIndex, loss, valLoss));
         }
 
@@ -1046,7 +1087,14 @@ namespace DataManager
             lvTimeline.Visible = false;
             panelTrainingLoss.Visible = true;
             panelTrainingLoss.BringToFront();
+            ArrangeTimelineAndTabs();
+            LayoutTrainingLossOverlay();
             DrawTrainingLossGraph();
+            BeginInvoke((Action)(() =>
+            {
+                LayoutTrainingLossOverlay();
+                DrawTrainingLossGraph();
+            }));
         }
 
         private void DrawTrainingLossGraph()
@@ -1066,7 +1114,7 @@ namespace DataManager
                 return;
             }
 
-            Rectangle plot = new Rectangle(70, 14, Math.Max(80, bitmap.Width - 98), Math.Max(40, bitmap.Height - 42));
+            Rectangle plot = new Rectangle(58, 8, Math.Max(80, bitmap.Width - 70), Math.Max(24, bitmap.Height - 18));
             trainingLossPlotBounds = plot;
 
             double minLoss = trainingLossPoints.Min(point => point.Loss);
@@ -1107,7 +1155,7 @@ namespace DataManager
             }
 
             graphics.DrawString("loss", smallFont, Brushes.RoyalBlue, plot.Left + 6, plot.Top + 4);
-            graphics.DrawString("학습 진행", smallFont, textBrush, plot.Right - 56, plot.Bottom + 6);
+            graphics.DrawString("학습 진행", smallFont, textBrush, plot.Right - 56, plot.Bottom - 16);
             SetTrainingLossGraphImage(bitmap);
         }
 
@@ -1138,8 +1186,9 @@ namespace DataManager
             }
 
             TrainingLossPoint point = trainingLossPoints[lossIndex];
-            string frameText = point.FrameIndex >= 0 && point.FrameIndex < tubFrames.Count
-                ? $"프레임 {tubFrames[point.FrameIndex].FrameNumber:D6}"
+            int frameIndex = GetFrameIndexForLossIndex(lossIndex);
+            string frameText = frameIndex >= 0 && frameIndex < tubFrames.Count
+                ? $"프레임 {tubFrames[frameIndex].FrameNumber:D6}"
                 : "프레임 없음";
             int score = CalculateTrainingScore(point.Loss);
             lblTrainingLossHover.Text = $"{frameText}\nloss {point.Loss:0.#####}\n점수 {score}점 ({GetTrainingScoreGrade(score)})";
@@ -1158,7 +1207,7 @@ namespace DataManager
             int lossIndex = GetTrainingLossIndexAt(e.Location);
             if (lossIndex < 0) return;
 
-            int frameIndex = trainingLossPoints[lossIndex].FrameIndex;
+            int frameIndex = GetFrameIndexForLossIndex(lossIndex);
             if (frameIndex >= 0 && frameIndex < tubFrames.Count)
             {
                 ShowFrame(frameIndex);
@@ -1177,10 +1226,15 @@ namespace DataManager
             return Math.Clamp(index, 0, trainingLossPoints.Count - 1);
         }
 
-        private int MapLossOrderToFrameIndex(int lossOrder)
+        private int GetFrameIndexForLossIndex(int lossIndex)
+        {
+            return MapLossOrderToFrameIndex(lossIndex, trainingLossPoints.Count);
+        }
+
+        private int MapLossOrderToFrameIndex(int lossOrder, int totalLossCount)
         {
             if (tubFrames.Count == 0) return -1;
-            int estimatedTotal = Math.Max(1, progressBarTrain.Maximum);
+            int estimatedTotal = Math.Max(1, totalLossCount);
             double ratio = estimatedTotal <= 1 ? 0 : (double)lossOrder / (estimatedTotal - 1);
             return Math.Clamp((int)Math.Round(ratio * (tubFrames.Count - 1)), 0, tubFrames.Count - 1);
         }
