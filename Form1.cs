@@ -523,7 +523,7 @@ namespace DataManager
             lblTrastList.Location = new Point(listLeft, 16);
             lstTrash.SetBounds(listLeft, 50, listWidth, Math.Max(92, groupBoxTrash.ClientSize.Height - 86));
 
-            int progressTop = Math.Max(btnReloadTub.Bottom + 14, groupBoxTrash.ClientSize.Height - 35);
+            int progressTop = Math.Max(btnReloadTub.Bottom + 14, groupBoxTrash.ClientSize.Height - 40);
             lblTrashProgress.Location = new Point(leftColumn, progressTop + 3);
             progressBarTrash.SetBounds(leftColumn + 104, progressTop + 2, 165, 19);
             lblTrashPercent.Location = new Point(progressBarTrash.Right + 10, progressTop + 3);
