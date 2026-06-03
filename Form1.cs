@@ -259,7 +259,7 @@ namespace DataManager
             int extraHeight = Math.Max(0, ClientSize.Height - 881);
 
             int tabHeight = DefaultTabPanelHeight + (extraHeight * 30 / 100);
-            int timelineHeight = TimelinePanelHeight + (extraHeight * 15 / 100);
+            int timelineHeight = GetResponsiveTimelineHeight();
 
             tabHeight = Math.Max(MinimumTabVisibleHeight, tabHeight);
             timelineHeight = Math.Max(TimelineMinimumPanelHeight, timelineHeight);
@@ -267,7 +267,7 @@ namespace DataManager
             int shortage = GetLowerLayoutShortage(appliedNavigatorHeight, timelineHeight, tabHeight, bottomGap, resizeBarTopGap);
             if (shortage > 0)
             {
-                int tabShrink = Math.Min(shortage, tabHeight - MinimumTabPanelHeight);
+                int tabShrink = Math.Min(shortage, tabHeight - MinimumTabVisibleHeight);
                 tabHeight -= tabShrink;
                 shortage -= tabShrink;
             }
@@ -298,6 +298,26 @@ namespace DataManager
             ArrangeLeftDataPanels(groupTubNavigator.Bottom);
 
             ArrangeNavigatorControls();
+        }
+
+        private int GetLowerLayoutShortage(int navigatorHeightValue, int timelineHeight, int tabHeight, int bottomGap, int resizeBarTopGap)
+        {
+            int availableBelowNavigator = ClientSize.Height
+                - bottomGap
+                - groupTubNavigator.Top
+                - navigatorHeightValue
+                - resizeBarTopGap
+                - FrameResizeBarHeight
+                - (LayoutGap * 2);
+
+            return (timelineHeight + tabHeight) - availableBelowNavigator;
+        }
+
+        private int GetResponsiveTimelineHeight()
+        {
+            float scaleY = ClientSize.Height / (float)DesignBaseHeight;
+            int preferredHeight = (int)Math.Round(TimelinePanelHeight * scaleY);
+            return Math.Clamp(preferredHeight, TimelineMinimumPanelHeight, TimelinePanelHeight);
         }
 
 
@@ -341,7 +361,7 @@ namespace DataManager
 
             groupTimeline.SetBounds(
                 Sx(56), Sy(1005),
-                Sx(2397), Sy(168)
+                Sx(2397), GetResponsiveTimelineHeight()
             );
 
             tabMain.SetBounds(
@@ -451,14 +471,40 @@ namespace DataManager
 
             int margin = 8;
             int trashHeight = Math.Max(178, tabCleaner.ClientSize.Height - (margin * 2));
-            groupBoxTrash.Height = trashHeight;
 
-            int bottomRowY = trashHeight - 31;
-            lblTrashProgress.Top = bottomRowY + 3;
-            progressBarTrash.Top = bottomRowY + 3;
-            lblTrashPercent.Top = bottomRowY + 3;
+            btnFilter.Location = new Point(376, 21);
+            chkThrottleZero.Location = new Point(384, 64);
+            chkMissingImage.Location = new Point(384, 103);
+            chkAbnormalAngle.Location = new Point(384, 142);
+            chkThrottleZero.Visible = true;
+            chkMissingImage.Visible = true;
+            chkAbnormalAngle.Visible = true;
 
-            lstTrash.Height = Math.Max(90, bottomRowY - lstTrash.Top - 5);
+            int filterRight = Math.Max(btnFilter.Right, Math.Max(chkThrottleZero.Right, Math.Max(chkMissingImage.Right, chkAbnormalAngle.Right)));
+            int trashLeftLimit = filterRight + 26;
+            int availableTrashWidth = tabCleaner.ClientSize.Width - trashLeftLimit - margin;
+            int trashWidth = Math.Max(420, Math.Min(921, availableTrashWidth));
+            int trashLeft = Math.Max(trashLeftLimit, tabCleaner.ClientSize.Width - trashWidth - margin);
+            groupBoxTrash.SetBounds(trashLeft, margin, trashWidth, trashHeight);
+
+            int listWidth = Math.Clamp(groupBoxTrash.ClientSize.Width / 2, 300, 460);
+            int listLeft = groupBoxTrash.ClientSize.Width - listWidth - 28;
+            int controlsRight = listLeft - 28;
+            int leftColumn = 40;
+            int rightColumn = Math.Min(262, Math.Max(leftColumn + 170, controlsRight - 240));
+
+            btnDelete.SetBounds(leftColumn, 34, 151, 36);
+            btnRestore.SetBounds(leftColumn, 78, 151, 36);
+            btnEmptyTrash.SetBounds(rightColumn, 34, Math.Min(175, controlsRight - rightColumn), 36);
+            btnReloadTub.SetBounds(rightColumn, 78, Math.Min(232, controlsRight - rightColumn), 36);
+
+            lblTrastList.Location = new Point(listLeft, 16);
+            lstTrash.SetBounds(listLeft, 50, listWidth, Math.Max(92, groupBoxTrash.ClientSize.Height - 86));
+
+            int progressTop = Math.Max(btnReloadTub.Bottom + 14, groupBoxTrash.ClientSize.Height - 30);
+            lblTrashProgress.Location = new Point(leftColumn, progressTop + 3);
+            progressBarTrash.SetBounds(leftColumn + 104, progressTop + 2, 165, 19);
+            lblTrashPercent.Location = new Point(progressBarTrash.Right + 10, progressTop + 3);
         }
 
         private bool IsFrameResizeGrip(Point location)
