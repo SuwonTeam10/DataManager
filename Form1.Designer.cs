@@ -36,7 +36,6 @@
             lblThrottle2 = new Label();
             lblAngle2 = new Label();
             lblFrame2 = new Label();
-            panel3 = new Panel();
             pictureBox2 = new PictureBox();
             pictureBoxAngle = new PictureBox();
             pictureBoxFrame = new PictureBox();
@@ -125,7 +124,6 @@
             chkUseVenv = new CheckBox();
             rdoRemote = new RadioButton();
             groupBoxDataLoad = new GroupBox();
-            panel2 = new Panel();
             groupDataView.SuspendLayout();
             ((System.ComponentModel.ISupportInitialize)pictureBox2).BeginInit();
             ((System.ComponentModel.ISupportInitialize)pictureBoxAngle).BeginInit();
@@ -165,6 +163,7 @@
             // 
             // btnLoadTub
             // 
+            btnLoadTub.BackColor = Color.Ivory;
             btnLoadTub.Font = new Font("나눔고딕", 10.875F, FontStyle.Regular, GraphicsUnit.Point, 0);
             btnLoadTub.Image = (Image)resources.GetObject("btnLoadTub.Image");
             btnLoadTub.ImageAlign = ContentAlignment.MiddleLeft;
@@ -175,16 +174,14 @@
             btnLoadTub.Size = new Size(238, 54);
             btnLoadTub.TabIndex = 2;
             btnLoadTub.Text = "Data 폴더 열기\r\n";
-            btnLoadTub.UseVisualStyleBackColor = true;
+            btnLoadTub.UseVisualStyleBackColor = false;
             btnLoadTub.Click += btnLoadTub_Click;
             // 
             // groupDataView
             // 
-            groupDataView.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left;
             groupDataView.Controls.Add(lblThrottle2);
             groupDataView.Controls.Add(lblAngle2);
             groupDataView.Controls.Add(lblFrame2);
-            groupDataView.Controls.Add(panel3);
             groupDataView.Controls.Add(pictureBox2);
             groupDataView.Controls.Add(pictureBoxAngle);
             groupDataView.Controls.Add(pictureBoxFrame);
@@ -203,6 +200,7 @@
             groupDataView.TabIndex = 5;
             groupDataView.TabStop = false;
             groupDataView.Text = "데이터 정보";
+            groupDataView.Enter += groupDataView_Enter;
             // 
             // lblThrottle2
             // 
@@ -236,15 +234,6 @@
             lblFrame2.Size = new Size(82, 23);
             lblFrame2.TabIndex = 10;
             lblFrame2.Text = "000000";
-            // 
-            // panel3
-            // 
-            panel3.BackColor = Color.Silver;
-            panel3.Location = new Point(2, 179);
-            panel3.Margin = new Padding(2);
-            panel3.Name = "panel3";
-            panel3.Size = new Size(279, 1);
-            panel3.TabIndex = 9;
             // 
             // pictureBox2
             // 
@@ -353,7 +342,6 @@
             // 
             // groupTimeline
             // 
-            groupTimeline.Anchor = AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
             groupTimeline.Controls.Add(lvTimeline);
             groupTimeline.Font = new Font("Microsoft Sans Serif", 10.125F, FontStyle.Regular, GraphicsUnit.Point, 129);
             groupTimeline.Location = new Point(26, 264);
@@ -381,7 +369,6 @@
             // 
             // tabMain
             // 
-            tabMain.Anchor = AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
             tabMain.Controls.Add(tabCleaner);
             tabMain.Controls.Add(tabGraph);
             tabMain.Controls.Add(tabTrainTest);
@@ -394,6 +381,7 @@
             // 
             // tabCleaner
             // 
+            tabCleaner.BackColor = Color.White;
             tabCleaner.Controls.Add(groupBoxTrash);
             tabCleaner.Controls.Add(chkAbnormalAngle);
             tabCleaner.Controls.Add(chkMissingImage);
@@ -409,7 +397,6 @@
             tabCleaner.Size = new Size(1140, 247);
             tabCleaner.TabIndex = 0;
             tabCleaner.Text = "데이터 정리";
-            tabCleaner.UseVisualStyleBackColor = true;
             // 
             // groupBoxTrash
             // 
@@ -427,8 +414,8 @@
             groupBoxTrash.Location = new Point(546, 5);
             groupBoxTrash.Margin = new Padding(2);
             groupBoxTrash.Name = "groupBoxTrash";
-            groupBoxTrash.Padding = new Padding(2);
-            groupBoxTrash.Size = new Size(576, 152);
+            groupBoxTrash.Padding = new Padding(4);
+            groupBoxTrash.Size = new Size(921, 233);
             groupBoxTrash.TabIndex = 20;
             groupBoxTrash.TabStop = false;
             groupBoxTrash.Text = "휴지통";
@@ -437,8 +424,7 @@
             // 
             lblTrashPercent.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
             lblTrashPercent.AutoSize = true;
-            lblTrashPercent.Location = new Point(271, 116);
-            lblTrashPercent.Margin = new Padding(2, 0, 2, 0);
+            lblTrashPercent.Location = new Point(441, 172);
             lblTrashPercent.Name = "lblTrashPercent";
             lblTrashPercent.Size = new Size(33, 17);
             lblTrashPercent.TabIndex = 22;
@@ -448,8 +434,7 @@
             // 
             lblTrashProgress.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
             lblTrashProgress.AutoSize = true;
-            lblTrashProgress.Location = new Point(12, 116);
-            lblTrashProgress.Margin = new Padding(2, 0, 2, 0);
+            lblTrashProgress.Location = new Point(27, 172);
             lblTrashProgress.Name = "lblTrashProgress";
             lblTrashProgress.Size = new Size(87, 17);
             lblTrashProgress.TabIndex = 21;
@@ -458,8 +443,7 @@
             // progressBarTrash
             // 
             progressBarTrash.Anchor = AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
-            progressBarTrash.Location = new Point(105, 116);
-            progressBarTrash.Margin = new Padding(2);
+            progressBarTrash.Location = new Point(176, 172);
             progressBarTrash.Name = "progressBarTrash";
             progressBarTrash.Size = new Size(162, 19);
             progressBarTrash.Style = ProgressBarStyle.Continuous;
@@ -481,10 +465,10 @@
             // 
             btnEmptyTrash.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             btnEmptyTrash.Font = new Font("나눔고딕", 8.999999F, FontStyle.Bold, GraphicsUnit.Point, 129);
-            btnEmptyTrash.Location = new Point(26, 49);
-            btnEmptyTrash.Margin = new Padding(2);
+            btnEmptyTrash.Location = new Point(262, 36);
+            btnEmptyTrash.Margin = new Padding(4);
             btnEmptyTrash.Name = "btnEmptyTrash";
-            btnEmptyTrash.Size = new Size(211, 28);
+            btnEmptyTrash.Size = new Size(175, 52);
             btnEmptyTrash.TabIndex = 18;
             btnEmptyTrash.Text = "휴지통 비우기";
             btnEmptyTrash.UseVisualStyleBackColor = true;
@@ -492,23 +476,25 @@
             // btnRestore
             // 
             btnRestore.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+            btnRestore.BackColor = Color.LightBlue;
             btnRestore.Font = new Font("나눔고딕", 8.999999F, FontStyle.Bold, GraphicsUnit.Point, 129);
-            btnRestore.Location = new Point(147, 21);
-            btnRestore.Margin = new Padding(2);
+            btnRestore.ForeColor = Color.DodgerBlue;
+            btnRestore.Location = new Point(41, 92);
+            btnRestore.Margin = new Padding(4);
             btnRestore.Name = "btnRestore";
-            btnRestore.Size = new Size(89, 23);
+            btnRestore.Size = new Size(151, 44);
             btnRestore.TabIndex = 17;
             btnRestore.Text = "복원";
-            btnRestore.UseVisualStyleBackColor = true;
+            btnRestore.UseVisualStyleBackColor = false;
             // 
             // btnReloadTub
             // 
             btnReloadTub.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             btnReloadTub.Font = new Font("나눔고딕", 8.999999F, FontStyle.Bold, GraphicsUnit.Point, 129);
-            btnReloadTub.Location = new Point(26, 82);
-            btnReloadTub.Margin = new Padding(2);
+            btnReloadTub.Location = new Point(262, 96);
+            btnReloadTub.Margin = new Padding(4);
             btnReloadTub.Name = "btnReloadTub";
-            btnReloadTub.Size = new Size(211, 24);
+            btnReloadTub.Size = new Size(232, 49);
             btnReloadTub.TabIndex = 16;
             btnReloadTub.Text = "Tub 다시 불러오기";
             btnReloadTub.UseVisualStyleBackColor = true;
@@ -517,30 +503,32 @@
             // 
             lstTrash.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
             lstTrash.FormattingEnabled = true;
-            lstTrash.Location = new Point(344, 42);
-            lstTrash.Margin = new Padding(2);
+            lstTrash.Location = new Point(550, 58);
+            lstTrash.Margin = new Padding(4);
             lstTrash.Name = "lstTrash";
-            lstTrash.Size = new Size(206, 104);
+            lstTrash.Size = new Size(328, 132);
             lstTrash.TabIndex = 15;
             // 
             // btnDelete
             // 
             btnDelete.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+            btnDelete.BackColor = Color.MistyRose;
             btnDelete.Font = new Font("나눔고딕", 8.999999F, FontStyle.Bold, GraphicsUnit.Point, 129);
-            btnDelete.Location = new Point(26, 21);
-            btnDelete.Margin = new Padding(2);
+            btnDelete.ForeColor = Color.Red;
+            btnDelete.Location = new Point(41, 34);
+            btnDelete.Margin = new Padding(4);
             btnDelete.Name = "btnDelete";
-            btnDelete.Size = new Size(94, 23);
+            btnDelete.Size = new Size(151, 44);
             btnDelete.TabIndex = 14;
             btnDelete.Text = "삭제";
-            btnDelete.UseVisualStyleBackColor = true;
+            btnDelete.UseVisualStyleBackColor = false;
             // 
             // chkAbnormalAngle
             // 
             chkAbnormalAngle.AutoSize = true;
             chkAbnormalAngle.Font = new Font("나눔고딕", 10.875F);
-            chkAbnormalAngle.Location = new Point(384, 137);
-            chkAbnormalAngle.Margin = new Padding(2);
+            chkAbnormalAngle.Location = new Point(614, 194);
+            chkAbnormalAngle.Margin = new Padding(4);
             chkAbnormalAngle.Name = "chkAbnormalAngle";
             chkAbnormalAngle.Size = new Size(145, 25);
             chkAbnormalAngle.TabIndex = 13;
@@ -551,8 +539,8 @@
             // 
             chkMissingImage.AutoSize = true;
             chkMissingImage.Font = new Font("나눔고딕", 10.875F);
-            chkMissingImage.Location = new Point(384, 101);
-            chkMissingImage.Margin = new Padding(2);
+            chkMissingImage.Location = new Point(614, 148);
+            chkMissingImage.Margin = new Padding(4);
             chkMissingImage.Name = "chkMissingImage";
             chkMissingImage.Size = new Size(127, 25);
             chkMissingImage.TabIndex = 12;
@@ -574,7 +562,7 @@
             // btnFilter
             // 
             btnFilter.Font = new Font("나눔고딕", 10.875F, FontStyle.Regular, GraphicsUnit.Point, 129);
-            btnFilter.Image = Properties.Resources.icons8_filter_48;
+            btnFilter.Image = (Image)resources.GetObject("btnFilter.Image");
             btnFilter.ImageAlign = ContentAlignment.MiddleLeft;
             btnFilter.Location = new Point(376, 21);
             btnFilter.Margin = new Padding(2);
@@ -600,8 +588,8 @@
             // btnSetRight
             // 
             btnSetRight.Font = new Font("나눔고딕", 10.875F);
-            btnSetRight.Location = new Point(161, 28);
-            btnSetRight.Margin = new Padding(2);
+            btnSetRight.Location = new Point(258, 34);
+            btnSetRight.Margin = new Padding(4);
             btnSetRight.Name = "btnSetRight";
             btnSetRight.Size = new Size(102, 37);
             btnSetRight.TabIndex = 8;
@@ -611,8 +599,8 @@
             // btnSetLeft
             // 
             btnSetLeft.Font = new Font("나눔고딕", 10.875F);
-            btnSetLeft.Location = new Point(29, 28);
-            btnSetLeft.Margin = new Padding(2);
+            btnSetLeft.Location = new Point(46, 34);
+            btnSetLeft.Margin = new Padding(4);
             btnSetLeft.Name = "btnSetLeft";
             btnSetLeft.Size = new Size(112, 36);
             btnSetLeft.TabIndex = 7;
@@ -621,17 +609,18 @@
             // 
             // tabGraph
             // 
-            tabGraph.Location = new Point(4, 29);
-            tabGraph.Margin = new Padding(2);
+            tabGraph.BackColor = Color.White;
+            tabGraph.Location = new Point(8, 46);
+            tabGraph.Margin = new Padding(4);
             tabGraph.Name = "tabGraph";
             tabGraph.Padding = new Padding(2);
             tabGraph.Size = new Size(1140, 247);
             tabGraph.TabIndex = 1;
             tabGraph.Text = "그래프";
-            tabGraph.UseVisualStyleBackColor = true;
             // 
             // tabTrainTest
             // 
+            tabTrainTest.BackColor = Color.White;
             tabTrainTest.Controls.Add(grpPredictResult);
             tabTrainTest.Controls.Add(grpTrainProgress);
             tabTrainTest.Controls.Add(grpTrainControl);
@@ -645,7 +634,6 @@
             tabTrainTest.Size = new Size(1140, 247);
             tabTrainTest.TabIndex = 2;
             tabTrainTest.Text = "학습/테스트";
-            tabTrainTest.UseVisualStyleBackColor = true;
             // 
             // grpPredictResult
             // 
@@ -834,7 +822,7 @@
             btnTrain.BackColor = Color.DodgerBlue;
             btnTrain.Font = new Font("Microsoft Sans Serif", 8.999999F, FontStyle.Bold, GraphicsUnit.Point, 129);
             btnTrain.ForeColor = Color.White;
-            btnTrain.Image = Properties.Resources.icons8_play_30__2_;
+            btnTrain.Image = (Image)resources.GetObject("btnTrain.Image");
             btnTrain.ImageAlign = ContentAlignment.MiddleLeft;
             btnTrain.Location = new Point(19, 23);
             btnTrain.Margin = new Padding(2);
@@ -851,7 +839,7 @@
             btnStopTask.BackColor = Color.White;
             btnStopTask.Font = new Font("나눔고딕", 8.999999F, FontStyle.Bold, GraphicsUnit.Point, 129);
             btnStopTask.ForeColor = Color.Red;
-            btnStopTask.Image = Properties.Resources.icons8_stop_30__1_;
+            btnStopTask.Image = (Image)resources.GetObject("btnStopTask.Image");
             btnStopTask.ImageAlign = ContentAlignment.MiddleLeft;
             btnStopTask.Location = new Point(161, 23);
             btnStopTask.Margin = new Padding(4);
@@ -977,6 +965,7 @@
             // 
             // btnLoadConfig
             // 
+            btnLoadConfig.BackColor = Color.Ivory;
             btnLoadConfig.Font = new Font("나눔고딕", 10.875F, FontStyle.Regular, GraphicsUnit.Point, 0);
             btnLoadConfig.Image = (Image)resources.GetObject("btnLoadConfig.Image");
             btnLoadConfig.ImageAlign = ContentAlignment.MiddleLeft;
@@ -987,7 +976,7 @@
             btnLoadConfig.Size = new Size(238, 60);
             btnLoadConfig.TabIndex = 0;
             btnLoadConfig.Text = "mycar 열기 \r\n(우분투/리눅스)";
-            btnLoadConfig.UseVisualStyleBackColor = true;
+            btnLoadConfig.UseVisualStyleBackColor = false;
             btnLoadConfig.Click += btnLoadConfig_Click;
             // 
             // lblConfigPath
@@ -1004,17 +993,16 @@
             // 
             // lstFrames
             // 
-            lstFrames.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
+            lstFrames.Dock = DockStyle.Fill;
             lstFrames.FormattingEnabled = true;
-            lstFrames.Location = new Point(5, 51);
-            lstFrames.Margin = new Padding(2);
+            lstFrames.Location = new Point(4, 32);
+            lstFrames.Margin = new Padding(4);
             lstFrames.Name = "lstFrames";
-            lstFrames.Size = new Size(222, 412);
+            lstFrames.Size = new Size(361, 791);
             lstFrames.TabIndex = 0;
             // 
             // groupFrameList
             // 
-            groupFrameList.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Right;
             groupFrameList.Controls.Add(lstFrames);
             groupFrameList.Font = new Font("나눔고딕", 8.999999F, FontStyle.Regular, GraphicsUnit.Point, 0);
             groupFrameList.Location = new Point(945, 127);
@@ -1043,6 +1031,7 @@
             // btnFirst
             // 
             btnFirst.Anchor = AnchorStyles.Bottom;
+            btnFirst.BackColor = Color.PaleTurquoise;
             btnFirst.Font = new Font("Microsoft Sans Serif", 12F, FontStyle.Bold, GraphicsUnit.Point, 0);
             btnFirst.Location = new Point(37, 394);
             btnFirst.Margin = new Padding(2);
@@ -1050,11 +1039,12 @@
             btnFirst.Size = new Size(71, 42);
             btnFirst.TabIndex = 1;
             btnFirst.Text = "<<";
-            btnFirst.UseVisualStyleBackColor = true;
+            btnFirst.UseVisualStyleBackColor = false;
             // 
             // btnPrev
             // 
             btnPrev.Anchor = AnchorStyles.Bottom;
+            btnPrev.BackColor = Color.PaleTurquoise;
             btnPrev.Font = new Font("Microsoft Sans Serif", 12F, FontStyle.Bold, GraphicsUnit.Point, 0);
             btnPrev.Location = new Point(124, 394);
             btnPrev.Margin = new Padding(2);
@@ -1062,7 +1052,7 @@
             btnPrev.Size = new Size(71, 42);
             btnPrev.TabIndex = 2;
             btnPrev.Text = "<";
-            btnPrev.UseVisualStyleBackColor = true;
+            btnPrev.UseVisualStyleBackColor = false;
             // 
             // btnPlayStop
             // 
@@ -1085,6 +1075,7 @@
             // btnNext
             // 
             btnNext.Anchor = AnchorStyles.Bottom;
+            btnNext.BackColor = Color.PaleTurquoise;
             btnNext.Font = new Font("Microsoft Sans Serif", 12F, FontStyle.Bold, GraphicsUnit.Point, 0);
             btnNext.Location = new Point(400, 394);
             btnNext.Margin = new Padding(2);
@@ -1092,11 +1083,12 @@
             btnNext.Size = new Size(71, 42);
             btnNext.TabIndex = 4;
             btnNext.Text = ">";
-            btnNext.UseVisualStyleBackColor = true;
+            btnNext.UseVisualStyleBackColor = false;
             // 
             // btnLast
             // 
             btnLast.Anchor = AnchorStyles.Bottom;
+            btnLast.BackColor = Color.PaleTurquoise;
             btnLast.Font = new Font("Microsoft Sans Serif", 12F, FontStyle.Bold, GraphicsUnit.Point, 0);
             btnLast.Location = new Point(486, 394);
             btnLast.Margin = new Padding(2);
@@ -1104,7 +1096,7 @@
             btnLast.Size = new Size(71, 42);
             btnLast.TabIndex = 5;
             btnLast.Text = ">>";
-            btnLast.UseVisualStyleBackColor = true;
+            btnLast.UseVisualStyleBackColor = false;
             // 
             // trackFrame
             // 
@@ -1119,7 +1111,6 @@
             // 
             // groupTubNavigator
             // 
-            groupTubNavigator.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
             groupTubNavigator.Controls.Add(lblCurrentFrame2);
             groupTubNavigator.Controls.Add(lblCurrentFrame);
             groupTubNavigator.Controls.Add(chkAutoPlay);
@@ -1172,6 +1163,7 @@
             // 
             chkAutoPlay.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
             chkAutoPlay.Appearance = Appearance.Button;
+            chkAutoPlay.BackColor = Color.LightSkyBlue;
             chkAutoPlay.FlatStyle = FlatStyle.Flat;
             chkAutoPlay.Font = new Font("맑은 고딕", 7.875F, FontStyle.Regular, GraphicsUnit.Point, 129);
             chkAutoPlay.Location = new Point(506, 402);
@@ -1181,7 +1173,7 @@
             chkAutoPlay.TabIndex = 10;
             chkAutoPlay.Text = "자동 재생";
             chkAutoPlay.TextAlign = ContentAlignment.MiddleCenter;
-            chkAutoPlay.UseVisualStyleBackColor = true;
+            chkAutoPlay.UseVisualStyleBackColor = false;
             chkAutoPlay.CheckedChanged += chkAutoPlay_CheckedChanged;
             // 
             // lblSpeed
@@ -1225,7 +1217,6 @@
             // 
             // groupBox2
             // 
-            groupBox2.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
             groupBox2.Controls.Add(btnDisconnect);
             groupBox2.Controls.Add(lblStatus2);
             groupBox2.Controls.Add(lblStatus);
@@ -1389,22 +1380,12 @@
             groupBoxDataLoad.Text = "데이터로드";
             groupBoxDataLoad.Enter += groupBoxDataLoad_Enter;
             // 
-            // panel2
-            // 
-            panel2.BackColor = Color.Silver;
-            panel2.Location = new Point(26, 257);
-            panel2.Margin = new Padding(2);
-            panel2.Name = "panel2";
-            panel2.Size = new Size(272, 1);
-            panel2.TabIndex = 24;
-            // 
             // Form1
             // 
             AutoScaleDimensions = new SizeF(120F, 120F);
             AutoScaleMode = AutoScaleMode.Dpi;
-            BackColor = Color.WhiteSmoke;
-            ClientSize = new Size(1202, 659);
-            Controls.Add(panel2);
+            BackColor = Color.White;
+            ClientSize = new Size(2484, 1521);
             Controls.Add(groupBoxDataLoad);
             Controls.Add(groupBox2);
             Controls.Add(tabMain);
@@ -1515,11 +1496,9 @@
         private Button btnStopTask;
         private Panel panel1;
         private GroupBox groupBoxDataLoad;
-        private Panel panel2;
         private PictureBox pictureBoxFrame;
         private PictureBox pictureBox2;
         private PictureBox pictureBoxAngle;
-        private Panel panel3;
         private ComboBox cmbPlaySpeed;
         private CheckBox chkAutoPlay;
         private Label lblSpeed;

@@ -59,12 +59,12 @@ namespace DataManager
         private int timelineDragEdgeDirection;
         private readonly System.Windows.Forms.Timer timelineDragTimer = new();
         private int playbackFrameStep = 1;
-        private const int DefaultNavigatorHeight = 517;
-        private const int MinNavigatorHeight = 300;
-        private const int TimelinePanelHeight = 108;
-        private const int TimelineMinimumPanelHeight = 50;
-        private const int DefaultTabPanelHeight = 220;
-        private const int MinimumTabPanelHeight = 130;
+        private const int DefaultNavigatorHeight = 827;     //
+        private const int MinNavigatorHeight = 360;
+        private const int TimelinePanelHeight = 168;    //
+        private const int TimelineMinimumPanelHeight = 42;
+        private const int DefaultTabPanelHeight = 314;  //
+        private const int MinimumTabVisibleHeight = 130;
         private const int LayoutGap = 8;
         private const int FrameResizeBarHeight = 0;
         private const int FrameResizeGripHeight = 12;
@@ -76,6 +76,11 @@ namespace DataManager
         private const int MinimumResponsiveFormWidth = 1320;
         private const int LeftDataPanelGap = 12;
         private const int MinimumDataInfoPanelHeight = 264;
+
+        private const int DesignBaseWidth = 2510;
+        private const int DesignBaseHeight = 1592;
+        private const int ResponsiveGap = 8;
+
 
         private enum RangeSelectionOrigin
         {
@@ -91,6 +96,9 @@ namespace DataManager
 
         // 자동 재생 성능을 위한 표시용 이미지 LRU 캐시(메모리 상한 적용). 캐시가 Bitmap 소유권을 가진다.
         private readonly FrameImageCache frameImageCache;
+        // 원본 버튼 이미지와 생성된 스케일된 이미지를 관리하여 다양한 DPI/해상도에서 아이콘 크기를 조절
+        private readonly Dictionary<Button, Image> _origButtonImages = new();
+        private readonly Dictionary<(Button button, string key), Image> _scaledButtonVariants = new();
 
         // 그래프 탭 컨트롤은 디자이너 충돌을 줄이기 위해 런타임에 생성한다.
         private readonly PictureBox picDataGraph = new();
@@ -145,7 +153,7 @@ namespace DataManager
             tabMain.SelectedIndexChanged += tabMain_SelectedIndexChanged;
             Resize += (_, _) =>
             {
-                ArrangeTimelineAndTabs();
+                ApplyResponsiveMainLayout();
                 RedrawGraphAfterLayout();
             };
             picFrame.Paint += picFrame_Paint;
@@ -203,12 +211,24 @@ namespace DataManager
             groupTubNavigator.Resize += (_, _) => ArrangeNavigatorControls();
             Shown += (_, _) =>
             {
-                // 실행 직후 기본 높이만 데이터 정보 판넬 아래와 맞춘다. 이후에는 사용자가 드래그로 조절한다.
+                // 실행 직후 기본 높이만 데이터 정보 판넬 아래와 맞춘다.
                 navigatorHeight = Math.Max(MinNavigatorHeight, groupDataView.Bottom - groupTubNavigator.Top);
-                ArrangeTimelineAndTabs();
+
+                ApplyResponsiveMainLayout();
                 ArrangeCleanerControls();
+
+                // 버튼 이미지 자동 스케일링 등록
+                RegisterScaledButton(btnTrain);
+                RegisterScaledButton(btnStopTask);
+                RegisterScaledButton(btnDisconnect);
+                RegisterScaledButton(btnPlayStop);
+
+                // 폼 크기 변경 또는 DPI 변경 시 스케일 갱신
+                this.Resize += (_, _) => UpdateAllButtonImagesScale();
+                this.DpiChanged += (_, _) => UpdateAllButtonImagesScale();
             };
-            ArrangeTimelineAndTabs();
+
+            ApplyResponsiveMainLayout();
             ArrangeCleanerControls();
         }
 
@@ -236,8 +256,13 @@ namespace DataManager
             int resizeBarTopGap = 2;
             int minimumNavigatorHeight = MinNavigatorHeight;
             int appliedNavigatorHeight = Math.Max(navigatorHeight, minimumNavigatorHeight);
-            int tabHeight = DefaultTabPanelHeight;
-            int timelineHeight = TimelinePanelHeight;
+            int extraHeight = Math.Max(0, ClientSize.Height - 881);
+
+            int tabHeight = DefaultTabPanelHeight + (extraHeight * 30 / 100);
+            int timelineHeight = TimelinePanelHeight + (extraHeight * 15 / 100);
+
+            tabHeight = Math.Max(MinimumTabVisibleHeight, tabHeight);
+            timelineHeight = Math.Max(TimelineMinimumPanelHeight, timelineHeight);
 
             int shortage = GetLowerLayoutShortage(appliedNavigatorHeight, timelineHeight, tabHeight, bottomGap, resizeBarTopGap);
             if (shortage > 0)
@@ -275,31 +300,60 @@ namespace DataManager
             ArrangeNavigatorControls();
         }
 
-        private int GetLowerLayoutShortage(int navigatorHeightValue, int timelineHeight, int tabHeight, int bottomGap, int resizeBarTopGap)
-        {
-            int availableBelowNavigator = ClientSize.Height
-                - bottomGap
-                - groupTubNavigator.Top
-                - navigatorHeightValue
-                - resizeBarTopGap
-                - FrameResizeBarHeight
-                - (LayoutGap * 2);
 
-            return (timelineHeight + tabHeight) - availableBelowNavigator;
+        private void ApplyResponsiveMainLayout()
+        {
+            if (ClientSize.Width <= 0 || ClientSize.Height <= 0) return;
+
+            int gap = ResponsiveGap;
+
+            float scaleX = ClientSize.Width / (float)DesignBaseWidth;
+            float scaleY = ClientSize.Height / (float)DesignBaseHeight;
+
+            int Sx(int value) => (int)Math.Round(value * scaleX);
+            int Sy(int value) => (int)Math.Round(value * scaleY);
+
+            // 200% 디자인 기준 위치/크기 비율 적용
+            groupBox2.SetBounds(
+                Sx(56), Sy(42),
+                Sx(2397), Sy(111)
+            );
+
+            groupBoxDataLoad.SetBounds(
+                Sx(56), Sy(165),
+                Sx(433), Sy(386)
+            );
+
+            groupDataView.SetBounds(
+                Sx(56), Sy(563),
+                Sx(429), Sy(408)
+            );
+
+            groupTubNavigator.SetBounds(
+                Sx(503), Sy(165),
+                Sx(1562), Sy(827)
+            );
+
+            groupFrameList.SetBounds(
+                Sx(2080), Sy(165),
+                Sx(369), Sy(827)
+            );
+
+            groupTimeline.SetBounds(
+                Sx(56), Sy(1005),
+                Sx(2397), Sy(168)
+            );
+
+            tabMain.SetBounds(
+                Sx(56), Sy(1185),
+                Sx(2397), Sy(314)
+            );
+
+            ArrangeNavigatorControls();
+            ArrangeCleanerControls();
+            ReloadTimelineForCurrentFrame();
         }
 
-        private int GetMinimumTabHeight()
-        {
-            int tabHeaderHeight = Math.Max(32, tabMain.Height - tabTrainTest.Height);
-            int trainTestBottom = tabTrainTest.Controls
-                .Cast<Control>()
-                .Where(control => control.Visible)
-                .Select(control => control.Bottom)
-                .DefaultIfEmpty(0)
-                .Max();
-
-            return Math.Max(220, trainTestBottom + tabHeaderHeight + 10);
-        }
 
         private int GetMinimumNavigatorHeight()
         {
@@ -1494,6 +1548,7 @@ namespace DataManager
         {
             if (_executor != null) _executor.Stop();
             frameImageCache.Clear();
+            ClearScaledButtonImages();
             base.OnFormClosing(e);
         }
 
@@ -3279,12 +3334,108 @@ namespace DataManager
         private void UpdatePlaybackControlsVisual(bool isPlaying)
         {
             btnPlayStop.Text = isPlaying ? "정지" : "재생";
-            btnPlayStop.Image = isPlaying ? Properties.Resources.icons8_stop_30 : Properties.Resources.icons8_play_30;
+            // 재생/정지 아이콘은 variant별 스케일된 이미지를 사용하도록 한다.
+            if (btnPlayStop != null)
+            {
+                string variant = isPlaying ? "stop" : "play";
+                if (!_scaledButtonVariants.TryGetValue((btnPlayStop, variant), out Image? img) || img == null)
+                {
+                    Image src = isPlaying ? Properties.Resources.icons8_stop_30 : Properties.Resources.icons8_play_30;
+                    img = CreateScaledButtonImage(src, btnPlayStop.ClientSize);
+                    _scaledButtonVariants[(btnPlayStop, variant)] = img;
+                }
+                btnPlayStop.Image = img;
+            }
+        }
+
+        private void RegisterScaledButton(Button? btn)
+        {
+            if (btn == null) return;
+
+            // 이미 등록된 버튼은 무시
+            if (_origButtonImages.ContainsKey(btn)) return;
+
+            Image? orig = btn.Image;
+            // 디자이너에서 이미지가 없으면 기본 플레이 아이콘으로 대체(플레이 버튼용)
+            if (orig == null && btn == btnPlayStop)
+            {
+                orig = Properties.Resources.icons8_play_30;
+            }
+
+            if (orig == null) return;
+
+            _origButtonImages[btn] = orig;
+            // 초기 스케일 적용
+            Image scaled = CreateScaledButtonImage(orig, btn.ClientSize);
+            _scaledButtonVariants[(btn, "default")] = scaled;
+            btn.Image = scaled;
+
+            // btnPlayStop은 play/stop variant를 미리 생성해서 빠르게 전환할 수 있게 함
+            if (btn == btnPlayStop)
+            {
+                Image playSrc = Properties.Resources.icons8_play_30;
+                Image stopSrc = Properties.Resources.icons8_stop_30;
+                _scaledButtonVariants[(btn, "play")] = CreateScaledButtonImage(playSrc, btn.ClientSize);
+                _scaledButtonVariants[(btn, "stop")] = CreateScaledButtonImage(stopSrc, btn.ClientSize);
+            }
+        }
+
+        private void UpdateAllButtonImagesScale()
+        {
+            foreach (var kv in _origButtonImages.ToList())
+            {
+                Button btn = kv.Key;
+                Image orig = kv.Value;
+
+                // default variant update
+                Image newScaled = CreateScaledButtonImage(orig, btn.ClientSize);
+                if (_scaledButtonVariants.TryGetValue((btn, "default"), out Image? oldDefault) && oldDefault != null)
+                {
+                    oldDefault.Dispose();
+                }
+                _scaledButtonVariants[(btn, "default")] = newScaled;
+                btn.Image = newScaled;
+
+                // play/stop variants 처리
+                if (btn == btnPlayStop)
+                {
+                    if (_scaledButtonVariants.TryGetValue((btn, "play"), out Image? oldPlay) && oldPlay != null) oldPlay.Dispose();
+                    if (_scaledButtonVariants.TryGetValue((btn, "stop"), out Image? oldStop) && oldStop != null) oldStop.Dispose();
+                    _scaledButtonVariants[(btn, "play")] = CreateScaledButtonImage(Properties.Resources.icons8_play_30, btn.ClientSize);
+                    _scaledButtonVariants[(btn, "stop")] = CreateScaledButtonImage(Properties.Resources.icons8_stop_30, btn.ClientSize);
+                }
+            }
+        }
+
+        private void ClearScaledButtonImages()
+        {
+            foreach (var img in _scaledButtonVariants.Values) img.Dispose();
+            _scaledButtonVariants.Clear();
+            _origButtonImages.Clear();
+        }
+
+        private static Image CreateScaledButtonImage(Image orig, Size clientSize)
+        {
+            int maxH = Math.Max(16, (int)Math.Round(clientSize.Height * 0.6));
+            int maxW = Math.Max(16, (int)Math.Round(clientSize.Width * 0.6));
+
+            // 유지할 비율 계산
+            double ratio = Math.Min(maxW / (double)orig.Width, maxH / (double)orig.Height);
+            int targetW = Math.Max(16, (int)Math.Round(orig.Width * ratio));
+            int targetH = Math.Max(16, (int)Math.Round(orig.Height * ratio));
+
+            Bitmap bmp = new Bitmap(targetW, targetH);
+            using Graphics g = Graphics.FromImage(bmp);
+            g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+            g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.HighQuality;
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            g.DrawImage(orig, 0, 0, targetW, targetH);
+            return bmp;
         }
 
         private void UpdateAutoPlayLoopVisual()
         {
-            chkAutoPlay.BackColor = chkAutoPlay.Checked ? Color.FromArgb(59, 130, 246) : Color.White;
+            chkAutoPlay.BackColor = chkAutoPlay.Checked ? Color.FromArgb(59, 130, 246) : Color.LightSkyBlue;
             chkAutoPlay.ForeColor = chkAutoPlay.Checked ? Color.White : Color.Black;
         }
 
@@ -3306,6 +3457,11 @@ namespace DataManager
         }
 
         private void lblTubPath_Click(object sender, EventArgs e)
+        {
+
+        }
+
+        private void groupDataView_Enter(object sender, EventArgs e)
         {
 
         }
