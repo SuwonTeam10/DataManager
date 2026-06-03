@@ -256,13 +256,17 @@ namespace DataManager
             int resizeBarTopGap = 2;
             int minimumNavigatorHeight = MinNavigatorHeight;
             int appliedNavigatorHeight = Math.Max(navigatorHeight, minimumNavigatorHeight);
-            int extraHeight = Math.Max(0, ClientSize.Height - 881);
 
-            int tabHeight = DefaultTabPanelHeight + (extraHeight * 30 / 100);
+            int tabHeight = GetResponsiveTabHeight();
             int timelineHeight = GetResponsiveTimelineHeight();
 
-            tabHeight = Math.Max(MinimumTabVisibleHeight, tabHeight);
             timelineHeight = Math.Max(TimelineMinimumPanelHeight, timelineHeight);
+
+            int surplus = -GetLowerLayoutShortage(appliedNavigatorHeight, timelineHeight, tabHeight, bottomGap, resizeBarTopGap);
+            if (surplus > 0)
+            {
+                tabHeight += surplus;
+            }
 
             int shortage = GetLowerLayoutShortage(appliedNavigatorHeight, timelineHeight, tabHeight, bottomGap, resizeBarTopGap);
             if (shortage > 0)
@@ -320,6 +324,13 @@ namespace DataManager
             return Math.Clamp(preferredHeight, TimelineMinimumPanelHeight, TimelinePanelHeight);
         }
 
+        private int GetResponsiveTabHeight()
+        {
+            float scaleY = ClientSize.Height / (float)DesignBaseHeight;
+            int preferredHeight = (int)Math.Round(DefaultTabPanelHeight * scaleY);
+            return Math.Max(MinimumTabVisibleHeight, preferredHeight);
+        }
+
 
         private void ApplyResponsiveMainLayout()
         {
@@ -364,10 +375,21 @@ namespace DataManager
                 Sx(2397), GetResponsiveTimelineHeight()
             );
 
+            int tabHeight = GetResponsiveTabHeight();
+            int tabTop = ClientSize.Height - tabHeight - 8;
             tabMain.SetBounds(
-                Sx(56), Sy(1185),
-                Sx(2397), Sy(314)
+                Sx(56), tabTop,
+                Sx(2397), tabHeight
             );
+
+            groupTimeline.Top = tabMain.Top - groupTimeline.Height - LayoutGap;
+
+            int navigatorBottom = groupTimeline.Top - LayoutGap;
+            int filledNavigatorHeight = Math.Max(MinNavigatorHeight, navigatorBottom - groupTubNavigator.Top);
+            navigatorHeight = filledNavigatorHeight;
+            groupTubNavigator.Height = filledNavigatorHeight;
+            groupFrameList.Height = filledNavigatorHeight;
+            ArrangeLeftDataPanels(groupTubNavigator.Bottom);
 
             ArrangeNavigatorControls();
             ArrangeCleanerControls();
