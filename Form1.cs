@@ -7,6 +7,7 @@ using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -41,6 +42,8 @@ namespace DataManager
         private string tubPath = "";
         private readonly List<TubFrame> tubFrames = new();
         private readonly HashSet<int> missingImageFrames = new();
+        // 디스크 휴지통 보관 목록(deleted/trash.jsonl 미러). 삭제된 레코드는 tubFrames에서 빠지고 여기에만 존재한다.
+        private readonly List<TrashEntry> trashStore = new();
         private readonly ImageList timelineImages = new();
         private const int TimelineMinimumVisibleCount = 20;
         private const int TimelineMaximumVisibleCount = 60;
@@ -81,6 +84,16 @@ namespace DataManager
         private const int DesignBaseWidth = 2510;
         private const int DesignBaseHeight = 1592;
         private const int ResponsiveGap = 8;
+
+        // ==========================================
+        // 그룹박스 내부 컨트롤 반응형 스케일링용
+        // (100%, 125%, 150%, 200% 배율에서
+        // 그룹박스 크기에 맞춰 내부 컨트롤도 비율 조정)
+        // ==========================================
+        private readonly Dictionary<Control, Rectangle> _baseBounds = new();
+        private readonly Dictionary<Control, Size> _baseClientSizes = new();
+        private readonly Dictionary<Control, float> _baseFontSizes = new();
+        private bool _baseLayoutCaptured = false;
 
 
         private enum RangeSelectionOrigin
@@ -176,6 +189,9 @@ namespace DataManager
             btnRestore.Click += btnRestore_Click;
             btnEmptyTrash.Click += btnEmptyTrash_Click;
             btnStopTask.Click += btnStopTask_Click;
+            toolTip1.SetToolTip(btnDelete, "선택/범위 프레임을 휴지통으로 보냅니다. 학습에서 즉시 제외되며, [복원]으로 되돌릴 수 있습니다.");
+            toolTip1.SetToolTip(btnRestore, "체크한 프레임을 휴지통에서 꺼내 다시 학습에 포함합니다.");
+            toolTip1.SetToolTip(btnEmptyTrash, "휴지통의 프레임을 완전히 삭제합니다. 되돌릴 수 없습니다(원본 복사본은 deleted 폴더에 백업).");
             SetupFilterTooltips();
             lstFrames.SelectionMode = SelectionMode.MultiExtended;
             lstTrash.CheckOnClick = false;
@@ -231,6 +247,8 @@ namespace DataManager
                 this.Resize += (_, _) => UpdateAllButtonImagesScale();
                 this.DpiChanged += (_, _) => UpdateAllButtonImagesScale();
             };
+
+            CaptureBaseLayouts();
 
             ApplyResponsiveMainLayout();
             ArrangeCleanerControls();
@@ -442,6 +460,7 @@ namespace DataManager
 
             ArrangeNavigatorControls();
             ArrangeCleanerControls();
+            ScaleProblemAreaControls();
             ReloadTimelineForCurrentFrame();
         }
 
@@ -465,6 +484,36 @@ namespace DataManager
             if (width <= 0 || height <= 0) return;
 
             float layoutScale = GetNavigatorLayoutScale(width, height);
+
+            // 주행 이미지 탐색기 내부 글씨 크기 보정
+            // 200% 디자인 기준을 유지하되, 창이 작을 때는 글씨가 겹치지 않도록 제한
+            float dpiCompensation = 192f / DeviceDpi;
+
+            // DPI 보정값이 너무 커져도 실제 버튼 배치 공간보다 글씨가 커지지 않게 제한
+            float navigatorFontScale = Math.Min(dpiCompensation, layoutScale * 1.15f);
+            navigatorFontScale = Math.Clamp(navigatorFontScale, 1.0f, 1.45f);
+
+            lblCurrentFrame.Font = new Font("나눔고딕", 9f * navigatorFontScale, FontStyle.Regular);
+            lblCurrentFrame2.Font = new Font("나눔고딕", 9f * navigatorFontScale, FontStyle.Regular);
+
+            lblSpeed.Font = new Font("나눔고딕", 8f * navigatorFontScale, FontStyle.Regular);
+            cmbPlaySpeed.Font = new Font("나눔고딕", 8f * navigatorFontScale, FontStyle.Regular);
+            chkAutoPlay.Font = new Font("맑은 고딕", 8f * navigatorFontScale, FontStyle.Regular);
+
+            btnFirst.Font = new Font("Microsoft Sans Serif", 11f * navigatorFontScale, FontStyle.Bold);
+            btnPrev.Font = new Font("Microsoft Sans Serif", 11f * navigatorFontScale, FontStyle.Bold);
+            btnNext.Font = new Font("Microsoft Sans Serif", 11f * navigatorFontScale, FontStyle.Bold);
+            btnLast.Font = new Font("Microsoft Sans Serif", 11f * navigatorFontScale, FontStyle.Bold);
+            btnPlayStop.Font = new Font("나눔고딕 ExtraBold", 11f * navigatorFontScale, FontStyle.Bold);
+
+            // 글자가 잘릴 때 말줄임 처리
+            btnFirst.AutoEllipsis = true;
+            btnPrev.AutoEllipsis = true;
+            btnNext.AutoEllipsis = true;
+            btnLast.AutoEllipsis = true;
+            btnPlayStop.AutoEllipsis = true;
+            chkAutoPlay.AutoEllipsis = true;
+
             int sidePadding = ScaleLayout(24, layoutScale);
             int imageTop = ScaleLayout(25, layoutScale);
             int imageSidePadding = ScaleLayout(25, layoutScale);
@@ -578,6 +627,115 @@ namespace DataManager
             lblTrashPercent.Location = new Point(progressBarTrash.Right + 10, progressTop + 3);
         }
 
+        // ==========================================
+        // 최초 실행 시 컨트롤 원본 위치/크기 저장
+        // 이후 화면 크기 변경 시 이 값을 기준으로
+        // 내부 컨트롤을 다시 계산한다.
+        // ==========================================
+        private void CaptureBaseLayouts()
+        {
+            if (_baseLayoutCaptured) return;
+
+            // 상단 서버 연결 설정
+            CaptureBaseLayout(groupBox2);
+
+            // 왼쪽 데이터 로드 / 데이터 정보
+            CaptureBaseLayout(groupBoxDataLoad);
+            CaptureBaseLayout(groupDataView);
+
+            // 하단 데이터 정리 탭
+            CaptureBaseLayout(tabCleaner);
+
+            // 하단 학습/테스트 탭
+            CaptureBaseLayout(tabTrainTest);
+
+            _baseLayoutCaptured = true;
+        }
+
+        // 부모 컨트롤 내부의 모든 자식 컨트롤 정보를 재귀적으로 저장
+        private void CaptureBaseLayout(Control parent)
+        {
+            _baseClientSizes[parent] = parent.ClientSize;
+
+            foreach (Control child in parent.Controls)
+            {
+                _baseBounds[child] = child.Bounds;
+                _baseFontSizes[child] = child.Font.Size;
+
+                if (child.HasChildren)
+                {
+                    CaptureBaseLayout(child);
+                }
+            }
+        }
+
+        // ==========================================
+        // 부모(GroupBox / TabPage / Panel) 크기 변화 비율을 계산하여
+        // 내부 버튼, 라벨, 체크박스, 텍스트박스 등의
+        // 위치/크기/폰트를 함께 확대 또는 축소한다.
+        // ==========================================
+        private void ScaleChildrenByParent(Control parent)
+        {
+            if (!_baseLayoutCaptured) return;
+            if (!_baseClientSizes.TryGetValue(parent, out Size baseSize)) return;
+            if (baseSize.Width <= 0 || baseSize.Height <= 0) return;
+
+            float scaleX = parent.ClientSize.Width / (float)baseSize.Width;
+            float scaleY = parent.ClientSize.Height / (float)baseSize.Height;
+            float fontScale = Math.Min(scaleX, scaleY);
+
+            foreach (Control child in parent.Controls)
+            {
+                if (_baseBounds.TryGetValue(child, out Rectangle baseRect))
+                {
+                    child.SetBounds(
+                        (int)Math.Round(baseRect.X * scaleX),
+                        (int)Math.Round(baseRect.Y * scaleY),
+                        Math.Max(1, (int)Math.Round(baseRect.Width * scaleX)),
+                        Math.Max(1, (int)Math.Round(baseRect.Height * scaleY))
+                    );
+                }
+
+                if (_baseFontSizes.TryGetValue(child, out float baseFontSize))
+                {
+                    float newFontSize = Math.Clamp(baseFontSize * fontScale, 9f, 20f);
+
+                    child.Font = new Font(
+                        child.Font.FontFamily,
+                        newFontSize,
+                        child.Font.Style
+                    );
+                }
+
+                // GroupBox, Panel, TabPage 안의 자식 컨트롤까지 재귀적으로 스케일 적용
+                if (child.HasChildren)
+                {
+                    ScaleChildrenByParent(child);
+                }
+            }
+        }
+
+        // ==========================================
+        // 100%, 125%, 150%, 200% 배율 환경에서
+        // 작아 보이는 주요 영역의 내부 컨트롤을
+        // 선택적으로 반응형 스케일 적용
+        // ==========================================
+        private void ScaleProblemAreaControls()
+        {
+            // 상단 서버 연결 설정
+            ScaleChildrenByParent(groupBox2);
+
+            // 왼쪽 데이터 영역
+            ScaleChildrenByParent(groupBoxDataLoad);
+            ScaleChildrenByParent(groupDataView);
+
+            // 하단 데이터 정리 탭
+            ScaleChildrenByParent(tabCleaner);
+
+            // 하단 학습/테스트 탭
+            ScaleChildrenByParent(tabTrainTest);
+        }
+
         private bool IsFrameResizeGrip(Point location)
         {
             return location.Y >= picFrame.ClientSize.Height - FrameResizeGripHeight;
@@ -649,11 +807,33 @@ namespace DataManager
                 MessageBox.Show("[기본 사용 순서]\n\n1. 좌측 [서버 연결 설정]에서 [원격] 선택 후 로그인\n2. [설정 파일 열기] 클릭하여 서버 경로 동기화\n3. [Tub 데이터 열기]로 윈도우로 다운받은 주행기록 폴더 열기\n4. 이상한 데이터 필터링 및 삭제\n5. [학습] 버튼을 눌러 AI 훈련시키기\n6. 훈련된 모델로 [모델 테스트] 진행\n\n이 내용은 상단 메뉴바에서도 언제든 확인 가능합니다.", "초보자 가이드");
             }
 
+            // 메인 프레임 목록에서 Delete 키 누르면 휴지통 이동
+            lstFrames.KeyDown += (s, ev) => { if (ev.KeyCode == Keys.Delete) btnDelete_Click(null, EventArgs.Empty); };
+
             // 기본 재생속도 1x로 설정
             if (cmbPlaySpeed.SelectedIndex < 0) cmbPlaySpeed.SelectedIndex = 0;
             ApplyPlaybackSpeed();
             UpdatePlaybackControlsVisual(false);
             UpdateAutoPlayLoopVisual();
+
+            lblConfigPath.AutoEllipsis = true;
+            lblTubPath.AutoEllipsis = true;
+
+            // 새로 추가되는 AI 컴파일 탭 전용 설정 
+            if (lstHighErrorFrames != null)
+            {
+                // 1. 리스트박스 다중 선택(드래그, Shift, Ctrl 클릭) 모드 켜기
+                lstHighErrorFrames.SelectionMode = SelectionMode.MultiExtended;
+
+                // 2. AI 컴파일 목록을 클릭하면 메인 화면에 사진 띄워주기 연동
+                lstHighErrorFrames.SelectedIndexChanged += lstHighErrorFrames_SelectedIndexChanged;
+
+                // 3. AI 컴파일 목록에서도 Delete 키 누르면 전용 삭제 버튼(휴지통 이동) 실행!
+                lstHighErrorFrames.KeyDown += (s, ev) =>
+                {
+                    if (ev.KeyCode == Keys.Delete) btnDeleteHighError_Click(null, EventArgs.Empty);
+                };
+            }
         }
 
         // 상단 메뉴바 자동 생성기 (UI/UX 패치)
@@ -1714,7 +1894,7 @@ namespace DataManager
             await LoadTubAsync(tubPath);
         }
 
-        private async Task LoadTubAsync(string selectedTubPath)
+        private async Task LoadTubAsync(string selectedTubPath, bool quiet = false)
         {
             SetPlaybackState(false);
             HideTrainingLossGraph();
@@ -1737,7 +1917,7 @@ namespace DataManager
                     .ToArray();
             }
 
-            if (catalogFiles.Length == 0 && recordFiles.Length == 0)
+            if (catalogFiles.Length == 0 && recordFiles.Length == 0 && !quiet)
             {
                 MessageBox.Show("catalog_*.catalog 또는 record_*.json 파일을 찾을 수 없습니다.", "Load Tub", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
@@ -1776,12 +1956,15 @@ namespace DataManager
                 ResetTubView();
 
                 if (tubFrames.Count > 0) ShowFrame(0);
+                LoadTrashStore();
+                RebuildTrashList();
+                UpdateTrashGauge();
                 RenderTubGraph();
                 foreach (string error in result.Errors) AddLog(error);
                 AddLog($"Load Tub 완료: {tubFrames.Count}개 프레임 ({(isOldRecordTub ? "구버전 record JSON" : "catalog")} 형식)");
 
                 // 순차적 안내 팝업창
-                MessageBox.Show($"주행 데이터 {tubFrames.Count}장을 성공적으로 불러왔습니다!\n\n[다음 단계 안내]\n1. 화면 하단의 슬라이더를 움직여 비정상적인 주행 사진이 있는지 확인하세요.\n2. 필요하다면 데이터 필터링/삭제 기능을 이용해 정리하세요.\n3. 정리가 완료되었다면 좌측 하단의 [학습] 버튼을 눌러 AI 훈련을 시작하세요.", "데이터 로드 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                if (!quiet) MessageBox.Show($"주행 데이터 {tubFrames.Count}장을 성공적으로 불러왔습니다!\n\n[다음 단계 안내]\n1. 화면 하단의 슬라이더를 움직여 비정상적인 주행 사진이 있는지 확인하세요.\n2. 필요하다면 데이터 필터링/삭제 기능을 이용해 정리하세요.\n3. 정리가 완료되었다면 좌측 하단의 [학습] 버튼을 눌러 AI 훈련을 시작하세요.", "데이터 로드 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
             catch (Exception ex)
             {
@@ -2840,36 +3023,119 @@ namespace DataManager
         // ==========================================
         // 5. 데이터 정리: 휴지통(삭제 상태) 관리
         // ==========================================
-        // 프레임을 휴지통으로 이동(소프트 삭제). 실제 파일은 휴지통 비우기 시점까지 유지한다.
-        private bool MoveToTrash(int index, string reason)
+        // 선택된 프레임들을 catalog에서 즉시 제거하고 디스크 휴지통(deleted/trash.jsonl + images)으로 옮긴다.
+        // 학습·테스트가 catalog를 직접 읽으므로 양쪽 모두에서 즉시 제외된다. 반환: 옮긴 개수.
+        private int DeleteFramesToTrash(List<(TubFrame frame, string reason)> targets)
         {
-            if (index < 0 || index >= tubFrames.Count) return false;
-            TubFrame frame = tubFrames[index];
-            if (frame.Deleted) return false;
-            frame.Deleted = true;
-            frame.DeleteReason = reason;
-            RefreshFrameListItem(index);
-            return true;
+            if (targets.Count == 0 || string.IsNullOrWhiteSpace(tubPath)) return 0;
+            Directory.CreateDirectory(DeletedImagesDir);
+
+            // 이미지명 → 새 휴지통 항목(중복 이미지명은 한 번만)
+            List<(TrashEntry entry, string srcImagePath)> pending = new();
+            Dictionary<string, TrashEntry> byImage = new(StringComparer.OrdinalIgnoreCase);
+            foreach ((TubFrame frame, string reason) in targets)
+            {
+                if (string.IsNullOrEmpty(frame.ImageFileName) || byImage.ContainsKey(frame.ImageFileName)) continue;
+                TrashEntry entry = new TrashEntry
+                {
+                    Frame = frame.FrameNumber,
+                    Reason = reason,
+                    Image = frame.ImageFileName,
+                    Angle = frame.Angle,
+                    Throttle = frame.Throttle,
+                    Index = tubFrames.IndexOf(frame),
+                    SourceDataPath = frame.SourceDataPath,
+                };
+                byImage[frame.ImageFileName] = entry;
+                pending.Add((entry, frame.ImagePath));
+            }
+            if (pending.Count == 0) return 0;
+
+            // 1) catalog를 재작성하며 삭제 대상 줄(원본)을 캡처한다. 남은 줄이 0이면 catalog 파일째 삭제.
+            foreach (string catalogFile in Directory.GetFiles(tubPath, "catalog_*.catalog", SearchOption.AllDirectories))
+            {
+                bool changed = false;
+                List<string> kept = new List<string>();
+                foreach (string line in File.ReadLines(catalogFile))
+                {
+                    if (string.IsNullOrWhiteSpace(line)) continue;
+                    string? img = TryGetImageName(line);
+                    if (img != null && byImage.TryGetValue(img, out TrashEntry? e))
+                    {
+                        e.Line = line;
+                        e.Catalog = Path.GetRelativePath(tubPath, catalogFile).Replace('\\', '/');
+                        changed = true;
+                        continue;
+                    }
+                    kept.Add(line);
+                }
+                if (!changed) continue;
+                DeleteCatalogManifestFor(catalogFile);
+                if (kept.Count == 0) File.Delete(catalogFile);
+                else File.WriteAllText(catalogFile, string.Join("\n", kept) + "\n");
+            }
+
+            // 2) 이미지 이동 + (구버전이면 record json 이동) + 휴지통 등록
+            foreach ((TrashEntry entry, string srcImagePath) in pending)
+            {
+                string dest = GetDeletedFilePath(DeletedImagesDir, string.IsNullOrEmpty(srcImagePath) ? entry.Image : srcImagePath);
+                if (!string.IsNullOrEmpty(srcImagePath) && File.Exists(srcImagePath)) File.Move(srcImagePath, dest);
+                entry.DeletedImageName = Path.GetFileName(dest);
+                entry.DeletedImagePath = dest;
+
+                if (IsOldRecordFile(entry.SourceDataPath) && File.Exists(entry.SourceDataPath))
+                {
+                    string recDest = GetDeletedFilePath(DeletedDir, entry.SourceDataPath);
+                    File.Move(entry.SourceDataPath, recDest);
+                    entry.RecordBackup = recDest;
+                }
+                trashStore.Add(entry);
+            }
+
+            WriteTrashStore();
+            SyncManifestToCatalogs();
+
+            // 3) tubFrames에서 제거(재로딩 전 즉시 정합)
+            HashSet<TubFrame> removeSet = new HashSet<TubFrame>(targets.Select(t => t.frame));
+            tubFrames.RemoveAll(f => removeSet.Contains(f));
+            return pending.Count;
         }
 
-        // 휴지통에서 프레임을 되살린다(삭제 상태 해제).
-        private void RestoreFromTrash(TubFrame frame)
+        // 휴지통 항목을 catalog로 되돌린다(줄 재삽입 + 이미지 복귀). trashStore에서 제거.
+        private void RestoreEntry(TrashEntry entry)
         {
-            if (!frame.Deleted) return;
-            frame.Deleted = false;
-            frame.DeleteReason = "";
-            RefreshFrameListItem(tubFrames.IndexOf(frame));
+            // 1) 이미지 원위치로
+            if (!string.IsNullOrEmpty(entry.DeletedImagePath) && File.Exists(entry.DeletedImagePath))
+            {
+                string imagesBase = GetImageBasePath(tubPath);
+                Directory.CreateDirectory(imagesBase);
+                string destImg = Path.Combine(imagesBase, entry.Image);
+                if (!File.Exists(destImg)) File.Move(entry.DeletedImagePath, destImg);
+            }
+            // 2) catalog 줄 재삽입(신버전)
+            if (!string.IsNullOrEmpty(entry.Line))
+            {
+                string catalogName = string.IsNullOrEmpty(entry.Catalog) ? "catalog_0.catalog" : entry.Catalog;
+                string catalogPath = Path.Combine(tubPath, catalogName.Replace('/', Path.DirectorySeparatorChar));
+                string? dir = Path.GetDirectoryName(catalogPath);
+                if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+                InsertLineIntoCatalog(catalogPath, entry.Line);
+                DeleteCatalogManifestFor(catalogPath);
+            }
+            // 3) 구버전 record json 되돌리기
+            if (IsOldRecordFile(entry.SourceDataPath) && !string.IsNullOrEmpty(entry.RecordBackup) && File.Exists(entry.RecordBackup))
+            {
+                File.Move(entry.RecordBackup, entry.SourceDataPath);
+            }
+            trashStore.Remove(entry);
         }
 
-        // 현재 삭제 상태인 프레임들로 휴지통 목록을 다시 구성한다.
+        // 휴지통 보관 목록(trashStore)으로 lstTrash를 다시 구성한다.
         private void RebuildTrashList()
         {
             lstTrash.BeginUpdate();
             lstTrash.Items.Clear();
-            foreach (TubFrame frame in tubFrames)
-            {
-                if (frame.Deleted) lstTrash.Items.Add(new TrashEntry(frame));
-            }
+            foreach (TrashEntry entry in trashStore) lstTrash.Items.Add(entry);
             lstTrash.EndUpdate();
         }
 
@@ -2917,8 +3183,12 @@ namespace DataManager
         {
             if (trashIndex < 0 || trashIndex >= lstTrash.Items.Count) return;
             if (lstTrash.Items[trashIndex] is not TrashEntry entry) return;
-            int frameIndex = tubFrames.IndexOf(entry.Frame);
-            if (frameIndex >= 0) ShowFrame(frameIndex);
+            // 삭제된 프레임은 tubFrames에 없으므로, deleted 폴더에 보관된 이미지를 직접 표시한다.
+            picFrame.Image = File.Exists(entry.DeletedImagePath) ? frameImageCache.Get(entry.DeletedImagePath) : null;
+            lblFrame2.Text = entry.Frame.ToString("D6");
+            lblAngle2.Text = entry.Angle.ToString("0.00");
+            lblThrottle2.Text = entry.Throttle.ToString("0.00");
+            picFrame.Invalidate();
         }
 
         // 클릭 위치가 좌측 체크박스 글리프 영역인지 근사 판정(글리프 폭을 ItemHeight로 근사, DPI/폰트 비례).
@@ -3025,7 +3295,7 @@ namespace DataManager
             return (lo, hi);
         }
 
-        private void btnFilter_Click(object? sender, EventArgs e)
+        private async void btnFilter_Click(object? sender, EventArgs e)
         {
             if (tubFrames.Count == 0)
             {
@@ -3039,31 +3309,30 @@ namespace DataManager
             }
 
             (int lo, int hi) = GetEffectiveRange();
-
-            // 비정상 조향각은 이상치 탐지 알고리즘으로 후보를 미리 산출한다.
             HashSet<int> abnormal = chkAbnormalAngle.Checked ? DetectAbnormalAngleFrames(lo, hi) : new HashSet<int>();
 
-            int moved = 0;
+            List<(TubFrame, string)> targets = new List<(TubFrame, string)>();
             for (int i = lo; i <= hi; i++)
             {
                 TubFrame frame = tubFrames[i];
-                if (frame.Deleted) continue;
-
                 string? reason = null;
                 if (chkThrottleZero.Checked && Math.Abs(frame.Throttle) < 1e-6) reason = "속도 0";
                 else if (chkMissingImage.Checked && !File.Exists(frame.ImagePath)) reason = "이미지 누락";
                 else if (chkAbnormalAngle.Checked && abnormal.Contains(i)) reason = "비정상 조향각";
-
-                if (reason != null && MoveToTrash(i, reason)) moved++;
+                if (reason != null) targets.Add((frame, reason));
             }
 
-            RebuildTrashList();
-            RenderTubGraph();
-            AddLog($"필터 적용: 범위 {lo}~{hi}에서 {moved}개 프레임을 휴지통으로 이동했습니다.");
+            int moved;
+            try { moved = DeleteFramesToTrash(targets); }
+            catch (Exception ex) { MessageBox.Show($"필터 적용 중 오류: {ex.Message}", "필터 오류", MessageBoxButtons.OK, MessageBoxIcon.Error); AddLog($"필터 오류: {ex.Message}"); return; }
+
+            AddLog($"필터 적용: 범위 {lo}~{hi}에서 {moved}개 프레임을 catalog에서 제거하고 휴지통으로 이동했습니다.");
             if (moved == 0)
             {
                 MessageBox.Show("조건에 해당하는 프레임이 없습니다.", "필터 적용", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
             }
+            await LoadTubAsync(tubPath, quiet: true);
         }
 
         // 비정상 조향각(이상치) 프레임 인덱스를 반환한다.
@@ -3124,27 +3393,26 @@ namespace DataManager
         // ==========================================
         // 7. 데이터 삭제 / 복원 / 휴지통 비우기
         // ==========================================
-        private void btnDelete_Click(object? sender, EventArgs e)
+        private async void btnDelete_Click(object? sender, EventArgs e)
         {
             if (tubFrames.Count == 0) return;
+            if (string.IsNullOrWhiteSpace(tubPath))
+            {
+                MessageBox.Show("Tub 폴더 정보가 없습니다.", "삭제", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
 
-            int moved = 0;
+            List<(TubFrame, string)> targets = new List<(TubFrame, string)>();
             bool usedRange = rangeStart >= 0 || rangeEnd >= 0;
             if (usedRange)
             {
                 (int lo, int hi) = GetEffectiveRange();
-                DialogResult res = MessageBox.Show($"범위 {lo}~{hi}의 프레임을 휴지통으로 이동하시겠습니까?", "삭제", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+                DialogResult res = MessageBox.Show($"범위 {lo}~{hi}의 프레임을 휴지통으로 보냅니다.\ncatalog에서 즉시 제거되어 학습·테스트에서 빠지며, [복원]으로 되돌릴 수 있습니다.\n\n계속하시겠습니까?", "삭제 (catalog에서 제거)", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
                 if (res == DialogResult.No) return;
-                for (int i = lo; i <= hi; i++)
-                {
-                    if (MoveToTrash(i, "수동 삭제")) moved++;
-                }
+                for (int i = lo; i <= hi; i++) targets.Add((tubFrames[i], "수동 삭제"));
             }
             else
             {
-                // SelectedIndices는 라이브 컬렉션이라, MoveToTrash → RefreshFrameListItem의
-                // lstFrames.Items[i] 재대입이 해당 인덱스의 선택을 해제(앵커는 제외)한다.
-                // 그 결과 라이브 컬렉션 그대로 순회하면 일부 항목이 누락되므로 스냅샷으로 떠서 순회한다.
                 List<int> indices = new List<int>();
                 foreach (int idx in lstFrames.SelectedIndices) indices.Add(idx);
                 if (indices.Count == 0)
@@ -3154,25 +3422,22 @@ namespace DataManager
                 }
                 if (indices.Count > 1)
                 {
-                    DialogResult res = MessageBox.Show($"선택한 {indices.Count}개 프레임을 휴지통으로 이동하시겠습니까?", "삭제", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+                    DialogResult res = MessageBox.Show($"선택한 {indices.Count}개 프레임을 휴지통으로 보냅니다.\ncatalog에서 즉시 제거되어 학습·테스트에서 빠지며, [복원]으로 되돌릴 수 있습니다.\n\n계속하시겠습니까?", "삭제 (catalog에서 제거)", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
                     if (res == DialogResult.No) return;
                 }
-                foreach (int index in indices)
-                {
-                    if (MoveToTrash(index, "수동 삭제")) moved++;
-                }
+                foreach (int idx in indices) targets.Add((tubFrames[idx], "수동 삭제"));
             }
 
-            RebuildTrashList();
-            RenderTubGraph();
-            if (usedRange && moved > 0)
-            {
-                ClearRangeSelection();
-            }
-            AddLog($"{moved}개 프레임을 휴지통으로 이동했습니다.");
+            int moved;
+            try { moved = DeleteFramesToTrash(targets); }
+            catch (Exception ex) { MessageBox.Show($"삭제 중 오류: {ex.Message}", "삭제 오류", MessageBoxButtons.OK, MessageBoxIcon.Error); AddLog($"삭제 오류: {ex.Message}"); return; }
+
+            if (usedRange) ClearRangeSelection();
+            AddLog($"{moved}개 프레임을 catalog에서 제거하고 휴지통으로 이동했습니다(복원 가능).");
+            await LoadTubAsync(tubPath, quiet: true);
         }
 
-        private void btnRestore_Click(object? sender, EventArgs e)
+        private async void btnRestore_Click(object? sender, EventArgs e)
         {
             if (lstTrash.CheckedItems.Count == 0)
             {
@@ -3181,17 +3446,27 @@ namespace DataManager
             }
 
             List<TrashEntry> selected = lstTrash.CheckedItems.Cast<TrashEntry>().ToList();
-            foreach (TrashEntry entry in selected) RestoreFromTrash(entry.Frame);
-            RebuildTrashList();
-            RenderTubGraph();
-            AddLog($"{selected.Count}개 프레임을 복원했습니다.");
+            int restored = 0;
+            try
+            {
+                foreach (TrashEntry entry in selected) { RestoreEntry(entry); restored++; }
+                WriteTrashStore();
+                SyncManifestToCatalogs();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"복원 중 오류: {ex.Message}", "복원 오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                AddLog($"복원 오류: {ex.Message}");
+            }
+            AddLog($"{restored}개 프레임을 복원(catalog에 재삽입)했습니다.");
+            await LoadTubAsync(tubPath, quiet: true);
         }
 
-        // 안전 모드: 이미지는 deleted 폴더로 이동하고 catalog는 백업 후 해당 기록만 제거(되돌릴 수 있도록 보존).
+        // 완전 삭제: 디스크 휴지통(deleted/trash.jsonl + images)을 영구 삭제한다.
+        // catalog는 삭제 시점에 이미 정리됐으므로 여기서는 보관분만 제거하고 목록을 비운다.
         private void btnEmptyTrash_Click(object? sender, EventArgs e)
         {
-            List<TubFrame> deleted = tubFrames.Where(f => f.Deleted).ToList();
-            if (deleted.Count == 0)
+            if (trashStore.Count == 0)
             {
                 MessageBox.Show("휴지통이 비어 있습니다.", "휴지통 비우기", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
@@ -3203,77 +3478,25 @@ namespace DataManager
             }
 
             DialogResult res = MessageBox.Show(
-                $"휴지통의 {deleted.Count}개 프레임을 최종 적용합니다.\n\n" +
-                "· 이미지는 tub 폴더 하위 [deleted] 폴더로 이동합니다.\n" +
-                "· catalog 파일은 백업 후 해당 기록을 제거합니다.\n" +
-                "· 구버전 record JSON 파일은 [deleted] 폴더로 이동합니다.\n\n계속하시겠습니까?",
-                "휴지통 비우기 (안전 모드)", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+                $"휴지통의 {trashStore.Count}개 항목을 완전히 삭제합니다.\n\n" +
+                "· 되돌릴 수 없습니다(복원 불가).\n" +
+                "· deleted 폴더에 보관된 이미지/기록이 영구 삭제됩니다.\n\n계속하시겠습니까?",
+                "휴지통 비우기 (완전 삭제)", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
             if (res == DialogResult.No) return;
 
             try
             {
-                string deletedDir = Path.Combine(tubPath, "deleted");
-                Directory.CreateDirectory(deletedDir);
+                int n = trashStore.Count;
+                foreach (TrashEntry entry in trashStore)
+                    if (!string.IsNullOrEmpty(entry.RecordBackup) && File.Exists(entry.RecordBackup)) File.Delete(entry.RecordBackup);
+                if (Directory.Exists(DeletedImagesDir)) Directory.Delete(DeletedImagesDir, true);
+                if (File.Exists(TrashJsonlPath)) File.Delete(TrashJsonlPath);
+                trashStore.Clear();
+                RebuildTrashList();
+                UpdateTrashGauge();
 
-                // 1) tub 폴더의 catalog 파일들을 훑어 삭제 대상 이미지 기록을 제외하고 재작성한다.
-                //    (프레임의 원본 catalog를 따로 저장하지 않으므로 이미지 파일명으로 직접 찾는다. 변경된 catalog만 1회 백업)
-                HashSet<string> removeImages = new HashSet<string>(deleted.Select(f => f.ImageFileName));
-                foreach (string catalogFile in Directory.GetFiles(tubPath, "catalog_*.catalog", SearchOption.AllDirectories))
-                {
-                    bool removedAny = false;
-                    List<string> keptLines = new List<string>();
-                    foreach (string line in File.ReadLines(catalogFile))
-                    {
-                        if (string.IsNullOrWhiteSpace(line)) continue;
-                        string? imageName = TryGetImageName(line);
-                        if (imageName != null && removeImages.Contains(imageName)) { removedAny = true; continue; }
-                        keptLines.Add(line);
-                    }
-                    if (!removedAny) continue;
-
-                    string backupPath = Path.Combine(deletedDir, Path.GetFileName(catalogFile) + ".backup");
-                    if (!File.Exists(backupPath)) File.Copy(catalogFile, backupPath);
-                    File.WriteAllLines(catalogFile, keptLines);
-                }
-
-                // 2) 구버전 Tub의 record_*.json 파일을 deleted 폴더로 이동한다.
-                int movedRecords = 0;
-                HashSet<string> recordFiles = deleted
-                    .Select(f => f.SourceDataPath)
-                    .Where(path => IsOldRecordFile(path) && File.Exists(path))
-                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-                foreach (string recordFile in recordFiles)
-                {
-                    string dest = GetDeletedFilePath(deletedDir, recordFile);
-                    File.Move(recordFile, dest);
-                    movedRecords++;
-                }
-
-                // 3) 이미지 파일을 deleted 폴더로 이동
-                int movedImages = 0;
-                foreach (TubFrame f in deleted)
-                {
-                    if (File.Exists(f.ImagePath))
-                    {
-                        string dest = GetDeletedFilePath(deletedDir, f.ImagePath);
-                        File.Move(f.ImagePath, dest);
-                        movedImages++;
-                    }
-                }
-
-                // 4) 메모리 목록에서 제거 후 뷰 재구성
-                tubFrames.RemoveAll(f => f.Deleted);
-                missingImageFrames.Clear();
-                picFrame.Image = null;
-                frameImageCache.Clear();
-                ResetTubView();
-                lstTrash.Items.Clear();
-                if (tubFrames.Count > 0) ShowFrame(0);
-                RenderTubGraph();
-
-                AddLog($"휴지통 비우기 완료: 기록 {deleted.Count}건 제거, record {movedRecords}개 이동, 이미지 {movedImages}개 이동 (백업 위치: {deletedDir}).");
-                MessageBox.Show($"휴지통을 비웠습니다.\n\n제거된 기록: {deleted.Count}건\n이동된 record JSON: {movedRecords}개\n이동된 이미지: {movedImages}개\n백업 위치: {deletedDir}", "휴지통 비우기 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                AddLog($"휴지통 비우기(완전 삭제) 완료: {n}건 영구 삭제.");
+                MessageBox.Show($"휴지통을 비웠습니다(완전 삭제).\n\n삭제된 항목: {n}건", "휴지통 비우기 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
             catch (Exception ex)
             {
@@ -3323,6 +3546,200 @@ namespace DataManager
         }
 
         // ==========================================
+        // manifest.json deleted_indexes 연동 (삭제=학습 제외, 복원 가능)
+        // ==========================================
+
+        // manifest.json을 비어있지 않은 줄로 읽어 5번째 줄(catalog 메타)을 JsonObject로 파싱한다.
+        // Donkeycar Tub v2(5줄) 형식이 아니면 false.
+        private bool TryReadManifest(out string[] lines, out JsonObject meta)
+        {
+            lines = Array.Empty<string>();
+            meta = new JsonObject();
+            if (string.IsNullOrWhiteSpace(tubPath)) return false;
+            string manifestPath = Path.Combine(tubPath, "manifest.json");
+            if (!File.Exists(manifestPath)) return false;
+            try
+            {
+                List<string> nonEmpty = new List<string>();
+                foreach (string l in File.ReadAllLines(manifestPath))
+                {
+                    if (!string.IsNullOrWhiteSpace(l)) nonEmpty.Add(l);
+                }
+                if (nonEmpty.Count < 5) return false;
+                if (JsonNode.Parse(nonEmpty[4]) is not JsonObject obj) return false;
+                lines = nonEmpty.ToArray();
+                meta = obj;
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        // manifest.json의 5번째 줄만 새 내용으로 바꿔 5줄을 다시 쓴다(1~4줄 원문 유지, \n 줄바꿈, BOM 없음).
+        private void WriteManifestMeta(string[] lines, JsonObject meta)
+        {
+            string manifestPath = Path.Combine(tubPath, "manifest.json");
+            string[] outLines = (string[])lines.Clone();
+            outLines[4] = meta.ToJsonString();
+            File.WriteAllText(manifestPath, string.Join("\n", outLines.Take(5)) + "\n");
+        }
+
+        // 현재 휴지통(Deleted) 상태를 manifest.json의 deleted_indexes에 반영한다.
+        // 글로벌 인덱스 = tubFrames 내 위치(정렬된 catalog의 비어있지 않은 줄 순번).
+        // 디스크 휴지통 경로
+        private string DeletedDir => Path.Combine(tubPath, "deleted");
+        private string DeletedImagesDir => Path.Combine(DeletedDir, "images");
+        private string TrashJsonlPath => Path.Combine(DeletedDir, "trash.jsonl");
+
+        // deleted/trash.jsonl을 읽어 휴지통 보관 목록(trashStore)을 구성한다(재시작 후 복원용).
+        private void LoadTrashStore()
+        {
+            trashStore.Clear();
+            if (string.IsNullOrWhiteSpace(tubPath) || !File.Exists(TrashJsonlPath)) return;
+            foreach (string line in File.ReadAllLines(TrashJsonlPath))
+            {
+                if (string.IsNullOrWhiteSpace(line)) continue;
+                try
+                {
+                    if (JsonNode.Parse(line) is not JsonObject o) continue;
+                    TrashEntry entry = new TrashEntry
+                    {
+                        Catalog = (string?)o["catalog"] ?? "",
+                        Index = (int?)o["index"] ?? 0,
+                        Frame = (int?)o["frame"] ?? 0,
+                        Reason = (string?)o["reason"] ?? "",
+                        Image = (string?)o["image"] ?? "",
+                        DeletedImageName = (string?)o["deletedImage"] ?? "",
+                        Angle = (double?)o["angle"] ?? 0,
+                        Throttle = (double?)o["throttle"] ?? 0,
+                        SourceDataPath = (string?)o["source"] ?? "",
+                        RecordBackup = (string?)o["recordBackup"] ?? "",
+                        Line = (string?)o["line"] ?? "",
+                    };
+                    if (string.IsNullOrEmpty(entry.DeletedImageName)) entry.DeletedImageName = entry.Image;
+                    entry.DeletedImagePath = Path.Combine(DeletedImagesDir, entry.DeletedImageName);
+                    trashStore.Add(entry);
+                }
+                catch { }
+            }
+        }
+
+        // 휴지통 보관 목록을 deleted/trash.jsonl로 기록한다(비어 있으면 파일 삭제).
+        private void WriteTrashStore()
+        {
+            if (string.IsNullOrWhiteSpace(tubPath)) return;
+            Directory.CreateDirectory(DeletedDir);
+            if (trashStore.Count == 0)
+            {
+                if (File.Exists(TrashJsonlPath)) File.Delete(TrashJsonlPath);
+                return;
+            }
+            List<string> lines = new List<string>();
+            foreach (TrashEntry e in trashStore)
+            {
+                JsonObject o = new JsonObject
+                {
+                    ["catalog"] = e.Catalog,
+                    ["index"] = e.Index,
+                    ["frame"] = e.Frame,
+                    ["reason"] = e.Reason,
+                    ["image"] = e.Image,
+                    ["deletedImage"] = e.DeletedImageName,
+                    ["angle"] = e.Angle,
+                    ["throttle"] = e.Throttle,
+                    ["source"] = e.SourceDataPath,
+                    ["recordBackup"] = e.RecordBackup,
+                    ["line"] = e.Line,
+                };
+                lines.Add(o.ToJsonString());
+            }
+            File.WriteAllText(TrashJsonlPath, string.Join("\n", lines) + "\n");
+        }
+
+        // catalog 변경 후 manifest.json을 실제 상태에 맞춘다: paths/current_index 재계산, deleted_indexes 초기화.
+        private void SyncManifestToCatalogs()
+        {
+            if (!TryReadManifest(out string[] lines, out JsonObject meta))
+            {
+                AddLog("[manifest 안내] manifest.json이 없거나 형식이 달라 경로/인덱스 갱신을 건너뜁니다.");
+                return;
+            }
+            string[] catalogs = Directory.GetFiles(tubPath, "catalog_*.catalog", SearchOption.AllDirectories)
+                .OrderBy(GetFileOrderNumber).ThenBy(f => f).ToArray();
+            JsonArray paths = new JsonArray();
+            int total = 0;
+            foreach (string c in catalogs)
+            {
+                paths.Add(JsonValue.Create(Path.GetRelativePath(tubPath, c).Replace('\\', '/')));
+                foreach (string line in File.ReadLines(c)) if (!string.IsNullOrWhiteSpace(line)) total++;
+            }
+            meta["paths"] = paths;
+            meta["current_index"] = JsonValue.Create(total);
+            meta["deleted_indexes"] = new JsonArray();
+            try
+            {
+                WriteManifestMeta(lines, meta);
+            }
+            catch (Exception ex)
+            {
+                AddLog($"[manifest 오류] manifest.json 갱신 실패: {ex.Message}");
+            }
+        }
+
+        // 복원 시 줄을 catalog에 재삽입한다. 모든 줄에 _index가 있으면 그 순서로 정렬(원위치 보존), 없으면 말미에 추가.
+        private static void InsertLineIntoCatalog(string catalogPath, string line)
+        {
+            List<string> lines = new List<string>();
+            if (File.Exists(catalogPath))
+                foreach (string l in File.ReadLines(catalogPath))
+                    if (!string.IsNullOrWhiteSpace(l)) lines.Add(l);
+            lines.Add(line);
+
+            List<int?> idxs = lines.Select(TryGetCatalogIndex).ToList();
+            if (idxs.All(v => v.HasValue))
+            {
+                lines = lines.Select((l, i) => (l, idx: idxs[i]!.Value))
+                             .OrderBy(t => t.idx)
+                             .Select(t => t.l)
+                             .ToList();
+            }
+            File.WriteAllText(catalogPath, string.Join("\n", lines) + "\n");
+        }
+
+        // catalog 줄에서 _index(정수)를 읽는다. 없으면 null.
+        private static int? TryGetCatalogIndex(string line)
+        {
+            try
+            {
+                using JsonDocument d = JsonDocument.Parse(line);
+                if (d.RootElement.TryGetProperty("_index", out JsonElement v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out int i))
+                    return i;
+            }
+            catch { }
+            return null;
+        }
+
+        // catalog를 고치면 byte-offset용 .catalog_manifest가 어긋나므로 삭제한다(학습 전처리가 새로 생성).
+        private static void DeleteCatalogManifestFor(string catalogFile)
+        {
+            string m = catalogFile + "_manifest"; // catalog_0.catalog → catalog_0.catalog_manifest
+            if (File.Exists(m)) File.Delete(m);
+        }
+
+        // 휴지통 비율 게이지 갱신. deleted = 휴지통 보관 수, total = 활성 + 보관.
+        private void UpdateTrashGauge()
+        {
+            int deleted = trashStore.Count;
+            int total = tubFrames.Count + deleted;
+            int pct = total == 0 ? 0 : (int)Math.Round(deleted * 100.0 / total);
+            pct = Math.Clamp(pct, progressBarTrash.Minimum, progressBarTrash.Maximum);
+            progressBarTrash.Value = pct;
+            lblTrashPercent.Text = $"{pct}%";
+        }
+
+        // ==========================================
         // 내부 클래스
         // ==========================================
         private sealed class TubFrame
@@ -3345,12 +3762,22 @@ namespace DataManager
             public List<string> Errors { get; } = new();
         }
 
-        // 휴지통 목록(lstTrash)에 표시되는 삭제 프레임 항목. 복원 시 원본 프레임으로 역매핑한다.
+        // 휴지통(디스크 보관) 항목. deleted/trash.jsonl에 직렬화되어 앱 재시작 후에도 유지된다.
         private sealed class TrashEntry
         {
-            public TubFrame Frame { get; }
-            public TrashEntry(TubFrame frame) => Frame = frame;
-            public override string ToString() => $"Frame {Frame.FrameNumber:D6} · {Frame.DeleteReason}";
+            public string Catalog { get; set; } = "";        // tubPath 기준 상대 catalog 파일명(구버전 record tub은 "")
+            public int Index { get; set; }                   // 삭제 시점의 글로벌 위치(참고용)
+            public int Frame { get; set; }
+            public string Reason { get; set; } = "";
+            public string Image { get; set; } = "";          // 원본 이미지 파일명
+            public string DeletedImageName { get; set; } = "";// deleted/images 안의 실제 파일명(충돌 시 _N)
+            public double Angle { get; set; }
+            public double Throttle { get; set; }
+            public string SourceDataPath { get; set; } = ""; // 구버전 record_*.json 원본 경로
+            public string RecordBackup { get; set; } = "";   // 구버전 record_*.json 이동 보관 경로
+            public string Line { get; set; } = "";           // 원본 catalog JSON 줄(구버전 record tub은 "")
+            public string DeletedImagePath { get; set; } = "";// deleted/images 하위 실제 경로(런타임 계산, 미직렬화)
+            public override string ToString() => $"Frame {Frame:D6} · {Reason}";
         }
 
         private sealed class TrainingLossPoint
@@ -3593,6 +4020,118 @@ namespace DataManager
 
             suppressNextFrameClick = false;
         }
+
+        // AI 컴파일 (오차 데이터)
+        private sealed class HighErrorEntry
+        {
+            public TubFrame Frame { get; }
+            public double PredictAngle { get; }
+            public double Error { get; }
+
+            public HighErrorEntry(TubFrame frame, double predictAngle, double error)
+            {
+                Frame = frame;
+                PredictAngle = predictAngle;
+                Error = error;
+            }
+
+            public override string ToString() =>
+                $"Frame {Frame.FrameNumber:D6}  |  오차: {Error:0.000} (실제:{Frame.Angle:0.00} 예측:{PredictAngle:0.00})";
+        }
+
+        private void btnRunAICompile_Click(object? sender, EventArgs e)
+        {
+            if (tubFrames.Count == 0)
+            {
+                MessageBox.Show("Data 폴더 열기 경로가 없습니다. 먼저 데이터를 열어주세요.", "데이터 없음", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            if (predictedAnglesByImageKey.Count == 0)
+            {
+                MessageBox.Show("먼저 [학습/테스트] 탭에서 '모델 테스트 실행'을 한 번 끝까지 완료해야 합니다!\n(AI가 전체 데이터를 채점한 결과를 바탕으로 오차를 추출합니다.)", "테스트 선행 필요", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            lstHighErrorFrames.BeginUpdate();
+            lstHighErrorFrames.Items.Clear();
+
+            List<HighErrorEntry> errorList = new List<HighErrorEntry>();
+
+            foreach (var frame in tubFrames)
+            {
+                if (frame.Deleted) continue; // 이미 지운 건 패스
+
+                if (TryGetPredictedAngleForFrame(frame, out double pred))
+                {
+                    double err = Math.Abs(frame.Angle - pred);
+
+                    // 오차가 0.1 이상인 의미 있는(?) 쓰레기 데이터만 추출합니다. (원하시면 수치 조절 가능)
+                    if (err >= 0.1)
+                    {
+                        errorList.Add(new HighErrorEntry(frame, pred, err));
+                    }
+                }
+            }
+
+            // 오차가 큰 순서대로(내림차순) 정렬
+            errorList.Sort((a, b) => b.Error.CompareTo(a.Error));
+
+            foreach (var entry in errorList)
+            {
+                lstHighErrorFrames.Items.Add(entry);
+            }
+
+            lstHighErrorFrames.EndUpdate();
+
+            MessageBox.Show($"총 {errorList.Count}개의 오차 데이터를 추출했습니다!\n목록을 클릭하면 해당 프레임으로 바로 이동합니다.", "AI 컴파일 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+
+        private void lstHighErrorFrames_SelectedIndexChanged(object? sender, EventArgs e)
+        {
+            if (lstHighErrorFrames.SelectedItem is HighErrorEntry entry)
+            {
+                int index = tubFrames.IndexOf(entry.Frame);
+                if (index >= 0)
+                {
+                    ShowFrame(index); // 클릭하면 메인 화면 사진이 해당 프레임으로 휙 바뀜!
+                }
+            }
+        }
+
+        private void btnDeleteHighError_Click(object? sender, EventArgs e)
+        {
+            if (lstHighErrorFrames.SelectedItems.Count == 0)
+            {
+                MessageBox.Show("휴지통으로 보낼 프레임을 목록에서 선택하세요.\n(Shift나 Ctrl을 누르고 클릭하면 여러 개 동시 선택 가능)", "선택 누락", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            int moved = 0;
+            var selectedEntries = lstHighErrorFrames.SelectedItems.Cast<HighErrorEntry>().ToList();
+
+            foreach (var entry in selectedEntries)
+            {
+                int index = tubFrames.IndexOf(entry.Frame);
+                if (index >= 0 && MoveToTrash(index, "AI 컴파일 오차 데이터"))
+                {
+                    moved++;
+                }
+            }
+
+            // 휴지통 연동 갱신
+            RebuildTrashList();
+            RenderTubGraph();
+
+            // 처리 완료된 항목은 AI 컴파일 목록에서 깔끔하게 빼주기
+            foreach (var entry in selectedEntries)
+            {
+                lstHighErrorFrames.Items.Remove(entry);
+            }
+
+            MessageBox.Show($"선택한 {moved}개의 오차 프레임을 휴지통으로 이동했습니다!\n(완전 삭제는 [데이터 정리] 탭의 휴지통 비우기를 이용하세요.)", "이동 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+
 
         private void picFrame_Click_1(object sender, EventArgs e)
         {
