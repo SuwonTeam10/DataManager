@@ -83,6 +83,16 @@ namespace DataManager
         private const int DesignBaseHeight = 1592;
         private const int ResponsiveGap = 8;
 
+        // ==========================================
+        // 그룹박스 내부 컨트롤 반응형 스케일링용
+        // (100%, 125%, 150%, 200% 배율에서
+        // 그룹박스 크기에 맞춰 내부 컨트롤도 비율 조정)
+        // ==========================================
+        private readonly Dictionary<Control, Rectangle> _baseBounds = new();
+        private readonly Dictionary<Control, Size> _baseClientSizes = new();
+        private readonly Dictionary<Control, float> _baseFontSizes = new();
+        private bool _baseLayoutCaptured = false;
+
 
         private enum RangeSelectionOrigin
         {
@@ -235,6 +245,8 @@ namespace DataManager
                 this.Resize += (_, _) => UpdateAllButtonImagesScale();
                 this.DpiChanged += (_, _) => UpdateAllButtonImagesScale();
             };
+
+            CaptureBaseLayouts();
 
             ApplyResponsiveMainLayout();
             ArrangeCleanerControls();
@@ -441,6 +453,7 @@ namespace DataManager
 
             ArrangeNavigatorControls();
             ArrangeCleanerControls();
+            ScaleProblemAreaControls();
             ReloadTimelineForCurrentFrame();
         }
 
@@ -464,6 +477,36 @@ namespace DataManager
             if (width <= 0 || height <= 0) return;
 
             float layoutScale = GetNavigatorLayoutScale(width, height);
+
+            // 주행 이미지 탐색기 내부 글씨 크기 보정
+            // 200% 디자인 기준을 유지하되, 창이 작을 때는 글씨가 겹치지 않도록 제한
+            float dpiCompensation = 192f / DeviceDpi;
+
+            // DPI 보정값이 너무 커져도 실제 버튼 배치 공간보다 글씨가 커지지 않게 제한
+            float navigatorFontScale = Math.Min(dpiCompensation, layoutScale * 1.15f);
+            navigatorFontScale = Math.Clamp(navigatorFontScale, 1.0f, 1.45f);
+
+            lblCurrentFrame.Font = new Font("나눔고딕", 9f * navigatorFontScale, FontStyle.Regular);
+            lblCurrentFrame2.Font = new Font("나눔고딕", 9f * navigatorFontScale, FontStyle.Regular);
+
+            lblSpeed.Font = new Font("나눔고딕", 8f * navigatorFontScale, FontStyle.Regular);
+            cmbPlaySpeed.Font = new Font("나눔고딕", 8f * navigatorFontScale, FontStyle.Regular);
+            chkAutoPlay.Font = new Font("맑은 고딕", 8f * navigatorFontScale, FontStyle.Regular);
+
+            btnFirst.Font = new Font("Microsoft Sans Serif", 11f * navigatorFontScale, FontStyle.Bold);
+            btnPrev.Font = new Font("Microsoft Sans Serif", 11f * navigatorFontScale, FontStyle.Bold);
+            btnNext.Font = new Font("Microsoft Sans Serif", 11f * navigatorFontScale, FontStyle.Bold);
+            btnLast.Font = new Font("Microsoft Sans Serif", 11f * navigatorFontScale, FontStyle.Bold);
+            btnPlayStop.Font = new Font("나눔고딕 ExtraBold", 11f * navigatorFontScale, FontStyle.Bold);
+
+            // 글자가 잘릴 때 말줄임 처리
+            btnFirst.AutoEllipsis = true;
+            btnPrev.AutoEllipsis = true;
+            btnNext.AutoEllipsis = true;
+            btnLast.AutoEllipsis = true;
+            btnPlayStop.AutoEllipsis = true;
+            chkAutoPlay.AutoEllipsis = true;
+
             int sidePadding = ScaleLayout(24, layoutScale);
             int imageTop = ScaleLayout(25, layoutScale);
             int imageSidePadding = ScaleLayout(25, layoutScale);
@@ -575,6 +618,115 @@ namespace DataManager
             lblTrashProgress.Location = new Point(leftColumn, progressTop + 3);
             progressBarTrash.SetBounds(leftColumn + 104, progressTop + 2, 165, 19);
             lblTrashPercent.Location = new Point(progressBarTrash.Right + 10, progressTop + 3);
+        }
+
+        // ==========================================
+        // 최초 실행 시 컨트롤 원본 위치/크기 저장
+        // 이후 화면 크기 변경 시 이 값을 기준으로
+        // 내부 컨트롤을 다시 계산한다.
+        // ==========================================
+        private void CaptureBaseLayouts()
+        {
+            if (_baseLayoutCaptured) return;
+
+            // 상단 서버 연결 설정
+            CaptureBaseLayout(groupBox2);
+
+            // 왼쪽 데이터 로드 / 데이터 정보
+            CaptureBaseLayout(groupBoxDataLoad);
+            CaptureBaseLayout(groupDataView);
+
+            // 하단 데이터 정리 탭
+            CaptureBaseLayout(tabCleaner);
+
+            // 하단 학습/테스트 탭
+            CaptureBaseLayout(tabTrainTest);
+
+            _baseLayoutCaptured = true;
+        }
+
+        // 부모 컨트롤 내부의 모든 자식 컨트롤 정보를 재귀적으로 저장
+        private void CaptureBaseLayout(Control parent)
+        {
+            _baseClientSizes[parent] = parent.ClientSize;
+
+            foreach (Control child in parent.Controls)
+            {
+                _baseBounds[child] = child.Bounds;
+                _baseFontSizes[child] = child.Font.Size;
+
+                if (child.HasChildren)
+                {
+                    CaptureBaseLayout(child);
+                }
+            }
+        }
+
+        // ==========================================
+        // 부모(GroupBox / TabPage / Panel) 크기 변화 비율을 계산하여
+        // 내부 버튼, 라벨, 체크박스, 텍스트박스 등의
+        // 위치/크기/폰트를 함께 확대 또는 축소한다.
+        // ==========================================
+        private void ScaleChildrenByParent(Control parent)
+        {
+            if (!_baseLayoutCaptured) return;
+            if (!_baseClientSizes.TryGetValue(parent, out Size baseSize)) return;
+            if (baseSize.Width <= 0 || baseSize.Height <= 0) return;
+
+            float scaleX = parent.ClientSize.Width / (float)baseSize.Width;
+            float scaleY = parent.ClientSize.Height / (float)baseSize.Height;
+            float fontScale = Math.Min(scaleX, scaleY);
+
+            foreach (Control child in parent.Controls)
+            {
+                if (_baseBounds.TryGetValue(child, out Rectangle baseRect))
+                {
+                    child.SetBounds(
+                        (int)Math.Round(baseRect.X * scaleX),
+                        (int)Math.Round(baseRect.Y * scaleY),
+                        Math.Max(1, (int)Math.Round(baseRect.Width * scaleX)),
+                        Math.Max(1, (int)Math.Round(baseRect.Height * scaleY))
+                    );
+                }
+
+                if (_baseFontSizes.TryGetValue(child, out float baseFontSize))
+                {
+                    float newFontSize = Math.Clamp(baseFontSize * fontScale, 9f, 20f);
+
+                    child.Font = new Font(
+                        child.Font.FontFamily,
+                        newFontSize,
+                        child.Font.Style
+                    );
+                }
+
+                // GroupBox, Panel, TabPage 안의 자식 컨트롤까지 재귀적으로 스케일 적용
+                if (child.HasChildren)
+                {
+                    ScaleChildrenByParent(child);
+                }
+            }
+        }
+
+        // ==========================================
+        // 100%, 125%, 150%, 200% 배율 환경에서
+        // 작아 보이는 주요 영역의 내부 컨트롤을
+        // 선택적으로 반응형 스케일 적용
+        // ==========================================
+        private void ScaleProblemAreaControls()
+        {
+            // 상단 서버 연결 설정
+            ScaleChildrenByParent(groupBox2);
+
+            // 왼쪽 데이터 영역
+            ScaleChildrenByParent(groupBoxDataLoad);
+            ScaleChildrenByParent(groupDataView);
+
+            // 하단 데이터 정리 탭
+            ScaleChildrenByParent(tabCleaner);
+
+            // 하단 학습/테스트 탭
+            ScaleChildrenByParent(tabTrainTest);
         }
 
         private bool IsFrameResizeGrip(Point location)

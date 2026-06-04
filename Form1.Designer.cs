@@ -91,7 +91,6 @@
             grpTrainSetting = new GroupBox();
             btnSelectTestImage = new Button();
             btnSelectModel = new Button();
-            lblLog = new Label();
             txtLog = new TextBox();
             toolTip1 = new ToolTip(components);
             btnLoadConfig = new Button();
@@ -626,7 +625,6 @@
             tabTrainTest.Controls.Add(grpTrainControl);
             tabTrainTest.Controls.Add(grpTestImage);
             tabTrainTest.Controls.Add(grpTrainSetting);
-            tabTrainTest.Controls.Add(lblLog);
             tabTrainTest.Controls.Add(txtLog);
             tabTrainTest.Location = new Point(4, 29);
             tabTrainTest.Margin = new Padding(2);
@@ -637,6 +635,7 @@
             // 
             // grpPredictResult
             // 
+            grpPredictResult.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             grpPredictResult.Controls.Add(panel4);
             grpPredictResult.Controls.Add(lblTrainStatus2);
             grpPredictResult.Controls.Add(lblErrorValue);
@@ -946,13 +945,13 @@
             txtLog.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
             txtLog.BackColor = SystemColors.ButtonHighlight;
             txtLog.Font = new Font("나눔고딕", 8.999999F, FontStyle.Regular, GraphicsUnit.Point, 0);
-            txtLog.Location = new Point(1031, 31);
-            txtLog.Margin = new Padding(2);
+            txtLog.Location = new Point(1650, 30);
+            txtLog.Margin = new Padding(4);
             txtLog.Multiline = true;
             txtLog.Name = "txtLog";
             txtLog.ReadOnly = true;
             txtLog.ScrollBars = ScrollBars.Vertical;
-            txtLog.Size = new Size(90, 208);
+            txtLog.Size = new Size(701, 224);
             txtLog.TabIndex = 20;
             txtLog.Text = "준비 완료...\r\n";
             // 
@@ -1470,7 +1469,6 @@
         private Label lblRange;
         private Button btnSetRight;
         private Button btnSetLeft;
-        private Label lblLog;
         private TextBox txtLog;
         private Label lblRealAngle;
         private Label lblPredictAngle;
