@@ -340,6 +340,11 @@ namespace DataManager
             groupTimeline.Height = timelineHeight;
             groupTimeline.Top = tabMain.Top - groupTimeline.Height - LayoutGap;
             groupTimeline.BringToFront();
+            if (panelTrainingLoss.Visible)
+            {
+                LayoutTrainingLossOverlay();
+                panelTrainingLoss.BringToFront();
+            }
 
             groupTubNavigator.Height = appliedNavigatorHeight;
             groupFrameList.Height = appliedNavigatorHeight;
@@ -1001,9 +1006,9 @@ namespace DataManager
             picTrainingLossGraph.Dock = DockStyle.None;
             picTrainingLossGraph.BackColor = Color.White;
             picTrainingLossGraph.BorderStyle = BorderStyle.FixedSingle;
-            picTrainingLossGraph.SizeMode = PictureBoxSizeMode.Normal;
+            picTrainingLossGraph.SizeMode = PictureBoxSizeMode.StretchImage;
+            picTrainingLossGraph.Paint += picTrainingLossGraph_Paint;
             picTrainingLossGraph.MouseMove += picTrainingLossGraph_MouseMove;
-            picTrainingLossGraph.MouseClick += picTrainingLossGraph_MouseClick;
             picTrainingLossGraph.MouseLeave += (_, _) =>
             {
                 lblTrainingLossHover.Visible = false;
@@ -1037,27 +1042,20 @@ namespace DataManager
                 LayoutTrainingLossOverlay();
                 DrawTrainingLossGraph();
             };
-            groupTimeline.Controls.Add(panelTrainingLoss);
+            Controls.Add(panelTrainingLoss);
             LayoutTrainingLossOverlay();
         }
 
         private void LayoutTrainingLossOverlay()
         {
-            Rectangle timelineBounds = lvTimeline.Bounds;
-            if (timelineBounds.Width <= 0 || timelineBounds.Height <= 0)
-            {
-                timelineBounds = new Rectangle(
-                    groupTimeline.Padding.Left,
-                    groupTimeline.Padding.Top + 18,
-                    Math.Max(1, groupTimeline.ClientSize.Width - groupTimeline.Padding.Horizontal),
-                    Math.Max(1, groupTimeline.ClientSize.Height - groupTimeline.Padding.Vertical - 18));
-            }
+            int panelMargin = 6;
+            int titleHeight = Math.Max(22, groupTimeline.Padding.Top + 18);
 
             panelTrainingLoss.SetBounds(
-                timelineBounds.Left,
-                timelineBounds.Top,
-                timelineBounds.Width,
-                timelineBounds.Height);
+                groupTimeline.Left + panelMargin,
+                groupTimeline.Top + titleHeight,
+                Math.Max(1, groupTimeline.Width - panelMargin * 2),
+                Math.Max(1, groupTimeline.Height - titleHeight - panelMargin));
 
             int left = panelTrainingLoss.Padding.Left;
             int top = panelTrainingLoss.Padding.Top;
@@ -1073,6 +1071,8 @@ namespace DataManager
             int graphTop = lblTrainingLossSummary.Bottom + 4;
             int graphHeight = Math.Max(30, panelTrainingLoss.ClientSize.Height - graphTop - panelTrainingLoss.Padding.Bottom);
             picTrainingLossGraph.SetBounds(left, graphTop, width, graphHeight);
+            panelTrainingLoss.PerformLayout();
+            picTrainingLossGraph.Update();
         }
 
         private void ResetTrainingLossGraph()
@@ -1129,6 +1129,11 @@ namespace DataManager
             panelTrainingLoss.Visible = true;
             panelTrainingLoss.BringToFront();
             ArrangeTimelineAndTabs();
+            RedrawTrainingLossGraphAfterLayout();
+        }
+
+        private void RedrawTrainingLossGraphAfterLayout()
+        {
             LayoutTrainingLossOverlay();
             DrawTrainingLossGraph();
             BeginInvoke((Action)(() =>
@@ -1140,22 +1145,26 @@ namespace DataManager
 
         private void DrawTrainingLossGraph()
         {
+            picTrainingLossGraph.Invalidate();
+        }
+
+        private void picTrainingLossGraph_Paint(object? sender, PaintEventArgs e)
+        {
             if (picTrainingLossGraph.ClientSize.Width <= 0 || picTrainingLossGraph.ClientSize.Height <= 0) return;
 
-            Bitmap bitmap = new Bitmap(picTrainingLossGraph.ClientSize.Width, picTrainingLossGraph.ClientSize.Height);
-            using Graphics graphics = Graphics.FromImage(bitmap);
+            Graphics graphics = e.Graphics;
+            Size graphSize = picTrainingLossGraph.ClientSize;
             graphics.Clear(Color.White);
             graphics.SmoothingMode = SmoothingMode.AntiAlias;
 
             if (trainingLossPoints.Count == 0)
             {
                 trainingLossPlotBounds = Rectangle.Empty;
-                DrawCenteredGraphMessage(graphics, bitmap.Size, "학습 로그에서 loss 값을 찾지 못했습니다.");
-                SetTrainingLossGraphImage(bitmap);
+                DrawCenteredGraphMessage(graphics, graphSize, "학습 로그에서 loss 값을 찾지 못했습니다.");
                 return;
             }
 
-            Rectangle plot = new Rectangle(58, 8, Math.Max(80, bitmap.Width - 70), Math.Max(24, bitmap.Height - 18));
+            Rectangle plot = new Rectangle(58, 8, Math.Max(80, graphSize.Width - 70), Math.Max(24, graphSize.Height - 18));
             trainingLossPlotBounds = plot;
 
             double minLoss = trainingLossPoints.Min(point => point.Loss);
@@ -1197,7 +1206,6 @@ namespace DataManager
 
             graphics.DrawString("loss", smallFont, Brushes.RoyalBlue, plot.Left + 6, plot.Top + 4);
             graphics.DrawString("학습 진행", smallFont, textBrush, plot.Right - 56, plot.Bottom - 16);
-            SetTrainingLossGraphImage(bitmap);
         }
 
         private PointF GetTrainingLossPointLocation(int lossIndex, double minLoss, double maxLoss, Rectangle plot)
@@ -1207,13 +1215,6 @@ namespace DataManager
             float x = plot.Left + (float)(plot.Width * xRatio);
             float y = plot.Bottom - (float)(plot.Height * yRatio);
             return new PointF(x, y);
-        }
-
-        private void SetTrainingLossGraphImage(Bitmap bitmap)
-        {
-            Image? oldImage = picTrainingLossGraph.Image;
-            picTrainingLossGraph.Image = bitmap;
-            oldImage?.Dispose();
         }
 
         private void picTrainingLossGraph_MouseMove(object? sender, MouseEventArgs e)
@@ -1227,12 +1228,8 @@ namespace DataManager
             }
 
             TrainingLossPoint point = trainingLossPoints[lossIndex];
-            int frameIndex = GetFrameIndexForLossIndex(lossIndex);
-            string frameText = frameIndex >= 0 && frameIndex < tubFrames.Count
-                ? $"프레임 {tubFrames[frameIndex].FrameNumber:D6}"
-                : "프레임 없음";
             int score = CalculateTrainingScore(point.Loss);
-            lblTrainingLossHover.Text = $"{frameText}\nloss {point.Loss:0.#####}\n점수 {score}점 ({GetTrainingScoreGrade(score)})";
+            lblTrainingLossHover.Text = $"loss {point.Loss:0.#####}\n점수 {score}점 ({GetTrainingScoreGrade(score)})";
             if (point.ValLoss.HasValue) lblTrainingLossHover.Text += $"\nval_loss {point.ValLoss.Value:0.#####}";
 
             int x = Math.Min(e.X + 14, picTrainingLossGraph.ClientSize.Width - lblTrainingLossHover.Width - 8);
@@ -1240,19 +1237,7 @@ namespace DataManager
             lblTrainingLossHover.Location = new Point(Math.Max(8, x), Math.Max(8, y));
             lblTrainingLossHover.Visible = true;
             lblTrainingLossHover.BringToFront();
-            picTrainingLossGraph.Cursor = Cursors.Hand;
-        }
-
-        private void picTrainingLossGraph_MouseClick(object? sender, MouseEventArgs e)
-        {
-            int lossIndex = GetTrainingLossIndexAt(e.Location);
-            if (lossIndex < 0) return;
-
-            int frameIndex = GetFrameIndexForLossIndex(lossIndex);
-            if (frameIndex >= 0 && frameIndex < tubFrames.Count)
-            {
-                ShowFrame(frameIndex);
-            }
+            picTrainingLossGraph.Cursor = Cursors.Default;
         }
 
         private int GetTrainingLossIndexAt(Point location)
@@ -1265,11 +1250,6 @@ namespace DataManager
                 : (double)(location.X - trainingLossPlotBounds.Left) / trainingLossPlotBounds.Width;
             int index = (int)Math.Round(ratio * (trainingLossPoints.Count - 1));
             return Math.Clamp(index, 0, trainingLossPoints.Count - 1);
-        }
-
-        private int GetFrameIndexForLossIndex(int lossIndex)
-        {
-            return MapLossOrderToFrameIndex(lossIndex, trainingLossPoints.Count);
         }
 
         private int MapLossOrderToFrameIndex(int lossOrder, int totalLossCount)
