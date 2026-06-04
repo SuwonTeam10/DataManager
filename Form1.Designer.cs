@@ -87,12 +87,12 @@
             btnStopTask = new Button();
             grpTestImage = new GroupBox();
             picTestImage = new PictureBox();
-            btnSelectTestImage = new Button();
+            btnModelTest = new Button();
             grpTrainSetting = new GroupBox();
+            btnSelectTestImage = new Button();
             btnSelectModel = new Button();
             lblLog = new Label();
             txtLog = new TextBox();
-            btnModelTest = new Button();
             toolTip1 = new ToolTip(components);
             btnLoadConfig = new Button();
             lblConfigPath = new Label();
@@ -496,7 +496,7 @@
             btnReloadTub.Name = "btnReloadTub";
             btnReloadTub.Size = new Size(232, 49);
             btnReloadTub.TabIndex = 16;
-            btnReloadTub.Text = "Tub 다시 불러오기";
+            btnReloadTub.Text = "데이터 다시 불러오기";
             btnReloadTub.UseVisualStyleBackColor = true;
             // 
             // lstTrash
@@ -506,7 +506,7 @@
             lstTrash.Location = new Point(550, 58);
             lstTrash.Margin = new Padding(4);
             lstTrash.Name = "lstTrash";
-            lstTrash.Size = new Size(328, 132);
+            lstTrash.Size = new Size(328, 124);
             lstTrash.TabIndex = 15;
             // 
             // btnDelete
@@ -610,7 +610,7 @@
             // tabGraph
             // 
             tabGraph.BackColor = Color.White;
-            tabGraph.Location = new Point(8, 46);
+            tabGraph.Location = new Point(4, 29);
             tabGraph.Margin = new Padding(4);
             tabGraph.Name = "tabGraph";
             tabGraph.Padding = new Padding(2);
@@ -874,18 +874,21 @@
             picTestImage.TabIndex = 15;
             picTestImage.TabStop = false;
             // 
-            // btnSelectTestImage
+            // btnModelTest
             // 
-            btnSelectTestImage.Font = new Font("나눔고딕", 10.125F, FontStyle.Regular, GraphicsUnit.Point, 129);
-            btnSelectTestImage.Location = new Point(160, 22);
-            btnSelectTestImage.Margin = new Padding(2);
-            btnSelectTestImage.Name = "btnSelectTestImage";
-            btnSelectTestImage.Size = new Size(192, 33);
-            btnSelectTestImage.TabIndex = 14;
-            btnSelectTestImage.Text = "테스트 이미지 선택";
-            toolTip1.SetToolTip(btnSelectTestImage, "모델 테스트할 Data 폴더 열기");
-            btnSelectTestImage.UseVisualStyleBackColor = true;
-            btnSelectTestImage.Click += btnSelectTestImage_Click;
+            btnModelTest.Font = new Font("나눔고딕", 10.875F);
+            btnModelTest.Image = (Image)resources.GetObject("btnModelTest.Image");
+            btnModelTest.ImageAlign = ContentAlignment.MiddleLeft;
+            btnModelTest.Location = new Point(12, 26);
+            btnModelTest.Margin = new Padding(2);
+            btnModelTest.Name = "btnModelTest";
+            btnModelTest.Padding = new Padding(8, 0, 8, 0);
+            btnModelTest.Size = new Size(206, 38);
+            btnModelTest.TabIndex = 12;
+            btnModelTest.Text = "모델 테스트 실행";
+            btnModelTest.TextAlign = ContentAlignment.MiddleRight;
+            btnModelTest.UseVisualStyleBackColor = true;
+            btnModelTest.Click += btnModelTest_Click;
             // 
             // grpTrainSetting
             // 
@@ -900,6 +903,19 @@
             grpTrainSetting.TabIndex = 26;
             grpTrainSetting.TabStop = false;
             grpTrainSetting.Text = "학습 설정";
+            // 
+            // btnSelectTestImage
+            // 
+            btnSelectTestImage.Font = new Font("나눔고딕", 10.125F, FontStyle.Regular, GraphicsUnit.Point, 129);
+            btnSelectTestImage.Location = new Point(160, 22);
+            btnSelectTestImage.Margin = new Padding(2);
+            btnSelectTestImage.Name = "btnSelectTestImage";
+            btnSelectTestImage.Size = new Size(192, 33);
+            btnSelectTestImage.TabIndex = 14;
+            btnSelectTestImage.Text = "테스트 이미지 선택";
+            toolTip1.SetToolTip(btnSelectTestImage, "모델 테스트할 Data 폴더 열기");
+            btnSelectTestImage.UseVisualStyleBackColor = true;
+            btnSelectTestImage.Click += btnSelectTestImage_Click;
             // 
             // btnSelectModel
             // 
@@ -940,22 +956,6 @@
             txtLog.TabIndex = 20;
             txtLog.Text = "준비 완료...\r\n";
             // 
-            // btnModelTest
-            // 
-            btnModelTest.Font = new Font("나눔고딕", 10.875F);
-            btnModelTest.Image = (Image)resources.GetObject("btnModelTest.Image");
-            btnModelTest.ImageAlign = ContentAlignment.MiddleLeft;
-            btnModelTest.Location = new Point(12, 26);
-            btnModelTest.Margin = new Padding(2);
-            btnModelTest.Name = "btnModelTest";
-            btnModelTest.Padding = new Padding(8, 0, 8, 0);
-            btnModelTest.Size = new Size(206, 38);
-            btnModelTest.TabIndex = 12;
-            btnModelTest.Text = "모델 테스트 실행";
-            btnModelTest.TextAlign = ContentAlignment.MiddleRight;
-            btnModelTest.UseVisualStyleBackColor = true;
-            btnModelTest.Click += btnModelTest_Click;
-            // 
             // toolTip1
             // 
             toolTip1.AutoPopDelay = 5000;
@@ -995,10 +995,10 @@
             // 
             lstFrames.Dock = DockStyle.Fill;
             lstFrames.FormattingEnabled = true;
-            lstFrames.Location = new Point(4, 32);
+            lstFrames.Location = new Point(2, 20);
             lstFrames.Margin = new Padding(4);
             lstFrames.Name = "lstFrames";
-            lstFrames.Size = new Size(361, 791);
+            lstFrames.Size = new Size(227, 495);
             lstFrames.TabIndex = 0;
             // 
             // groupFrameList
@@ -1385,7 +1385,7 @@
             AutoScaleDimensions = new SizeF(120F, 120F);
             AutoScaleMode = AutoScaleMode.Dpi;
             BackColor = Color.White;
-            ClientSize = new Size(2484, 1521);
+            ClientSize = new Size(1924, 1055);
             Controls.Add(groupBoxDataLoad);
             Controls.Add(groupBox2);
             Controls.Add(tabMain);

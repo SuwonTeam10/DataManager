@@ -124,6 +124,9 @@ namespace DataManager
         {
             InitializeComponent();
 
+            KeyPreview = true;
+            KeyDown += Form1_KeyDown;
+
             // 프로그램 시작 시 기본 실행기를 로컬로 세팅
             _executor = new ICE.LocalExecutor();
 
@@ -231,6 +234,43 @@ namespace DataManager
 
             ApplyResponsiveMainLayout();
             ArrangeCleanerControls();
+        }
+
+        private void Form1_KeyDown(object? sender, KeyEventArgs e)
+        {
+            if (e.Modifiers != Keys.None) return;
+            if (HasFocusedTextInput(this)) return;
+
+            switch (e.KeyCode)
+            {
+                case Keys.Delete:
+                    e.SuppressKeyPress = true;
+                    btnDelete.PerformClick();
+                    break;
+                case Keys.Space:
+                    e.SuppressKeyPress = true;
+                    btnPlayStop.PerformClick();
+                    break;
+                case Keys.Left:
+                    e.SuppressKeyPress = true;
+                    btnPrev.PerformClick();
+                    break;
+                case Keys.Right:
+                    e.SuppressKeyPress = true;
+                    btnNext.PerformClick();
+                    break;
+            }
+        }
+
+        private static bool HasFocusedTextInput(Control parent)
+        {
+            foreach (Control control in parent.Controls)
+            {
+                if (control.Focused && (control is TextBoxBase || control is ComboBox)) return true;
+                if (control.ContainsFocus && HasFocusedTextInput(control)) return true;
+            }
+
+            return false;
         }
 
         private void SetupFilterTooltips()
@@ -633,6 +673,7 @@ namespace DataManager
             ToolStripMenuItem menuHotkeys = new ToolStripMenuItem("⌨️ 단축키 안내");
             menuHotkeys.DropDownItems.Add("Space Bar : 자동 재생 / 정지 토글");
             menuHotkeys.DropDownItems.Add("← / → 방향키 : 프레임 1칸씩 이동");
+            menuHotkeys.DropDownItems.Add("Delete : 선택한 프레임 또는 지정 범위를 휴지통으로 이동");
             menuHotkeys.MouseEnter += (s, e) => menuHotkeys.ShowDropDown();
 
             menuAttempts = new ToolStripMenuItem("📊 오늘의 시도");
@@ -2558,7 +2599,7 @@ namespace DataManager
                 return;
             }
 
-            Rectangle plot = new Rectangle(64, 24, Math.Max(10, bitmap.Width - 128), Math.Max(10, bitmap.Height - 72));
+            Rectangle plot = new Rectangle(64, 32, Math.Max(10, bitmap.Width - 128), Math.Max(10, bitmap.Height - 60));
             graphPlotBounds = plot;
             graphVisibleFrames = visibleFrames;
             DrawGraphFrame(graphics, plot);
