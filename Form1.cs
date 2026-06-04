@@ -82,6 +82,11 @@ namespace DataManager
         private const int DesignBaseHeight = 1592;
         private const int ResponsiveGap = 8;
 
+        private readonly Dictionary<Control, Rectangle> _baseBounds = new();
+        private readonly Dictionary<Control, Size> _baseClientSizes = new();
+        private readonly Dictionary<Control, float> _baseFontSizes = new();
+        private bool _baseLayoutCaptured = false;
+
 
         private enum RangeSelectionOrigin
         {
@@ -219,6 +224,8 @@ namespace DataManager
                 this.DpiChanged += (_, _) => UpdateAllButtonImagesScale();
             };
 
+            CaptureBaseLayouts();
+
             ApplyResponsiveMainLayout();
             ArrangeCleanerControls();
         }
@@ -330,6 +337,7 @@ namespace DataManager
 
             ArrangeNavigatorControls();
             ArrangeCleanerControls();
+            ScaleProblemAreaControls();
             ReloadTimelineForCurrentFrame();
         }
 
@@ -437,6 +445,72 @@ namespace DataManager
             lblTrashPercent.Top = bottomRowY + 3;
 
             lstTrash.Height = Math.Max(90, bottomRowY - lstTrash.Top - 5);
+        }
+
+        private void CaptureBaseLayouts()
+        {
+            if (_baseLayoutCaptured) return;
+
+            CaptureBaseLayout(groupBox2);
+            CaptureBaseLayout(groupBoxDataLoad);
+            CaptureBaseLayout(groupDataView);
+            CaptureBaseLayout(tabCleaner);
+            CaptureBaseLayout(groupBoxTrash);
+
+            _baseLayoutCaptured = true;
+        }
+
+        private void CaptureBaseLayout(Control parent)
+        {
+            _baseClientSizes[parent] = parent.ClientSize;
+
+            foreach (Control child in parent.Controls)
+            {
+                _baseBounds[child] = child.Bounds;
+                _baseFontSizes[child] = child.Font.Size;
+
+                if (child.HasChildren)
+                    CaptureBaseLayout(child);
+            }
+        }
+
+        private void ScaleChildrenByParent(Control parent)
+        {
+            if (!_baseLayoutCaptured) return;
+            if (!_baseClientSizes.TryGetValue(parent, out Size baseSize)) return;
+            if (baseSize.Width <= 0 || baseSize.Height <= 0) return;
+
+            float scaleX = parent.ClientSize.Width / (float)baseSize.Width;
+            float scaleY = parent.ClientSize.Height / (float)baseSize.Height;
+            float fontScale = Math.Min(scaleX, scaleY);
+
+            foreach (Control child in parent.Controls)
+            {
+                if (_baseBounds.TryGetValue(child, out Rectangle baseRect))
+                {
+                    child.SetBounds(
+                        (int)Math.Round(baseRect.X * scaleX),
+                        (int)Math.Round(baseRect.Y * scaleY),
+                        Math.Max(1, (int)Math.Round(baseRect.Width * scaleX)),
+                        Math.Max(1, (int)Math.Round(baseRect.Height * scaleY))
+                    );
+                }
+
+                if (_baseFontSizes.TryGetValue(child, out float baseFontSize))
+                {
+                    float newFontSize = Math.Clamp(baseFontSize * fontScale, 7f, 15f);
+                    child.Font = new Font(child.Font.FontFamily, newFontSize, child.Font.Style);
+                }
+            }
+        }
+
+        private void ScaleProblemAreaControls()
+        {
+            ScaleChildrenByParent(groupBox2);
+            ScaleChildrenByParent(groupBoxDataLoad);
+            ScaleChildrenByParent(groupDataView);
+            ScaleChildrenByParent(tabCleaner);
+            ScaleChildrenByParent(groupBoxTrash);
         }
 
         private bool IsFrameResizeGrip(Point location)
