@@ -4107,28 +4107,37 @@ namespace DataManager
                 return;
             }
 
-            int moved = 0;
-            var selectedEntries = lstHighErrorFrames.SelectedItems.Cast<HighErrorEntry>().ToList();
-
-            foreach (var entry in selectedEntries)
+            if (string.IsNullOrWhiteSpace(tubPath))
             {
-                int index = tubFrames.IndexOf(entry.Frame);
-                if (index >= 0 && MoveToTrash(index, "AI 컴파일 오차 데이터"))
-                {
-                    moved++;
-                }
+                MessageBox.Show("Tub 폴더 정보가 없습니다.", "삭제", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
             }
 
-            // 휴지통 연동 갱신
-            RebuildTrashList();
-            RenderTubGraph();
+            var selectedEntries = lstHighErrorFrames.SelectedItems.Cast<HighErrorEntry>().ToList();
+            List<(TubFrame, string)> targets = new List<(TubFrame, string)>();
+            foreach (var entry in selectedEntries)
+            {
+                if (tubFrames.Contains(entry.Frame)) targets.Add((entry.Frame, "AI 컴파일 오차 데이터"));
+            }
 
-            // 처리 완료된 항목은 AI 컴파일 목록에서 깔끔하게 빼주기
+            int moved;
+            try { moved = DeleteFramesToTrash(targets); }
+            catch (Exception ex) { MessageBox.Show($"삭제 중 오류: {ex.Message}", "삭제 오류", MessageBoxButtons.OK, MessageBoxIcon.Error); AddLog($"삭제 오류: {ex.Message}"); return; }
+
+            // 처리 완료된 항목은 AI 컴파일 목록에서 빼준다.
             foreach (var entry in selectedEntries)
             {
                 lstHighErrorFrames.Items.Remove(entry);
             }
 
+            // 삭제된 프레임은 tubFrames에서 빠졌으므로 뷰를 재구성한다.
+            ResetTubView();
+            if (tubFrames.Count > 0) ShowFrame(0);
+            RebuildTrashList();
+            UpdateTrashGauge();
+            RenderTubGraph();
+
+            AddLog($"AI 오차 프레임 {moved}개를 catalog에서 제거하고 휴지통으로 이동했습니다.");
             MessageBox.Show($"선택한 {moved}개의 오차 프레임을 휴지통으로 이동했습니다!\n(완전 삭제는 [데이터 정리] 탭의 휴지통 비우기를 이용하세요.)", "이동 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
 
