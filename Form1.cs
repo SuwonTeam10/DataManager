@@ -7,6 +7,7 @@ using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -44,10 +45,9 @@ namespace DataManager
         private readonly ImageList timelineImages = new();
         private const int TimelineMinimumVisibleCount = 20;
         private const int TimelineMaximumVisibleCount = 60;
-        private const int TimelineThumbWidth = 140;
-        private const int TimelineThumbHeight = 105;
-        private const int TimelineIconSpacingX = 56;
-        private const int TimelineIconSpacingY = 44;
+        private const int TimelineMinimumIconSpacingX = 56;
+        private const int TimelineMinimumIconSpacingY = 44;
+        private const int TimelineIconPadding = 2;
         private const int PlaybackBaseIntervalMs = 100;
         private const int PlaybackMinimumIntervalMs = 50;
         private int currentTimelineStart = -1;
@@ -64,6 +64,7 @@ namespace DataManager
         private const int MinNavigatorHeight = 360;
         private const int TimelinePanelHeight = 168;    //
         private const int TimelineMinimumPanelHeight = 42;
+        private const int TrainingLossMinimumPanelHeight = 130;
         private const int DefaultTabPanelHeight = 314;  //
         private const int MinimumTabVisibleHeight = 130;
         private const int LayoutGap = 8;
@@ -120,12 +121,22 @@ namespace DataManager
         private readonly Label lblGraphHover = new();
         private Rectangle graphPlotBounds = Rectangle.Empty;
         private List<TubFrame> graphVisibleFrames = new();
+        private readonly Panel panelTrainingLoss = new();
+        private readonly Label lblTrainingLossSummary = new();
+        private readonly Label lblTrainingLossHover = new();
+        private readonly Button btnCloseTrainingLoss = new();
+        private readonly PictureBox picTrainingLossGraph = new();
+        private readonly List<TrainingLossPoint> trainingLossPoints = new();
+        private Rectangle trainingLossPlotBounds = Rectangle.Empty;
         // ==========================================
         // 1. 초기화 및 생성자
         // ==========================================
         public Form1()
         {
             InitializeComponent();
+
+            KeyPreview = true;
+            KeyDown += Form1_KeyDown;
 
             // 프로그램 시작 시 기본 실행기를 로컬로 세팅
             _executor = new ICE.LocalExecutor();
@@ -175,6 +186,11 @@ namespace DataManager
             btnDelete.Click += btnDelete_Click;
             btnRestore.Click += btnRestore_Click;
             btnEmptyTrash.Click += btnEmptyTrash_Click;
+            btnStopTask.Click += btnStopTask_Click;
+            toolTip1.SetToolTip(btnDelete, "선택/범위 프레임을 휴지통으로 보냅니다. 학습에서 즉시 제외되며, [복원]으로 되돌릴 수 있습니다.");
+            toolTip1.SetToolTip(btnRestore, "체크한 프레임을 휴지통에서 꺼내 다시 학습에 포함합니다.");
+            toolTip1.SetToolTip(btnEmptyTrash, "휴지통의 프레임을 완전히 삭제합니다. 되돌릴 수 없습니다(원본 복사본은 deleted 폴더에 백업).");
+            SetupFilterTooltips();
             lstFrames.SelectionMode = SelectionMode.MultiExtended;
             lstTrash.CheckOnClick = false;
             lstTrash.MouseDown += LstTrash_MouseDown;
@@ -184,7 +200,7 @@ namespace DataManager
             tabCleaner.Resize += (_, _) => ArrangeCleanerControls();
 
             // 타임라인 썸네일 이미지 리스트 설정
-            timelineImages.ImageSize = new Size(TimelineThumbWidth, TimelineThumbHeight);
+            timelineImages.ImageSize = GetTimelineThumbnailSize();
             timelineImages.ColorDepth = ColorDepth.Depth32Bit;
             lvTimeline.LargeImageList = timelineImages;
             lvTimeline.View = View.LargeIcon;
@@ -206,6 +222,7 @@ namespace DataManager
             timelineDragTimer.Interval = 120;
             timelineDragTimer.Tick += timelineDragTimer_Tick;
 
+            InitializeTrainingLossOverlay();
             InitializeGraphControls();
             picTestImage.SizeMode = PictureBoxSizeMode.Zoom;
             MinimumSize = new Size(Math.Max(MinimumSize.Width, MinimumResponsiveFormWidth), MinimumSize.Height);
@@ -235,29 +252,83 @@ namespace DataManager
             ArrangeCleanerControls();
         }
 
+        private void Form1_KeyDown(object? sender, KeyEventArgs e)
+        {
+            if (e.Modifiers != Keys.None) return;
+            if (HasFocusedTextInput(this)) return;
+
+            switch (e.KeyCode)
+            {
+                case Keys.Delete:
+                    e.SuppressKeyPress = true;
+                    btnDelete.PerformClick();
+                    break;
+                case Keys.Space:
+                    e.SuppressKeyPress = true;
+                    btnPlayStop.PerformClick();
+                    break;
+                case Keys.Left:
+                    e.SuppressKeyPress = true;
+                    btnPrev.PerformClick();
+                    break;
+                case Keys.Right:
+                    e.SuppressKeyPress = true;
+                    btnNext.PerformClick();
+                    break;
+            }
+        }
+
+        private static bool HasFocusedTextInput(Control parent)
+        {
+            foreach (Control control in parent.Controls)
+            {
+                if (control.Focused && (control is TextBoxBase || control is ComboBox)) return true;
+                if (control.ContainsFocus && HasFocusedTextInput(control)) return true;
+            }
+
+            return false;
+        }
+
+        private void SetupFilterTooltips()
+        {
+            toolTip1.SetToolTip(chkThrottleZero,
+                "속도(throttle)가 0인 프레임을 찾습니다.\n" +
+                "정지 상태나 출발 전/후 데이터가 포함될 수 있습니다.\n" +
+                "체크 후 [필터 적용]을 누르면 해당 프레임이 휴지통으로 이동합니다.");
+
+            toolTip1.SetToolTip(chkMissingImage,
+                "catalog 또는 record에는 기록이 있지만 실제 이미지 파일을 찾을 수 없는 프레임을 찾습니다.\n" +
+                "이미지가 없으면 학습/테스트에서 오류가 날 수 있습니다.\n" +
+                "체크 후 [필터 적용]을 누르면 해당 프레임이 휴지통으로 이동합니다.");
+
+            toolTip1.SetToolTip(chkAbnormalAngle,
+                "비정상 조향각(angle) 프레임을 찾습니다.\n" +
+                "기준: -1.0~1.0 범위 밖, 평균에서 표준편차의 3배보다 멀리 벗어난 값, 또는 앞뒤 프레임과 0.8 초과로 급변한 값입니다.\n" +
+                "체크 후 [필터 적용]을 누르면 해당 프레임이 휴지통으로 이동합니다.");
+        }
+
         private void ArrangeTimelineAndTabs()
         {
             int bottomGap = 8;
             int resizeBarTopGap = 2;
-            int minimumNavigatorHeight = GetMinimumNavigatorHeight();
+            int minimumNavigatorHeight = MinNavigatorHeight;
             int appliedNavigatorHeight = Math.Max(navigatorHeight, minimumNavigatorHeight);
-            int extraHeight = Math.Max(0, ClientSize.Height - 881);
 
-            int tabHeight = DefaultTabPanelHeight + (extraHeight * 30 / 100);
-            int timelineHeight = TimelinePanelHeight + (extraHeight * 15 / 100);
+            int tabHeight = GetResponsiveTabHeight();
+            int timelineHeight = GetResponsiveTimelineHeight();
+            int timelineMinimumHeight = panelTrainingLoss.Visible
+                ? TrainingLossMinimumPanelHeight
+                : TimelineMinimumPanelHeight;
 
-            tabHeight = Math.Max(MinimumTabVisibleHeight, tabHeight);
-            timelineHeight = Math.Max(TimelineMinimumPanelHeight, timelineHeight);
+            timelineHeight = Math.Max(timelineMinimumHeight, timelineHeight);
 
-            int availableBelowNavigator = ClientSize.Height
-                - bottomGap
-                - groupTubNavigator.Top
-                - appliedNavigatorHeight
-                - resizeBarTopGap
-                - FrameResizeBarHeight
-                - (LayoutGap * 2);
+            int surplus = -GetLowerLayoutShortage(appliedNavigatorHeight, timelineHeight, tabHeight, bottomGap, resizeBarTopGap);
+            if (surplus > 0)
+            {
+                tabHeight += surplus;
+            }
 
-            int shortage = (timelineHeight + tabHeight) - availableBelowNavigator;
+            int shortage = GetLowerLayoutShortage(appliedNavigatorHeight, timelineHeight, tabHeight, bottomGap, resizeBarTopGap);
             if (shortage > 0)
             {
                 int tabShrink = Math.Min(shortage, tabHeight - MinimumTabVisibleHeight);
@@ -267,14 +338,16 @@ namespace DataManager
 
             if (shortage > 0)
             {
-                int timelineShrink = Math.Min(shortage, timelineHeight - TimelineMinimumPanelHeight);
+                int timelineShrink = Math.Min(shortage, timelineHeight - timelineMinimumHeight);
                 timelineHeight -= timelineShrink;
                 shortage -= timelineShrink;
             }
 
             if (shortage > 0)
             {
-                appliedNavigatorHeight = Math.Max(minimumNavigatorHeight, appliedNavigatorHeight - shortage);
+                int navigatorShrink = Math.Min(shortage, appliedNavigatorHeight - minimumNavigatorHeight);
+                appliedNavigatorHeight -= navigatorShrink;
+                shortage -= navigatorShrink;
             }
 
             tabMain.Height = tabHeight;
@@ -289,6 +362,33 @@ namespace DataManager
             ArrangeLeftDataPanels(groupTubNavigator.Bottom);
 
             ArrangeNavigatorControls();
+        }
+
+        private int GetLowerLayoutShortage(int navigatorHeightValue, int timelineHeight, int tabHeight, int bottomGap, int resizeBarTopGap)
+        {
+            int availableBelowNavigator = ClientSize.Height
+                - bottomGap
+                - groupTubNavigator.Top
+                - navigatorHeightValue
+                - resizeBarTopGap
+                - FrameResizeBarHeight
+                - (LayoutGap * 2);
+
+            return (timelineHeight + tabHeight) - availableBelowNavigator;
+        }
+
+        private int GetResponsiveTimelineHeight()
+        {
+            float scaleY = ClientSize.Height / (float)DesignBaseHeight;
+            int preferredHeight = (int)Math.Round(TimelinePanelHeight * scaleY);
+            return Math.Clamp(preferredHeight, TimelineMinimumPanelHeight, TimelinePanelHeight);
+        }
+
+        private int GetResponsiveTabHeight()
+        {
+            float scaleY = ClientSize.Height / (float)DesignBaseHeight;
+            int preferredHeight = (int)Math.Round(DefaultTabPanelHeight * scaleY);
+            return Math.Max(MinimumTabVisibleHeight, preferredHeight);
         }
 
 
@@ -332,13 +432,24 @@ namespace DataManager
 
             groupTimeline.SetBounds(
                 Sx(56), Sy(1005),
-                Sx(2397), Sy(168)
+                Sx(2397), GetResponsiveTimelineHeight()
             );
 
+            int tabHeight = GetResponsiveTabHeight();
+            int tabTop = ClientSize.Height - tabHeight - 8;
             tabMain.SetBounds(
-                Sx(56), Sy(1185),
-                Sx(2397), Sy(314)
+                Sx(56), tabTop,
+                Sx(2397), tabHeight
             );
+
+            groupTimeline.Top = tabMain.Top - groupTimeline.Height - LayoutGap;
+
+            int navigatorBottom = groupTimeline.Top - LayoutGap;
+            int filledNavigatorHeight = Math.Max(MinNavigatorHeight, navigatorBottom - groupTubNavigator.Top);
+            navigatorHeight = filledNavigatorHeight;
+            groupTubNavigator.Height = filledNavigatorHeight;
+            groupFrameList.Height = filledNavigatorHeight;
+            ArrangeLeftDataPanels(groupTubNavigator.Bottom);
 
             ArrangeNavigatorControls();
             ArrangeCleanerControls();
@@ -399,8 +510,8 @@ namespace DataManager
             int sidePadding = ScaleLayout(24, layoutScale);
             int imageTop = ScaleLayout(25, layoutScale);
             int imageSidePadding = ScaleLayout(25, layoutScale);
-            int buttonHeight = ScaleLayout(42, layoutScale);
-            int comboHeight = ScaleLayout(28, layoutScale);
+            int buttonHeight = Math.Clamp(ScaleLayout(42, layoutScale), 28, 42);
+            int comboHeight = Math.Clamp(ScaleLayout(28, layoutScale), 24, 28);
             int speedComboWidth = ScaleLayout(80, layoutScale);
             int autoPlayWidth = ScaleLayout(88, layoutScale);
             int speedGap = ScaleLayout(16, layoutScale);
@@ -432,8 +543,8 @@ namespace DataManager
             int areaWidth = areaRight - areaLeft;
 
             int gap = Math.Clamp(areaWidth / 32, ScaleLayout(8, layoutScale), ScaleLayout(18, layoutScale));
-            int smallWidth = Math.Clamp((areaWidth - ScaleLayout(122, layoutScale) - (gap * 4)) / 4, ScaleLayout(52, layoutScale), ScaleLayout(92, layoutScale));
-            int playWidth = Math.Clamp(areaWidth - (smallWidth * 4) - (gap * 4), ScaleLayout(122, layoutScale), ScaleLayout(210, layoutScale));
+            int smallWidth = Math.Clamp((areaWidth - ScaleLayout(122, layoutScale) - (gap * 4)) / 4, 42, 92);
+            int playWidth = Math.Clamp(areaWidth - (smallWidth * 4) - (gap * 4), 112, 210);
             int totalWidth = (smallWidth * 4) + playWidth + (gap * 4);
             int x = areaLeft + Math.Max(0, (areaWidth - totalWidth) / 2);
 
@@ -458,7 +569,8 @@ namespace DataManager
         {
             float widthScale = width / 900f;
             float heightScale = height / 520f;
-            return Math.Clamp(Math.Min(widthScale, heightScale * 1.15f), 1f, 1.35f);
+            float largeFrameCompactScale = 1f - (Math.Max(0, height - 520) / 900f);
+            return Math.Clamp(Math.Min(Math.Min(widthScale, heightScale * 1.15f), largeFrameCompactScale), 0.68f, 1f);
         }
 
         private static int ScaleLayout(int value, float scale)
@@ -472,14 +584,40 @@ namespace DataManager
 
             int margin = 8;
             int trashHeight = Math.Max(178, tabCleaner.ClientSize.Height - (margin * 2));
-            groupBoxTrash.Height = trashHeight;
 
-            int bottomRowY = trashHeight - 31;
-            lblTrashProgress.Top = bottomRowY + 3;
-            progressBarTrash.Top = bottomRowY + 3;
-            lblTrashPercent.Top = bottomRowY + 3;
+            btnFilter.Location = new Point(376, 21);
+            chkThrottleZero.Location = new Point(384, 64);
+            chkMissingImage.Location = new Point(384, 103);
+            chkAbnormalAngle.Location = new Point(384, 142);
+            chkThrottleZero.Visible = true;
+            chkMissingImage.Visible = true;
+            chkAbnormalAngle.Visible = true;
 
-            lstTrash.Height = Math.Max(90, bottomRowY - lstTrash.Top - 5);
+            int filterRight = Math.Max(btnFilter.Right, Math.Max(chkThrottleZero.Right, Math.Max(chkMissingImage.Right, chkAbnormalAngle.Right)));
+            int trashLeftLimit = filterRight + 26;
+            int availableTrashWidth = tabCleaner.ClientSize.Width - trashLeftLimit - margin;
+            int trashWidth = Math.Max(420, Math.Min(921, availableTrashWidth));
+            int trashLeft = Math.Max(trashLeftLimit, tabCleaner.ClientSize.Width - trashWidth - margin);
+            groupBoxTrash.SetBounds(trashLeft, margin, trashWidth, trashHeight);
+
+            int listWidth = Math.Clamp(groupBoxTrash.ClientSize.Width / 2, 300, 460);
+            int listLeft = groupBoxTrash.ClientSize.Width - listWidth - 28;
+            int controlsRight = listLeft - 28;
+            int leftColumn = 40;
+            int rightColumn = Math.Min(262, Math.Max(leftColumn + 170, controlsRight - 240));
+
+            btnDelete.SetBounds(leftColumn, 34, 151, 36);
+            btnRestore.SetBounds(leftColumn, 78, 151, 36);
+            btnEmptyTrash.SetBounds(rightColumn, 34, Math.Min(175, controlsRight - rightColumn), 36);
+            btnReloadTub.SetBounds(rightColumn, 78, Math.Min(232, controlsRight - rightColumn), 36);
+
+            lblTrastList.Location = new Point(listLeft, 16);
+            lstTrash.SetBounds(listLeft, 50, listWidth, Math.Max(92, groupBoxTrash.ClientSize.Height - 86));
+
+            int progressTop = Math.Max(btnReloadTub.Bottom + 14, groupBoxTrash.ClientSize.Height - 36);
+            lblTrashProgress.Location = new Point(leftColumn, progressTop + 3);
+            progressBarTrash.SetBounds(leftColumn + 104, progressTop + 2, 165, 19);
+            lblTrashPercent.Location = new Point(progressBarTrash.Right + 10, progressTop + 3);
         }
 
         // ==========================================
@@ -618,7 +756,7 @@ namespace DataManager
 
             int currentMouseY = PointToClient(Cursor.Position).Y;
             navigatorHeight = resizeStartNavigatorHeight + currentMouseY - resizeStartMouseY;
-            //ArrangeTimelineAndTabs();
+            ArrangeTimelineAndTabs();
         }
 
         private void picFrame_MouseLeave(object? sender, EventArgs e)
@@ -691,6 +829,7 @@ namespace DataManager
             ToolStripMenuItem menuHotkeys = new ToolStripMenuItem("⌨️ 단축키 안내");
             menuHotkeys.DropDownItems.Add("Space Bar : 자동 재생 / 정지 토글");
             menuHotkeys.DropDownItems.Add("← / → 방향키 : 프레임 1칸씩 이동");
+            menuHotkeys.DropDownItems.Add("Delete : 선택한 프레임 또는 지정 범위를 휴지통으로 이동");
             menuHotkeys.MouseEnter += (s, e) => menuHotkeys.ShowDropDown();
 
             menuAttempts = new ToolStripMenuItem("📊 오늘의 시도");
@@ -886,8 +1025,15 @@ namespace DataManager
 
                     txtLog.AppendText(Environment.NewLine + "🛑 [알림] 사용자에 의해 작업이 강제 중지되었습니다." + Environment.NewLine);
 
-                    // 진행률 바 초기화
+                    // 강제 중지 후 학습/테스트 UI 상태를 대기 상태로 되돌린다.
                     if (progressBarTrain != null) progressBarTrain.Value = 0;
+                    if (lblProgressPercent != null) lblProgressPercent.Text = "0%";
+                    if (lblTrainStatus2 != null)
+                    {
+                        lblTrainStatus2.Text = "준비 완료";
+                        lblTrainStatus2.ForeColor = Color.Green;
+                    }
+                    UpdateStatusLabel("대기 중", Color.Green);
                 }
             }
         }
@@ -906,23 +1052,33 @@ namespace DataManager
                 return;
             }
 
+            // ★ 새로 추가된 안전장치: 사용자가 데이터를 열지 않고 학습을 누르는 것을 방지합니다!
+            if (string.IsNullOrEmpty(tubPath))
+            {
+                MessageBox.Show("학습할 Tub 데이터를 먼저 열어주세요!", "데이터 누락", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
             // ★ 로컬/원격 환경에 맞춘 동적 알림창!
             string modeText = rdoRemote.Checked ? "원격 서버" : "로컬(WSL)";
-            DialogResult res = MessageBox.Show($"{modeText}({configPath})에서 AI 모델 학습을 시작하시겠습니까?\n(학습에는 시간이 오래 걸릴 수 있습니다.)", "학습 시작 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+            DialogResult res = MessageBox.Show($"{modeText}({configPath})에서 AI 모델 학습을 시작하시겠습니까?\n\n선택된 데이터: {tubPath}\n(학습에는 시간이 오래 걸릴 수 있습니다.)", "학습 시작 확인", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
             if (res == DialogResult.No) return;
 
+            ResetTrainingLossGraph();
             txtLog.AppendText(Environment.NewLine + "[Train] AI 모델 학습을 시작합니다...");
 
             UpdateStatusLabel("학습 중", Color.DarkOrange);
 
-            // ★ 카운트는 버튼 누를 때 한 번만 오르도록 여기서만 처리! (UpdateChartRealTime 안의 카운트 증가 코드는 지워주세요!)
+            // ★ 카운트는 버튼 누를 때 한 번만 오르도록 여기서만 처리! (기존 코드 완벽 유지)
             _trainCount++;
             if (infoTrain != null) infoTrain.Text = $"오늘 학습 시도: {_trainCount}회";
 
             bool useVenv = chkUseVenv != null ? chkUseVenv.Checked : true;
-            _executor.ExecuteTrain(configPath, useVenv, (log) =>
+
+            // ★ 수정된 부분: configPath와 함께 tubPath도 파이썬 스크립트로 쏴줍니다!
+            _executor.ExecuteTrain(configPath, tubPath, useVenv, (log) =>
             {
-                // 프리징 방지를 위해 BeginInvoke 사용
+                // 프리징 방지를 위해 BeginInvoke 사용 (기존 코드 완벽 유지)
                 this.BeginInvoke(new Action(() => { UpdateChartRealTime(log); }));
             });
         }
@@ -933,6 +1089,8 @@ namespace DataManager
 
             bool isJunkLog = logText.Contains('\r') || logText.Contains('\b') || logText.Count(c => c == '=') > 10 || logText.Contains("\u001b");
             if (!isJunkLog) txtLog.AppendText(logText + Environment.NewLine);
+
+            CaptureTrainingLoss(logText);
 
             if (logText.Contains("[Errno 2]") || logText.Contains("Error") || logText.Contains("Exception"))
             {
@@ -952,6 +1110,7 @@ namespace DataManager
                 txtLog.AppendText(Environment.NewLine + $"📁 자동 저장 위치: {configPath}/models/mypilot.h5");
                 txtLog.AppendText(Environment.NewLine + "--------------------------------------------------" + Environment.NewLine);
 
+                ShowTrainingLossGraph();
                 MessageBox.Show($"🎉 AI 모델 학습이 성공적으로 완료되었습니다!\n\n[자동 저장 위치]\n{configPath}/models/mypilot.h5\n\n[다음 단계 안내]\n1. 좌측의 [모델 선택] 버튼을 누르세요. (자동으로 세팅됩니다.)\n2. [테스트 이미지 선택]을 누르세요. (원격 서버 폴더 자동 세팅)\n3. [모델 테스트 실행] 버튼을 눌러보세요!", "학습 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 UpdateStatusLabel("대기 중", Color.Green);
             }
@@ -977,6 +1136,320 @@ namespace DataManager
                     lblProgressPercent.Text = $"{percent}%";
                 }
             }
+        }
+
+        private void InitializeTrainingLossOverlay()
+        {
+            panelTrainingLoss.Dock = DockStyle.None;
+            panelTrainingLoss.BackColor = Color.White;
+            panelTrainingLoss.Padding = new Padding(6, 4, 6, 6);
+            panelTrainingLoss.Visible = false;
+
+            lblTrainingLossSummary.Dock = DockStyle.None;
+            lblTrainingLossSummary.TextAlign = ContentAlignment.MiddleLeft;
+            lblTrainingLossSummary.Font = new Font("나눔고딕", 9F, FontStyle.Bold);
+
+            btnCloseTrainingLoss.Text = "X";
+            btnCloseTrainingLoss.Size = new Size(28, 24);
+            btnCloseTrainingLoss.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+            btnCloseTrainingLoss.Click += (_, _) => HideTrainingLossGraph();
+
+            picTrainingLossGraph.Dock = DockStyle.None;
+            picTrainingLossGraph.BackColor = Color.White;
+            picTrainingLossGraph.BorderStyle = BorderStyle.FixedSingle;
+            picTrainingLossGraph.SizeMode = PictureBoxSizeMode.Normal;
+            picTrainingLossGraph.MouseMove += picTrainingLossGraph_MouseMove;
+            picTrainingLossGraph.MouseClick += picTrainingLossGraph_MouseClick;
+            picTrainingLossGraph.MouseLeave += (_, _) =>
+            {
+                lblTrainingLossHover.Visible = false;
+                picTrainingLossGraph.Cursor = Cursors.Default;
+            };
+            picTrainingLossGraph.Resize += (_, _) =>
+            {
+                if (panelTrainingLoss.Visible) DrawTrainingLossGraph();
+            };
+
+            lblTrainingLossHover.AutoSize = true;
+            lblTrainingLossHover.BackColor = Color.FromArgb(40, 40, 40);
+            lblTrainingLossHover.ForeColor = Color.White;
+            lblTrainingLossHover.Font = new Font(SystemFonts.DefaultFont.FontFamily, 9, FontStyle.Bold);
+            lblTrainingLossHover.Padding = new Padding(8, 5, 8, 5);
+            lblTrainingLossHover.BorderStyle = BorderStyle.FixedSingle;
+            lblTrainingLossHover.Visible = false;
+            picTrainingLossGraph.Controls.Add(lblTrainingLossHover);
+
+            panelTrainingLoss.Controls.Add(picTrainingLossGraph);
+            panelTrainingLoss.Controls.Add(lblTrainingLossSummary);
+            panelTrainingLoss.Controls.Add(btnCloseTrainingLoss);
+            panelTrainingLoss.Resize += (_, _) =>
+            {
+                LayoutTrainingLossOverlay();
+                if (panelTrainingLoss.Visible) DrawTrainingLossGraph();
+            };
+            groupTimeline.Resize += (_, _) =>
+            {
+                if (!panelTrainingLoss.Visible) return;
+                LayoutTrainingLossOverlay();
+                DrawTrainingLossGraph();
+            };
+            groupTimeline.Controls.Add(panelTrainingLoss);
+            LayoutTrainingLossOverlay();
+        }
+
+        private void LayoutTrainingLossOverlay()
+        {
+            Rectangle timelineBounds = lvTimeline.Bounds;
+            if (timelineBounds.Width <= 0 || timelineBounds.Height <= 0)
+            {
+                timelineBounds = new Rectangle(
+                    groupTimeline.Padding.Left,
+                    groupTimeline.Padding.Top + 18,
+                    Math.Max(1, groupTimeline.ClientSize.Width - groupTimeline.Padding.Horizontal),
+                    Math.Max(1, groupTimeline.ClientSize.Height - groupTimeline.Padding.Vertical - 18));
+            }
+
+            panelTrainingLoss.SetBounds(
+                timelineBounds.Left,
+                timelineBounds.Top,
+                timelineBounds.Width,
+                timelineBounds.Height);
+
+            int left = panelTrainingLoss.Padding.Left;
+            int top = panelTrainingLoss.Padding.Top;
+            int width = Math.Max(1, panelTrainingLoss.ClientSize.Width - panelTrainingLoss.Padding.Horizontal);
+            int summaryWidth = Math.Max(1, width - btnCloseTrainingLoss.Width - 8);
+
+            lblTrainingLossSummary.SetBounds(left, top, summaryWidth, 28);
+            btnCloseTrainingLoss.Location = new Point(
+                Math.Max(6, panelTrainingLoss.ClientSize.Width - btnCloseTrainingLoss.Width - 8),
+                5);
+            btnCloseTrainingLoss.BringToFront();
+
+            int graphTop = lblTrainingLossSummary.Bottom + 4;
+            int graphHeight = Math.Max(30, panelTrainingLoss.ClientSize.Height - graphTop - panelTrainingLoss.Padding.Bottom);
+            picTrainingLossGraph.SetBounds(left, graphTop, width, graphHeight);
+        }
+
+        private void ResetTrainingLossGraph()
+        {
+            trainingLossPoints.Clear();
+            HideTrainingLossGraph();
+        }
+
+        private void HideTrainingLossGraph()
+        {
+            panelTrainingLoss.Visible = false;
+            lblTrainingLossHover.Visible = false;
+            lvTimeline.Visible = true;
+            ArrangeTimelineAndTabs();
+        }
+
+        private void CaptureTrainingLoss(string logText)
+        {
+            Match lossMatch = Regex.Match(logText, @"\bloss\s*[:=]\s*([-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?)");
+            if (!lossMatch.Success) return;
+
+            if (!double.TryParse(lossMatch.Groups[1].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out double loss))
+            {
+                return;
+            }
+
+            double? valLoss = null;
+            Match valLossMatch = Regex.Match(logText, @"\bval_loss\s*[:=]\s*([-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?)");
+            if (valLossMatch.Success
+                && double.TryParse(valLossMatch.Groups[1].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out double parsedValLoss))
+            {
+                valLoss = parsedValLoss;
+            }
+
+            int frameIndex = MapLossOrderToFrameIndex(trainingLossPoints.Count, trainingLossPoints.Count + 1);
+            trainingLossPoints.Add(new TrainingLossPoint(trainingLossPoints.Count + 1, frameIndex, loss, valLoss));
+        }
+
+        private void ShowTrainingLossGraph()
+        {
+            if (trainingLossPoints.Count == 0)
+            {
+                lblTrainingLossSummary.Text = $"학습 loss 데이터 없음  |  프레임 {tubFrames.Count:N0}개  |  loss가 낮아질수록 예측 오차가 줄어듭니다.";
+            }
+            else
+            {
+                TrainingLossPoint latest = trainingLossPoints[^1];
+                int score = CalculateTrainingScore(latest.Loss);
+                lblTrainingLossSummary.Text =
+                    $"전체 학습 점수 {score}점 ({GetTrainingScoreGrade(score)})  |  프레임 {tubFrames.Count:N0}개  |  최종 loss {latest.Loss:0.#####}  |  loss가 낮아질수록 예측 오차가 줄어듭니다.";
+            }
+
+            lvTimeline.Visible = false;
+            panelTrainingLoss.Visible = true;
+            panelTrainingLoss.BringToFront();
+            ArrangeTimelineAndTabs();
+            LayoutTrainingLossOverlay();
+            DrawTrainingLossGraph();
+            BeginInvoke((Action)(() =>
+            {
+                LayoutTrainingLossOverlay();
+                DrawTrainingLossGraph();
+            }));
+        }
+
+        private void DrawTrainingLossGraph()
+        {
+            if (picTrainingLossGraph.ClientSize.Width <= 0 || picTrainingLossGraph.ClientSize.Height <= 0) return;
+
+            Bitmap bitmap = new Bitmap(picTrainingLossGraph.ClientSize.Width, picTrainingLossGraph.ClientSize.Height);
+            using Graphics graphics = Graphics.FromImage(bitmap);
+            graphics.Clear(Color.White);
+            graphics.SmoothingMode = SmoothingMode.AntiAlias;
+
+            if (trainingLossPoints.Count == 0)
+            {
+                trainingLossPlotBounds = Rectangle.Empty;
+                DrawCenteredGraphMessage(graphics, bitmap.Size, "학습 로그에서 loss 값을 찾지 못했습니다.");
+                SetTrainingLossGraphImage(bitmap);
+                return;
+            }
+
+            Rectangle plot = new Rectangle(58, 8, Math.Max(80, bitmap.Width - 70), Math.Max(24, bitmap.Height - 18));
+            trainingLossPlotBounds = plot;
+
+            double minLoss = trainingLossPoints.Min(point => point.Loss);
+            double maxLoss = trainingLossPoints.Max(point => point.Loss);
+            if (Math.Abs(maxLoss - minLoss) < 1e-12)
+            {
+                double pad = Math.Max(0.001, Math.Abs(maxLoss) * 0.1);
+                minLoss = Math.Max(0, minLoss - pad);
+                maxLoss += pad;
+            }
+
+            using Pen framePen = new Pen(Color.FromArgb(120, 120, 120));
+            using Pen gridPen = new Pen(Color.FromArgb(225, 225, 225));
+            using Pen lossPen = new Pen(Color.RoyalBlue, 2f);
+            using Brush textBrush = new SolidBrush(Color.FromArgb(55, 55, 55));
+            using Font smallFont = new Font("나눔고딕", 8F);
+
+            for (int i = 0; i <= 4; i++)
+            {
+                int y = plot.Top + (plot.Height * i / 4);
+                double value = maxLoss - ((maxLoss - minLoss) * i / 4);
+                graphics.DrawLine(gridPen, plot.Left, y, plot.Right, y);
+                graphics.DrawString(value.ToString("0.####", CultureInfo.InvariantCulture), smallFont, textBrush, 8, y - 7);
+            }
+
+            graphics.DrawRectangle(framePen, plot);
+            PointF[] points = trainingLossPoints
+                .Select((_, index) => GetTrainingLossPointLocation(index, minLoss, maxLoss, plot))
+                .ToArray();
+
+            if (points.Length == 1)
+            {
+                graphics.FillEllipse(Brushes.RoyalBlue, points[0].X - 3, points[0].Y - 3, 6, 6);
+            }
+            else
+            {
+                graphics.DrawLines(lossPen, points);
+            }
+
+            graphics.DrawString("loss", smallFont, Brushes.RoyalBlue, plot.Left + 6, plot.Top + 4);
+            graphics.DrawString("학습 진행", smallFont, textBrush, plot.Right - 56, plot.Bottom - 16);
+            SetTrainingLossGraphImage(bitmap);
+        }
+
+        private PointF GetTrainingLossPointLocation(int lossIndex, double minLoss, double maxLoss, Rectangle plot)
+        {
+            double xRatio = trainingLossPoints.Count <= 1 ? 0 : (double)lossIndex / (trainingLossPoints.Count - 1);
+            double yRatio = (trainingLossPoints[lossIndex].Loss - minLoss) / (maxLoss - minLoss);
+            float x = plot.Left + (float)(plot.Width * xRatio);
+            float y = plot.Bottom - (float)(plot.Height * yRatio);
+            return new PointF(x, y);
+        }
+
+        private void SetTrainingLossGraphImage(Bitmap bitmap)
+        {
+            Image? oldImage = picTrainingLossGraph.Image;
+            picTrainingLossGraph.Image = bitmap;
+            oldImage?.Dispose();
+        }
+
+        private void picTrainingLossGraph_MouseMove(object? sender, MouseEventArgs e)
+        {
+            int lossIndex = GetTrainingLossIndexAt(e.Location);
+            if (lossIndex < 0)
+            {
+                lblTrainingLossHover.Visible = false;
+                picTrainingLossGraph.Cursor = Cursors.Default;
+                return;
+            }
+
+            TrainingLossPoint point = trainingLossPoints[lossIndex];
+            int frameIndex = GetFrameIndexForLossIndex(lossIndex);
+            string frameText = frameIndex >= 0 && frameIndex < tubFrames.Count
+                ? $"프레임 {tubFrames[frameIndex].FrameNumber:D6}"
+                : "프레임 없음";
+            int score = CalculateTrainingScore(point.Loss);
+            lblTrainingLossHover.Text = $"{frameText}\nloss {point.Loss:0.#####}\n점수 {score}점 ({GetTrainingScoreGrade(score)})";
+            if (point.ValLoss.HasValue) lblTrainingLossHover.Text += $"\nval_loss {point.ValLoss.Value:0.#####}";
+
+            int x = Math.Min(e.X + 14, picTrainingLossGraph.ClientSize.Width - lblTrainingLossHover.Width - 8);
+            int y = Math.Min(e.Y + 14, picTrainingLossGraph.ClientSize.Height - lblTrainingLossHover.Height - 8);
+            lblTrainingLossHover.Location = new Point(Math.Max(8, x), Math.Max(8, y));
+            lblTrainingLossHover.Visible = true;
+            lblTrainingLossHover.BringToFront();
+            picTrainingLossGraph.Cursor = Cursors.Hand;
+        }
+
+        private void picTrainingLossGraph_MouseClick(object? sender, MouseEventArgs e)
+        {
+            int lossIndex = GetTrainingLossIndexAt(e.Location);
+            if (lossIndex < 0) return;
+
+            int frameIndex = GetFrameIndexForLossIndex(lossIndex);
+            if (frameIndex >= 0 && frameIndex < tubFrames.Count)
+            {
+                ShowFrame(frameIndex);
+            }
+        }
+
+        private int GetTrainingLossIndexAt(Point location)
+        {
+            if (trainingLossPoints.Count == 0 || trainingLossPlotBounds == Rectangle.Empty) return -1;
+            if (!trainingLossPlotBounds.Contains(location)) return -1;
+
+            double ratio = trainingLossPlotBounds.Width <= 0
+                ? 0
+                : (double)(location.X - trainingLossPlotBounds.Left) / trainingLossPlotBounds.Width;
+            int index = (int)Math.Round(ratio * (trainingLossPoints.Count - 1));
+            return Math.Clamp(index, 0, trainingLossPoints.Count - 1);
+        }
+
+        private int GetFrameIndexForLossIndex(int lossIndex)
+        {
+            return MapLossOrderToFrameIndex(lossIndex, trainingLossPoints.Count);
+        }
+
+        private int MapLossOrderToFrameIndex(int lossOrder, int totalLossCount)
+        {
+            if (tubFrames.Count == 0) return -1;
+            int estimatedTotal = Math.Max(1, totalLossCount);
+            double ratio = estimatedTotal <= 1 ? 0 : (double)lossOrder / (estimatedTotal - 1);
+            return Math.Clamp((int)Math.Round(ratio * (tubFrames.Count - 1)), 0, tubFrames.Count - 1);
+        }
+
+        private static int CalculateTrainingScore(double loss)
+        {
+            if (double.IsNaN(loss) || double.IsInfinity(loss) || loss < 0) return 0;
+            double score = 100.0 / (1.0 + (loss * 100.0));
+            return Math.Clamp((int)Math.Round(score), 0, 100);
+        }
+
+        private static string GetTrainingScoreGrade(int score)
+        {
+            if (score >= 90) return "매우 좋음";
+            if (score >= 75) return "좋음";
+            if (score >= 60) return "보통";
+            if (score >= 40) return "낮음";
+            return "나쁨";
         }
 
         private void btnSelectModel_Click(object sender, EventArgs e)
@@ -1420,6 +1893,7 @@ namespace DataManager
         private async Task LoadTubAsync(string selectedTubPath)
         {
             SetPlaybackState(false);
+            HideTrainingLossGraph();
 
             // 신버전 Tub은 catalog_*.catalog, 구버전 Tub은 record_*.json 파일을 사용한다.
             // 사용자가 data 폴더를 선택해도 내부 tub 폴더를 찾을 수 있도록 하위 폴더까지 검색한다.
@@ -1445,7 +1919,8 @@ namespace DataManager
                 return;
             }
 
-            tubPath = selectedTubPath;
+            string actualTubPath = ResolveActualTubPath(selectedTubPath, catalogFiles, recordFiles, isOldRecordTub);
+            tubPath = actualTubPath;
             lblTubPath.Text = tubPath;
 
             btnLoadTub.Enabled = false;
@@ -1471,12 +1946,15 @@ namespace DataManager
                 // Tub 형식에 따라 신버전 catalog 파서 또는 구버전 record JSON 파서를 선택한다.
                 TubLoadResult result = await Task.Run(() =>
                     isOldRecordTub
-                        ? ReadOldTubFrames(selectedTubPath, recordFiles)
-                        : ReadTubFrames(selectedTubPath, catalogFiles));
+                        ? ReadOldTubFrames(actualTubPath, recordFiles)
+                        : ReadTubFrames(actualTubPath, catalogFiles));
                 tubFrames.AddRange(result.Frames);
+                ApplyManifestDeletedIndexesOnLoad();
                 ResetTubView();
 
                 if (tubFrames.Count > 0) ShowFrame(0);
+                RebuildTrashList();
+                UpdateTrashGauge();
                 RenderTubGraph();
                 foreach (string error in result.Errors) AddLog(error);
                 AddLog($"Load Tub 완료: {tubFrames.Count}개 프레임 ({(isOldRecordTub ? "구버전 record JSON" : "catalog")} 형식)");
@@ -1495,6 +1973,23 @@ namespace DataManager
                 btnLoadTub.Enabled = true;
                 btnReloadTub.Enabled = true;
             }
+        }
+
+        private static string ResolveActualTubPath(string selectedTubPath, string[] catalogFiles, string[] recordFiles, bool isOldRecordTub)
+        {
+            // 사용자가 선택한 폴더 또는 catalog/record가 실제로 있는 폴더를 학습용 tub 경로로 사용한다.
+            if (File.Exists(Path.Combine(selectedTubPath, "manifest.json")))
+            {
+                return selectedTubPath;
+            }
+
+            string[] tubFiles = isOldRecordTub ? recordFiles : catalogFiles;
+            if (tubFiles.Length > 0)
+            {
+                return Path.GetDirectoryName(tubFiles[0]) ?? selectedTubPath;
+            }
+
+            return selectedTubPath;
         }
 
         private static TubLoadResult ReadTubFrames(string selectedTubPath, string[] catalogFiles)
@@ -1626,6 +2121,7 @@ namespace DataManager
 
             currentTimelineStart = timelineStart;
             currentTimelineVisibleCount = visibleCount;
+            ApplyTimelineIconSpacing();
             lvTimeline.BeginUpdate();
             lvTimeline.Items.Clear();
             timelineImages.Images.Clear();
@@ -1637,7 +2133,7 @@ namespace DataManager
                 {
                     TubFrame frame = tubFrames[i];
                     string imageKey = i.ToString();
-                    timelineImages.Images.Add(imageKey, CreateTimelineThumbnail(frame.ImagePath));
+                    timelineImages.Images.Add(imageKey, CreateTimelineThumbnail(frame.ImagePath, GetTimelineThumbnailSize()));
                     lvTimeline.Items.Add(new ListViewItem("", imageKey) { Tag = i, ToolTipText = frame.ToString() });
                 }
             }
@@ -1652,7 +2148,9 @@ namespace DataManager
         private int GetTimelineVisibleCount()
         {
             int availableWidth = Math.Max(0, lvTimeline.ClientSize.Width - 8);
-            int countByWidth = availableWidth / TimelineIconSpacingX;
+            int thumbnailHeight = Math.Max(1, lvTimeline.ClientSize.Height - TimelineIconPadding - 4);
+            int desiredSpacingX = Math.Max(TimelineMinimumIconSpacingX, (int)Math.Round(thumbnailHeight * 4d / 3d) + TimelineIconPadding);
+            int countByWidth = availableWidth / desiredSpacingX;
             return Math.Clamp(countByWidth, TimelineMinimumVisibleCount, TimelineMaximumVisibleCount);
         }
 
@@ -2076,27 +2574,50 @@ namespace DataManager
             return new Bitmap(source);
         }
 
-        private static Image CreateTimelineThumbnail(string imagePath)
+        private static Image CreateTimelineThumbnail(string imagePath, Size thumbnailSize)
         {
             if (!File.Exists(imagePath))
             {
-                Bitmap missing = new Bitmap(TimelineThumbWidth, TimelineThumbHeight);
+                Bitmap missing = new Bitmap(thumbnailSize.Width, thumbnailSize.Height);
                 using Graphics graphics = Graphics.FromImage(missing);
                 graphics.Clear(Color.Black);
                 using Pen pen = new Pen(Color.DarkGray);
-                graphics.DrawRectangle(pen, 0, 0, TimelineThumbWidth - 1, TimelineThumbHeight - 1);
+                graphics.DrawRectangle(pen, 0, 0, thumbnailSize.Width - 1, thumbnailSize.Height - 1);
                 return missing;
             }
             using FileStream stream = new FileStream(imagePath, FileMode.Open, FileAccess.Read);
             using Image source = Image.FromStream(stream);
-            return new Bitmap(source, new Size(TimelineThumbWidth, TimelineThumbHeight));
+            return new Bitmap(source, thumbnailSize);
         }
 
         // ListView 기본 큰 아이콘 간격이 넓어서 썸네일이 한 줄에 촘촘히 보이도록 직접 조정한다.
         private void ApplyTimelineIconSpacing()
         {
             if (!lvTimeline.IsHandleCreated) return;
-            SendMessage(lvTimeline.Handle, LvmSetIconSpacing, IntPtr.Zero, MakeLParam(TimelineIconSpacingX, TimelineIconSpacingY));
+            Size thumbnailSize = GetTimelineThumbnailSize();
+            if (timelineImages.ImageSize != thumbnailSize)
+            {
+                timelineImages.ImageSize = thumbnailSize;
+            }
+            Size iconSpacing = GetTimelineIconSpacing();
+            SendMessage(lvTimeline.Handle, LvmSetIconSpacing, IntPtr.Zero, MakeLParam(iconSpacing.Width, iconSpacing.Height));
+        }
+
+        private Size GetTimelineThumbnailSize()
+        {
+            Size iconSpacing = GetTimelineIconSpacing();
+            return new Size(
+                Math.Max(1, iconSpacing.Width - TimelineIconPadding),
+                Math.Max(1, iconSpacing.Height - TimelineIconPadding));
+        }
+
+        private Size GetTimelineIconSpacing()
+        {
+            int visibleCount = currentTimelineVisibleCount > 0 ? currentTimelineVisibleCount : GetTimelineVisibleCount();
+            int availableWidth = Math.Max(TimelineMinimumIconSpacingX, lvTimeline.ClientSize.Width - 8);
+            int spacingX = Math.Max(TimelineMinimumIconSpacingX, availableWidth / Math.Max(1, visibleCount));
+            int spacingY = Math.Max(TimelineMinimumIconSpacingY, lvTimeline.ClientSize.Height - 4);
+            return new Size(spacingX, spacingY);
         }
 
         private static IntPtr MakeLParam(int lowWord, int highWord)
@@ -2237,7 +2758,7 @@ namespace DataManager
                 return;
             }
 
-            Rectangle plot = new Rectangle(64, 24, Math.Max(10, bitmap.Width - 128), Math.Max(10, bitmap.Height - 72));
+            Rectangle plot = new Rectangle(64, 32, Math.Max(10, bitmap.Width - 128), Math.Max(10, bitmap.Height - 60));
             graphPlotBounds = plot;
             graphVisibleFrames = visibleFrames;
             DrawGraphFrame(graphics, plot);
@@ -2539,30 +3060,59 @@ namespace DataManager
             lstFrames.Items[index] = tubFrames[index];
         }
 
-        // 휴지통(CheckedListBox) 드래그 다중 체크 상태
+        // 휴지통(CheckedListBox) 클릭/드래그 상태
+        // - 순수 클릭(이동 없음): 텍스트=미리보기만, 체크박스 글리프=단일 토글
+        // - 드래그(다른 항목으로 이동): 시작 지점과 무관하게 다중 토글
+        private bool trashDragArmed;
         private bool trashDragging;
+        private bool trashDownOnGlyph;
         private bool trashDragTargetState;
+        private int trashDragStartIndex = -1;
         private int trashDragLastIndex = -1;
 
         private void LstTrash_MouseDown(object? sender, MouseEventArgs e)
         {
-            if (e.Button != MouseButtons.Left) return;
+            if (e.Button != MouseButtons.Left) { trashDragArmed = false; trashDragging = false; return; }
             int index = lstTrash.IndexFromPoint(e.Location);
-            if (index < 0 || index >= lstTrash.Items.Count) { trashDragging = false; return; }
+            if (index < 0 || index >= lstTrash.Items.Count) { trashDragArmed = false; trashDragging = false; return; }
 
-            bool newState = !lstTrash.GetItemChecked(index);
-            lstTrash.SetItemChecked(index, newState);
-            trashDragTargetState = newState;
+            // 미리보기: 클릭한 항목의 프레임 이미지를 메인 화면에 표시 (체크 상태 불변)
+            ShowTrashFramePreview(index);
+
+            // 토글은 아직 하지 않고 드래그 가능성만 무장한다. 실제 토글 시점은:
+            //  · 드래그(다른 항목으로 이동)로 확정되면 → 그 범위를 다중 토글 (TrashDragConsider)
+            //  · 순수 클릭이고 체크박스 글리프였으면 → MouseUp에서 단일 토글
+            //  · 순수 클릭이고 텍스트였으면 → 토글 없음(미리보기만)
+            trashDragArmed = true;
+            trashDragging = false;
+            trashDragStartIndex = index;
             trashDragLastIndex = index;
-            trashDragging = true;
+            trashDownOnGlyph = IsOnTrashCheckbox(index, e.Location);
+            trashDragTargetState = !lstTrash.GetItemChecked(index);
+        }
+
+        // 휴지통 항목(TrashEntry) → tubFrames 인덱스로 매핑해 메인 화면에 미리보기 표시.
+        private void ShowTrashFramePreview(int trashIndex)
+        {
+            if (trashIndex < 0 || trashIndex >= lstTrash.Items.Count) return;
+            if (lstTrash.Items[trashIndex] is not TrashEntry entry) return;
+            int frameIndex = tubFrames.IndexOf(entry.Frame);
+            if (frameIndex >= 0) ShowFrame(frameIndex);
+        }
+
+        // 클릭 위치가 좌측 체크박스 글리프 영역인지 근사 판정(글리프 폭을 ItemHeight로 근사, DPI/폰트 비례).
+        private bool IsOnTrashCheckbox(int index, Point location)
+        {
+            Rectangle item = lstTrash.GetItemRectangle(index);
+            return location.X <= item.Left + lstTrash.ItemHeight;
         }
 
         private void LstTrash_MouseMove(object? sender, MouseEventArgs e)
         {
-            if (!trashDragging || (e.Button & MouseButtons.Left) == 0) return;
+            if (!trashDragArmed || (e.Button & MouseButtons.Left) == 0) return;
             int index = lstTrash.IndexFromPoint(e.Location);
             if (index < 0 || index >= lstTrash.Items.Count) return;
-            ApplyTrashDragTo(index);
+            TrashDragConsider(index);
         }
 
         // 오토스크롤(커서를 가장자리에 두면 리스트가 자동으로 스크롤되는 동작) 시에는
@@ -2570,9 +3120,24 @@ namespace DataManager
         // SelectedIndex만 갱신한다. 따라서 SelectedIndexChanged도 같이 후킹해 드래그를 따라가게 한다.
         private void LstTrash_SelectedIndexChanged(object? sender, EventArgs e)
         {
-            if (!trashDragging) return;
+            if (!trashDragArmed) return;
+            // 좌클릭이 눌린 상태(드래그/오토스크롤)에서만 드래그로 간주. 키보드 탐색 등은 무장 해제.
+            if ((MouseButtons & MouseButtons.Left) == 0) { trashDragArmed = false; return; }
             int index = lstTrash.SelectedIndex;
             if (index < 0) return;
+            TrashDragConsider(index);
+        }
+
+        // 무장된 상태에서 인덱스가 시작 지점과 달라지면 '드래그'로 확정하고, 시작~현재 범위를 일괄 토글한다.
+        // (같은 항목에 머무르면 아직 클릭으로 간주 — 토글하지 않음)
+        private void TrashDragConsider(int index)
+        {
+            if (!trashDragging)
+            {
+                if (index == trashDragStartIndex) return;   // 이동 없음 → 클릭
+                trashDragging = true;                        // 다른 항목으로 이동 → 드래그 확정
+                trashDragLastIndex = trashDragStartIndex;     // 시작 항목도 포함해서 칠한다
+            }
             ApplyTrashDragTo(index);
         }
 
@@ -2591,6 +3156,13 @@ namespace DataManager
 
         private void LstTrash_MouseUp(object? sender, MouseEventArgs e)
         {
+            // 순수 클릭(드래그 아님)에서 체크박스 글리프를 눌렀다면 단일 토글한다.
+            if (trashDragArmed && !trashDragging && trashDownOnGlyph
+                && trashDragStartIndex >= 0 && trashDragStartIndex < lstTrash.Items.Count)
+            {
+                lstTrash.SetItemChecked(trashDragStartIndex, trashDragTargetState);
+            }
+            trashDragArmed = false;
             trashDragging = false;
             trashDragLastIndex = -1;
         }
@@ -2665,8 +3237,10 @@ namespace DataManager
             }
 
             RebuildTrashList();
+            if (moved > 0) PersistDeletedIndexes();
+            UpdateTrashGauge();
             RenderTubGraph();
-            AddLog($"필터 적용: 범위 {lo}~{hi}에서 {moved}개 프레임을 휴지통으로 이동했습니다.");
+            AddLog($"필터 적용: 범위 {lo}~{hi}에서 {moved}개 프레임을 휴지통으로 이동(학습 제외)했습니다.");
             if (moved == 0)
             {
                 MessageBox.Show("조건에 해당하는 프레임이 없습니다.", "필터 적용", MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -2740,7 +3314,7 @@ namespace DataManager
             if (usedRange)
             {
                 (int lo, int hi) = GetEffectiveRange();
-                DialogResult res = MessageBox.Show($"범위 {lo}~{hi}의 프레임을 휴지통으로 이동하시겠습니까?", "삭제", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+                DialogResult res = MessageBox.Show($"범위 {lo}~{hi}의 프레임을 휴지통으로 보냅니다.\n학습에서 즉시 제외되며, [복원]으로 되돌릴 수 있습니다.\n\n계속하시겠습니까?", "삭제 (학습 제외)", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
                 if (res == DialogResult.No) return;
                 for (int i = lo; i <= hi; i++)
                 {
@@ -2761,7 +3335,7 @@ namespace DataManager
                 }
                 if (indices.Count > 1)
                 {
-                    DialogResult res = MessageBox.Show($"선택한 {indices.Count}개 프레임을 휴지통으로 이동하시겠습니까?", "삭제", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+                    DialogResult res = MessageBox.Show($"선택한 {indices.Count}개 프레임을 휴지통으로 보냅니다.\n학습에서 즉시 제외되며, [복원]으로 되돌릴 수 있습니다.\n\n계속하시겠습니까?", "삭제 (학습 제외)", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
                     if (res == DialogResult.No) return;
                 }
                 foreach (int index in indices)
@@ -2771,12 +3345,14 @@ namespace DataManager
             }
 
             RebuildTrashList();
+            if (moved > 0) PersistDeletedIndexes();
+            UpdateTrashGauge();
             RenderTubGraph();
             if (usedRange && moved > 0)
             {
                 ClearRangeSelection();
             }
-            AddLog($"{moved}개 프레임을 휴지통으로 이동했습니다.");
+            AddLog($"{moved}개 프레임을 휴지통으로 이동(학습에서 제외, 복원 가능)했습니다.");
         }
 
         private void btnRestore_Click(object? sender, EventArgs e)
@@ -2790,11 +3366,14 @@ namespace DataManager
             List<TrashEntry> selected = lstTrash.CheckedItems.Cast<TrashEntry>().ToList();
             foreach (TrashEntry entry in selected) RestoreFromTrash(entry.Frame);
             RebuildTrashList();
+            PersistDeletedIndexes();
+            UpdateTrashGauge();
             RenderTubGraph();
-            AddLog($"{selected.Count}개 프레임을 복원했습니다.");
+            AddLog($"{selected.Count}개 프레임을 복원(학습에 다시 포함)했습니다.");
         }
 
-        // 안전 모드: 이미지는 deleted 폴더로 이동하고 catalog는 백업 후 해당 기록만 제거(되돌릴 수 있도록 보존).
+        // 완전 삭제: catalog에서 해당 기록을 물리적으로 제거(빈 catalog는 파일째 삭제)하고
+        // manifest.json의 paths/current_index/deleted_indexes를 정리한다. 원본 복사본은 deleted 폴더에 백업한다.
         private void btnEmptyTrash_Click(object? sender, EventArgs e)
         {
             List<TubFrame> deleted = tubFrames.Where(f => f.Deleted).ToList();
@@ -2810,11 +3389,11 @@ namespace DataManager
             }
 
             DialogResult res = MessageBox.Show(
-                $"휴지통의 {deleted.Count}개 프레임을 최종 적용합니다.\n\n" +
-                "· 이미지는 tub 폴더 하위 [deleted] 폴더로 이동합니다.\n" +
-                "· catalog 파일은 백업 후 해당 기록을 제거합니다.\n" +
-                "· 구버전 record JSON 파일은 [deleted] 폴더로 이동합니다.\n\n계속하시겠습니까?",
-                "휴지통 비우기 (안전 모드)", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+                $"휴지통의 {deleted.Count}개 프레임을 완전히 삭제합니다.\n\n" +
+                "· 이 작업은 되돌릴 수 없습니다(복원 불가).\n" +
+                "· catalog에서 해당 기록을 제거하고, 비워진 catalog 파일은 삭제합니다.\n" +
+                "· 이미지와 원본 복사본은 tub 폴더 하위 [deleted] 폴더에 백업합니다.\n\n계속하시겠습니까?",
+                "휴지통 비우기 (완전 삭제)", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
             if (res == DialogResult.No) return;
 
             try
@@ -2822,9 +3401,11 @@ namespace DataManager
                 string deletedDir = Path.Combine(tubPath, "deleted");
                 Directory.CreateDirectory(deletedDir);
 
-                // 1) tub 폴더의 catalog 파일들을 훑어 삭제 대상 이미지 기록을 제외하고 재작성한다.
-                //    (프레임의 원본 catalog를 따로 저장하지 않으므로 이미지 파일명으로 직접 찾는다. 변경된 catalog만 1회 백업)
+                // 1) catalog를 훑어 삭제 대상 줄을 제거한다. 남은 줄이 0이면 catalog 파일 자체를 삭제한다.
+                //    (백업은 .backup 접미사로 남겨 catalog_*.catalog 글로빙에 다시 잡히지 않게 한다.)
                 HashSet<string> removeImages = new HashSet<string>(deleted.Select(f => f.ImageFileName));
+                int rewrittenCatalogs = 0;
+                int emptiedCatalogs = 0;
                 foreach (string catalogFile in Directory.GetFiles(tubPath, "catalog_*.catalog", SearchOption.AllDirectories))
                 {
                     bool removedAny = false;
@@ -2838,9 +3419,25 @@ namespace DataManager
                     }
                     if (!removedAny) continue;
 
-                    string backupPath = Path.Combine(deletedDir, Path.GetFileName(catalogFile) + ".backup");
-                    if (!File.Exists(backupPath)) File.Copy(catalogFile, backupPath);
-                    File.WriteAllLines(catalogFile, keptLines);
+                    // 원본 catalog와 catalog_manifest를 백업하고, catalog_manifest는 삭제한다(학습 전처리가 새로 생성).
+                    BackupToDeleted(deletedDir, catalogFile);
+                    string catalogManifestPath = catalogFile + "_manifest"; // catalog_0.catalog → catalog_0.catalog_manifest
+                    if (File.Exists(catalogManifestPath))
+                    {
+                        BackupToDeleted(deletedDir, catalogManifestPath);
+                        File.Delete(catalogManifestPath);
+                    }
+
+                    if (keptLines.Count == 0)
+                    {
+                        File.Delete(catalogFile);
+                        emptiedCatalogs++;
+                    }
+                    else
+                    {
+                        File.WriteAllText(catalogFile, string.Join("\n", keptLines) + "\n");
+                        rewrittenCatalogs++;
+                    }
                 }
 
                 // 2) 구버전 Tub의 record_*.json 파일을 deleted 폴더로 이동한다.
@@ -2869,7 +3466,10 @@ namespace DataManager
                     }
                 }
 
-                // 4) 메모리 목록에서 제거 후 뷰 재구성
+                // 4) manifest.json 갱신: paths(남은 catalog)·current_index(남은 레코드 수) 재계산, deleted_indexes 초기화
+                UpdateManifestAfterEmpty();
+
+                // 5) 메모리 목록에서 제거 후 뷰 재구성 (남은 프레임 위치 = 재작성된 catalog 줄 순번과 일치)
                 tubFrames.RemoveAll(f => f.Deleted);
                 missingImageFrames.Clear();
                 picFrame.Image = null;
@@ -2877,10 +3477,11 @@ namespace DataManager
                 ResetTubView();
                 lstTrash.Items.Clear();
                 if (tubFrames.Count > 0) ShowFrame(0);
+                UpdateTrashGauge();
                 RenderTubGraph();
 
-                AddLog($"휴지통 비우기 완료: 기록 {deleted.Count}건 제거, record {movedRecords}개 이동, 이미지 {movedImages}개 이동 (백업 위치: {deletedDir}).");
-                MessageBox.Show($"휴지통을 비웠습니다.\n\n제거된 기록: {deleted.Count}건\n이동된 record JSON: {movedRecords}개\n이동된 이미지: {movedImages}개\n백업 위치: {deletedDir}", "휴지통 비우기 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                AddLog($"휴지통 비우기(완전 삭제) 완료: {deleted.Count}건 제거 (catalog 재작성 {rewrittenCatalogs}·삭제 {emptiedCatalogs}, record {movedRecords}·이미지 {movedImages} 백업, 위치: {deletedDir}).");
+                MessageBox.Show($"휴지통을 비웠습니다(완전 삭제).\n\n삭제된 기록: {deleted.Count}건\n백업 위치: {deletedDir}", "휴지통 비우기 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
             catch (Exception ex)
             {
@@ -2930,6 +3531,150 @@ namespace DataManager
         }
 
         // ==========================================
+        // manifest.json deleted_indexes 연동 (삭제=학습 제외, 복원 가능)
+        // ==========================================
+
+        // manifest.json을 비어있지 않은 줄로 읽어 5번째 줄(catalog 메타)을 JsonObject로 파싱한다.
+        // Donkeycar Tub v2(5줄) 형식이 아니면 false.
+        private bool TryReadManifest(out string[] lines, out JsonObject meta)
+        {
+            lines = Array.Empty<string>();
+            meta = new JsonObject();
+            if (string.IsNullOrWhiteSpace(tubPath)) return false;
+            string manifestPath = Path.Combine(tubPath, "manifest.json");
+            if (!File.Exists(manifestPath)) return false;
+            try
+            {
+                List<string> nonEmpty = new List<string>();
+                foreach (string l in File.ReadAllLines(manifestPath))
+                {
+                    if (!string.IsNullOrWhiteSpace(l)) nonEmpty.Add(l);
+                }
+                if (nonEmpty.Count < 5) return false;
+                if (JsonNode.Parse(nonEmpty[4]) is not JsonObject obj) return false;
+                lines = nonEmpty.ToArray();
+                meta = obj;
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        // manifest.json의 5번째 줄만 새 내용으로 바꿔 5줄을 다시 쓴다(1~4줄 원문 유지, \n 줄바꿈, BOM 없음).
+        private void WriteManifestMeta(string[] lines, JsonObject meta)
+        {
+            string manifestPath = Path.Combine(tubPath, "manifest.json");
+            string[] outLines = (string[])lines.Clone();
+            outLines[4] = meta.ToJsonString();
+            File.WriteAllText(manifestPath, string.Join("\n", outLines.Take(5)) + "\n");
+        }
+
+        // 현재 휴지통(Deleted) 상태를 manifest.json의 deleted_indexes에 반영한다.
+        // 글로벌 인덱스 = tubFrames 내 위치(정렬된 catalog의 비어있지 않은 줄 순번).
+        private void PersistDeletedIndexes()
+        {
+            if (!TryReadManifest(out string[] lines, out JsonObject meta))
+            {
+                AddLog("[삭제 저장 안내] manifest.json이 없거나 형식이 달라 디스크에 삭제 표시를 기록하지 못했습니다(이번 세션에만 적용).");
+                return;
+            }
+            JsonArray arr = new JsonArray();
+            for (int i = 0; i < tubFrames.Count; i++)
+            {
+                if (tubFrames[i].Deleted) arr.Add(JsonValue.Create(i));
+            }
+            meta["deleted_indexes"] = arr;
+            try
+            {
+                WriteManifestMeta(lines, meta);
+            }
+            catch (Exception ex)
+            {
+                AddLog($"[삭제 저장 오류] manifest.json 기록 실패: {ex.Message}");
+            }
+        }
+
+        // 로드 직후 manifest.json의 deleted_indexes를 읽어 해당 프레임을 휴지통 상태로 표시한다.
+        private void ApplyManifestDeletedIndexesOnLoad()
+        {
+            if (!TryReadManifest(out _, out JsonObject meta)) return;
+            if (meta["deleted_indexes"] is not JsonArray arr) return;
+            int applied = 0;
+            foreach (JsonNode? node in arr)
+            {
+                if (node is null) continue;
+                int idx;
+                try { idx = node.GetValue<int>(); }
+                catch { continue; }
+                if (idx >= 0 && idx < tubFrames.Count && !tubFrames[idx].Deleted)
+                {
+                    tubFrames[idx].Deleted = true;
+                    tubFrames[idx].DeleteReason = "기존 삭제";
+                    applied++;
+                }
+            }
+            if (applied > 0) AddLog($"이전에 삭제 표시된 {applied}개 프레임을 휴지통으로 불러왔습니다.");
+        }
+
+        // 휴지통 비우기 후 manifest.json을 실제 catalog 상태에 맞춘다: paths/current_index 재계산, deleted_indexes 초기화.
+        private void UpdateManifestAfterEmpty()
+        {
+            if (!TryReadManifest(out string[] lines, out JsonObject meta))
+            {
+                AddLog("[비우기 안내] manifest.json이 없거나 형식이 달라 경로/인덱스 갱신을 건너뜁니다.");
+                return;
+            }
+            string[] catalogs = Directory.GetFiles(tubPath, "catalog_*.catalog", SearchOption.AllDirectories)
+                .OrderBy(GetFileOrderNumber).ThenBy(f => f).ToArray();
+            JsonArray paths = new JsonArray();
+            int total = 0;
+            foreach (string c in catalogs)
+            {
+                paths.Add(JsonValue.Create(Path.GetRelativePath(tubPath, c).Replace('\\', '/')));
+                foreach (string line in File.ReadLines(c)) if (!string.IsNullOrWhiteSpace(line)) total++;
+            }
+            meta["paths"] = paths;
+            meta["current_index"] = JsonValue.Create(total);
+            meta["deleted_indexes"] = new JsonArray();
+            try
+            {
+                WriteManifestMeta(lines, meta);
+            }
+            catch (Exception ex)
+            {
+                AddLog($"[비우기 오류] manifest.json 갱신 실패: {ex.Message}");
+            }
+        }
+
+        // 휴지통(삭제) 비율 게이지 갱신.
+        private void UpdateTrashGauge()
+        {
+            int total = tubFrames.Count;
+            int deleted = 0;
+            for (int i = 0; i < tubFrames.Count; i++) if (tubFrames[i].Deleted) deleted++;
+            int pct = total == 0 ? 0 : (int)Math.Round(deleted * 100.0 / total);
+            pct = Math.Clamp(pct, progressBarTrash.Minimum, progressBarTrash.Maximum);
+            progressBarTrash.Value = pct;
+            lblTrashPercent.Text = $"{pct}%";
+        }
+
+        // deleted 폴더에 원본 복사본을 .backup 접미사로 남긴다(이름 충돌 시 번호 부여).
+        // .backup 접미사 덕분에 catalog_*.catalog 글로빙/로딩에 다시 잡히지 않는다.
+        private static void BackupToDeleted(string deletedDir, string sourcePath)
+        {
+            if (!File.Exists(sourcePath)) return;
+            string baseName = Path.GetFileName(sourcePath);
+            string dest = Path.Combine(deletedDir, baseName + ".backup");
+            for (int i = 1; File.Exists(dest); i++)
+            {
+                dest = Path.Combine(deletedDir, $"{baseName}.{i}.backup");
+            }
+            File.Copy(sourcePath, dest);
+        }
+
+        // ==========================================
         // 내부 클래스
         // ==========================================
         private sealed class TubFrame
@@ -2958,6 +3703,22 @@ namespace DataManager
             public TubFrame Frame { get; }
             public TrashEntry(TubFrame frame) => Frame = frame;
             public override string ToString() => $"Frame {Frame.FrameNumber:D6} · {Frame.DeleteReason}";
+        }
+
+        private sealed class TrainingLossPoint
+        {
+            public int Order { get; }
+            public int FrameIndex { get; }
+            public double Loss { get; }
+            public double? ValLoss { get; }
+
+            public TrainingLossPoint(int order, int frameIndex, double loss, double? valLoss)
+            {
+                Order = order;
+                FrameIndex = frameIndex;
+                Loss = loss;
+                ValLoss = valLoss;
+            }
         }
 
         // 표시용 이미지 LRU 캐시. 용량을 초과하면 가장 오래 전 사용한 이미지를 Dispose하여 메모리를 제한한다.
