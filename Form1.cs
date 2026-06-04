@@ -800,11 +800,33 @@ namespace DataManager
                 MessageBox.Show("[기본 사용 순서]\n\n1. 좌측 [서버 연결 설정]에서 [원격] 선택 후 로그인\n2. [설정 파일 열기] 클릭하여 서버 경로 동기화\n3. [Tub 데이터 열기]로 윈도우로 다운받은 주행기록 폴더 열기\n4. 이상한 데이터 필터링 및 삭제\n5. [학습] 버튼을 눌러 AI 훈련시키기\n6. 훈련된 모델로 [모델 테스트] 진행\n\n이 내용은 상단 메뉴바에서도 언제든 확인 가능합니다.", "초보자 가이드");
             }
 
+            // 메인 프레임 목록에서 Delete 키 누르면 휴지통 이동
+            lstFrames.KeyDown += (s, ev) => { if (ev.KeyCode == Keys.Delete) btnDelete_Click(null, EventArgs.Empty); };
+
             // 기본 재생속도 1x로 설정
             if (cmbPlaySpeed.SelectedIndex < 0) cmbPlaySpeed.SelectedIndex = 0;
             ApplyPlaybackSpeed();
             UpdatePlaybackControlsVisual(false);
             UpdateAutoPlayLoopVisual();
+
+            lblConfigPath.AutoEllipsis = true;
+            lblTubPath.AutoEllipsis = true;
+
+            // 새로 추가되는 AI 컴파일 탭 전용 설정 
+            if (lstHighErrorFrames != null)
+            {
+                // 1. 리스트박스 다중 선택(드래그, Shift, Ctrl 클릭) 모드 켜기
+                lstHighErrorFrames.SelectionMode = SelectionMode.MultiExtended;
+
+                // 2. AI 컴파일 목록을 클릭하면 메인 화면에 사진 띄워주기 연동
+                lstHighErrorFrames.SelectedIndexChanged += lstHighErrorFrames_SelectedIndexChanged;
+
+                // 3. AI 컴파일 목록에서도 Delete 키 누르면 전용 삭제 버튼(휴지통 이동) 실행!
+                lstHighErrorFrames.KeyDown += (s, ev) =>
+                {
+                    if (ev.KeyCode == Keys.Delete) btnDeleteHighError_Click(null, EventArgs.Empty);
+                };
+            }
         }
 
         // 상단 메뉴바 자동 생성기 (UI/UX 패치)
@@ -3945,6 +3967,118 @@ namespace DataManager
 
             suppressNextFrameClick = false;
         }
+
+        // AI 컴파일 (오차 데이터)
+        private sealed class HighErrorEntry
+        {
+            public TubFrame Frame { get; }
+            public double PredictAngle { get; }
+            public double Error { get; }
+
+            public HighErrorEntry(TubFrame frame, double predictAngle, double error)
+            {
+                Frame = frame;
+                PredictAngle = predictAngle;
+                Error = error;
+            }
+
+            public override string ToString() =>
+                $"Frame {Frame.FrameNumber:D6}  |  오차: {Error:0.000} (실제:{Frame.Angle:0.00} 예측:{PredictAngle:0.00})";
+        }
+
+        private void btnRunAICompile_Click(object? sender, EventArgs e)
+        {
+            if (tubFrames.Count == 0)
+            {
+                MessageBox.Show("Data 폴더 열기 경로가 없습니다. 먼저 데이터를 열어주세요.", "데이터 없음", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            if (predictedAnglesByImageKey.Count == 0)
+            {
+                MessageBox.Show("먼저 [학습/테스트] 탭에서 '모델 테스트 실행'을 한 번 끝까지 완료해야 합니다!\n(AI가 전체 데이터를 채점한 결과를 바탕으로 오차를 추출합니다.)", "테스트 선행 필요", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            lstHighErrorFrames.BeginUpdate();
+            lstHighErrorFrames.Items.Clear();
+
+            List<HighErrorEntry> errorList = new List<HighErrorEntry>();
+
+            foreach (var frame in tubFrames)
+            {
+                if (frame.Deleted) continue; // 이미 지운 건 패스
+
+                if (TryGetPredictedAngleForFrame(frame, out double pred))
+                {
+                    double err = Math.Abs(frame.Angle - pred);
+
+                    // 오차가 0.1 이상인 의미 있는(?) 쓰레기 데이터만 추출합니다. (원하시면 수치 조절 가능)
+                    if (err >= 0.1)
+                    {
+                        errorList.Add(new HighErrorEntry(frame, pred, err));
+                    }
+                }
+            }
+
+            // 오차가 큰 순서대로(내림차순) 정렬
+            errorList.Sort((a, b) => b.Error.CompareTo(a.Error));
+
+            foreach (var entry in errorList)
+            {
+                lstHighErrorFrames.Items.Add(entry);
+            }
+
+            lstHighErrorFrames.EndUpdate();
+
+            MessageBox.Show($"총 {errorList.Count}개의 오차 데이터를 추출했습니다!\n목록을 클릭하면 해당 프레임으로 바로 이동합니다.", "AI 컴파일 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+
+        private void lstHighErrorFrames_SelectedIndexChanged(object? sender, EventArgs e)
+        {
+            if (lstHighErrorFrames.SelectedItem is HighErrorEntry entry)
+            {
+                int index = tubFrames.IndexOf(entry.Frame);
+                if (index >= 0)
+                {
+                    ShowFrame(index); // 클릭하면 메인 화면 사진이 해당 프레임으로 휙 바뀜!
+                }
+            }
+        }
+
+        private void btnDeleteHighError_Click(object? sender, EventArgs e)
+        {
+            if (lstHighErrorFrames.SelectedItems.Count == 0)
+            {
+                MessageBox.Show("휴지통으로 보낼 프레임을 목록에서 선택하세요.\n(Shift나 Ctrl을 누르고 클릭하면 여러 개 동시 선택 가능)", "선택 누락", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            int moved = 0;
+            var selectedEntries = lstHighErrorFrames.SelectedItems.Cast<HighErrorEntry>().ToList();
+
+            foreach (var entry in selectedEntries)
+            {
+                int index = tubFrames.IndexOf(entry.Frame);
+                if (index >= 0 && MoveToTrash(index, "AI 컴파일 오차 데이터"))
+                {
+                    moved++;
+                }
+            }
+
+            // 휴지통 연동 갱신
+            RebuildTrashList();
+            RenderTubGraph();
+
+            // 처리 완료된 항목은 AI 컴파일 목록에서 깔끔하게 빼주기
+            foreach (var entry in selectedEntries)
+            {
+                lstHighErrorFrames.Items.Remove(entry);
+            }
+
+            MessageBox.Show($"선택한 {moved}개의 오차 프레임을 휴지통으로 이동했습니다!\n(완전 삭제는 [데이터 정리] 탭의 휴지통 비우기를 이용하세요.)", "이동 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+
 
         private void picFrame_Click_1(object sender, EventArgs e)
         {
