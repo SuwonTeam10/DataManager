@@ -470,7 +470,7 @@
             btnEmptyTrash.Name = "btnEmptyTrash";
             btnEmptyTrash.Size = new Size(175, 52);
             btnEmptyTrash.TabIndex = 18;
-            btnEmptyTrash.Text = "휴지통 비우기";
+            btnEmptyTrash.Text = "휴지통 비우기 (완전 삭제)";
             btnEmptyTrash.UseVisualStyleBackColor = true;
             // 
             // btnRestore
