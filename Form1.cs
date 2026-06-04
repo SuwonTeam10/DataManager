@@ -82,6 +82,11 @@ namespace DataManager
         private const int DesignBaseHeight = 1592;
         private const int ResponsiveGap = 8;
 
+        // ==========================================
+        // 그룹박스 내부 컨트롤 반응형 스케일링용
+        // (100%, 125%, 150%, 200% 배율에서
+        // 그룹박스 크기에 맞춰 내부 컨트롤도 비율 조정)
+        // ==========================================
         private readonly Dictionary<Control, Rectangle> _baseBounds = new();
         private readonly Dictionary<Control, Size> _baseClientSizes = new();
         private readonly Dictionary<Control, float> _baseFontSizes = new();
@@ -447,6 +452,11 @@ namespace DataManager
             lstTrash.Height = Math.Max(90, bottomRowY - lstTrash.Top - 5);
         }
 
+        // ==========================================
+        // 최초 실행 시 컨트롤 원본 위치/크기 저장
+        // 이후 화면 크기 변경 시 이 값을 기준으로
+        // 내부 컨트롤을 다시 계산한다.
+        // ==========================================
         private void CaptureBaseLayouts()
         {
             if (_baseLayoutCaptured) return;
@@ -460,6 +470,7 @@ namespace DataManager
             _baseLayoutCaptured = true;
         }
 
+        // 부모 컨트롤 내부의 모든 자식 컨트롤 정보를 재귀적으로 저장
         private void CaptureBaseLayout(Control parent)
         {
             _baseClientSizes[parent] = parent.ClientSize;
@@ -474,6 +485,11 @@ namespace DataManager
             }
         }
 
+        // ==========================================
+        // 부모(GroupBox) 크기 변화 비율을 계산하여
+        // 내부 버튼, 라벨, 체크박스 등의 위치/크기/폰트를
+        // 함께 확대 또는 축소한다.
+        // ==========================================
         private void ScaleChildrenByParent(Control parent)
         {
             if (!_baseLayoutCaptured) return;
@@ -504,6 +520,10 @@ namespace DataManager
             }
         }
 
+        // ==========================================
+        // 100% 배율 환경에서 작아 보이는 영역만
+        // 선택적으로 반응형 스케일 적용
+        // ==========================================
         private void ScaleProblemAreaControls()
         {
             ScaleChildrenByParent(groupBox2);
