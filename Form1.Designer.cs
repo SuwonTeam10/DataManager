@@ -90,7 +90,6 @@
             btnSelectTestImage = new Button();
             grpTrainSetting = new GroupBox();
             btnSelectModel = new Button();
-            lblLog = new Label();
             txtLog = new TextBox();
             btnModelTest = new Button();
             toolTip1 = new ToolTip(components);
@@ -622,7 +621,6 @@
             tabTrainTest.Controls.Add(grpTrainControl);
             tabTrainTest.Controls.Add(grpTestImage);
             tabTrainTest.Controls.Add(grpTrainSetting);
-            tabTrainTest.Controls.Add(lblLog);
             tabTrainTest.Controls.Add(txtLog);
             tabTrainTest.Controls.Add(btnModelTest);
             tabTrainTest.Location = new Point(8, 46);
@@ -634,6 +632,7 @@
             // 
             // grpPredictResult
             // 
+            grpPredictResult.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             grpPredictResult.Controls.Add(panel4);
             grpPredictResult.Controls.Add(lblTrainStatus2);
             grpPredictResult.Controls.Add(lblErrorValue);
@@ -897,30 +896,18 @@
             btnSelectModel.UseVisualStyleBackColor = true;
             btnSelectModel.Click += btnSelectModel_Click;
             // 
-            // lblLog
-            // 
-            lblLog.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
-            lblLog.AutoSize = true;
-            lblLog.Font = new Font("나눔고딕", 8.999999F, FontStyle.Regular, GraphicsUnit.Point, 129);
-            lblLog.Location = new Point(1650, 13);
-            lblLog.Margin = new Padding(4, 0, 4, 0);
-            lblLog.Name = "lblLog";
-            lblLog.Size = new Size(58, 28);
-            lblLog.TabIndex = 21;
-            lblLog.Text = "로그";
-            // 
             // txtLog
             // 
             txtLog.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
             txtLog.BackColor = SystemColors.ButtonHighlight;
             txtLog.Font = new Font("나눔고딕", 8.999999F, FontStyle.Regular, GraphicsUnit.Point, 0);
-            txtLog.Location = new Point(1650, 50);
+            txtLog.Location = new Point(1650, 30);
             txtLog.Margin = new Padding(4);
             txtLog.Multiline = true;
             txtLog.Name = "txtLog";
             txtLog.ReadOnly = true;
             txtLog.ScrollBars = ScrollBars.Vertical;
-            txtLog.Size = new Size(701, 192);
+            txtLog.Size = new Size(701, 224);
             txtLog.TabIndex = 20;
             txtLog.Text = "준비 완료...\r\n";
             // 
@@ -1438,7 +1425,6 @@
         private Label lblRange;
         private Button btnSetRight;
         private Button btnSetLeft;
-        private Label lblLog;
         private TextBox txtLog;
         private Label lblRealAngle;
         private Label lblPredictAngle;
