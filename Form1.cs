@@ -524,6 +524,24 @@ namespace DataManager
             }
         }
 
+        //그룹박스들 이름들도 같이 키우기
+        private void ScaleGroupBoxTitleFont(GroupBox groupBox)
+        {
+            float scaleX = ClientSize.Width / (float)DesignBaseWidth;
+            float scaleY = ClientSize.Height / (float)DesignBaseHeight;
+
+            float fontScale = Math.Min(scaleX, scaleY);
+
+            // 125% 화면에서 너무 작아지는 것 방지
+            fontScale = Math.Clamp(fontScale, 1.0f, 1.6f);
+
+            groupBox.Font = new Font(
+                groupBox.Font.FontFamily,
+                9.5f * fontScale,
+                groupBox.Font.Style
+            );
+        }
+
         // ==========================================
         // 부모(GroupBox / TabPage / Panel) 크기 변화 비율을 계산하여
         // 내부 버튼, 라벨, 체크박스, 텍스트박스 등의
@@ -577,18 +595,36 @@ namespace DataManager
         // ==========================================
         private void ScaleProblemAreaControls()
         {
-            // 상단 서버 연결 설정
-            ScaleChildrenByParent(groupBox2);
+            ScaleGroupBoxTitleFont(groupBox2);
+            ScaleGroupBoxTitleFont(groupBoxDataLoad);
+            ScaleGroupBoxTitleFont(groupDataView);
+            ScaleGroupBoxTitleFont(groupTubNavigator);
+            ScaleGroupBoxTitleFont(groupFrameList);
+            ScaleGroupBoxTitleFont(groupTimeline);
+            ScaleGroupBoxTitleFont(groupBoxTrash);
 
-            // 왼쪽 데이터 영역
+            ScaleTabTitleFont(tabMain);
+
+            ScaleChildrenByParent(groupBox2);
             ScaleChildrenByParent(groupBoxDataLoad);
             ScaleChildrenByParent(groupDataView);
-
-            // 하단 데이터 정리 탭
             ScaleChildrenByParent(tabCleaner);
-
-            // 하단 학습/테스트 탭
             ScaleChildrenByParent(tabTrainTest);
+        }
+
+        private void ScaleTabTitleFont(TabControl tabControl)
+        {
+            float scaleX = ClientSize.Width / (float)DesignBaseWidth;
+            float scaleY = ClientSize.Height / (float)DesignBaseHeight;
+
+            float fontScale = Math.Min(scaleX, scaleY);
+            fontScale = Math.Clamp(fontScale, 1.0f, 1.6f);
+
+            tabControl.Font = new Font(
+                tabControl.Font.FontFamily,
+                9.5f * fontScale,
+                tabControl.Font.Style
+            );
         }
 
         private bool IsFrameResizeGrip(Point location)
