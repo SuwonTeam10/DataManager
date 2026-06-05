@@ -123,6 +123,7 @@
             chkUseVenv = new CheckBox();
             rdoRemote = new RadioButton();
             groupBoxDataLoad = new GroupBox();
+            txtSummaryLog = new TextBox();
             groupDataView.SuspendLayout();
             ((System.ComponentModel.ISupportInitialize)pictureBox2).BeginInit();
             ((System.ComponentModel.ISupportInitialize)pictureBoxAngle).BeginInit();
@@ -616,6 +617,7 @@
             // tabTrainTest
             // 
             tabTrainTest.BackColor = Color.White;
+            tabTrainTest.Controls.Add(txtSummaryLog);
             tabTrainTest.Controls.Add(grpPredictResult);
             tabTrainTest.Controls.Add(grpTrainProgress);
             tabTrainTest.Controls.Add(grpTrainControl);
@@ -901,13 +903,13 @@
             txtLog.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
             txtLog.BackColor = SystemColors.ButtonHighlight;
             txtLog.Font = new Font("나눔고딕", 8.999999F, FontStyle.Regular, GraphicsUnit.Point, 0);
-            txtLog.Location = new Point(1650, 30);
+            txtLog.Location = new Point(1668, 13);
             txtLog.Margin = new Padding(4);
             txtLog.Multiline = true;
             txtLog.Name = "txtLog";
             txtLog.ReadOnly = true;
             txtLog.ScrollBars = ScrollBars.Vertical;
-            txtLog.Size = new Size(701, 224);
+            txtLog.Size = new Size(344, 224);
             txtLog.TabIndex = 20;
             txtLog.Text = "준비 완료...\r\n";
             // 
@@ -1335,6 +1337,21 @@
             groupBoxDataLoad.Text = "데이터로드";
             groupBoxDataLoad.Enter += groupBoxDataLoad_Enter;
             // 
+            // txtSummaryLog
+            // 
+            txtSummaryLog.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
+            txtSummaryLog.BackColor = SystemColors.ButtonHighlight;
+            txtSummaryLog.Font = new Font("나눔고딕", 8.999999F, FontStyle.Regular, GraphicsUnit.Point, 0);
+            txtSummaryLog.Location = new Point(2036, 13);
+            txtSummaryLog.Margin = new Padding(4);
+            txtSummaryLog.Multiline = true;
+            txtSummaryLog.Name = "txtSummaryLog";
+            txtSummaryLog.ReadOnly = true;
+            txtSummaryLog.ScrollBars = ScrollBars.Vertical;
+            txtSummaryLog.Size = new Size(341, 224);
+            txtSummaryLog.TabIndex = 31;
+            txtSummaryLog.Text = "준비 완료...\r\n";
+            // 
             // Form1
             // 
             AutoScaleDimensions = new SizeF(192F, 192F);
@@ -1486,5 +1503,6 @@
         private Label lblAngle2;
         private Label lblFrame2;
         private Label lblThrottle2;
+        private TextBox txtSummaryLog;
     }
 }
