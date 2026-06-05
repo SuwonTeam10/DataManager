@@ -93,6 +93,10 @@
             txtLog = new TextBox();
             btnModelTest = new Button();
             toolTip1 = new ToolTip(components);
+            tabAiCompile = new TabPage();
+            lstHighErrorFrames = new ListBox();
+            btnDeleteHighError = new Button();
+            btnRunAICompile = new Button();
             btnLoadConfig = new Button();
             lblConfigPath = new Label();
             lstFrames = new ListBox();
@@ -133,6 +137,7 @@
             tabCleaner.SuspendLayout();
             groupBoxTrash.SuspendLayout();
             tabTrainTest.SuspendLayout();
+            tabAiCompile.SuspendLayout();
             grpPredictResult.SuspendLayout();
             grpTrainProgress.SuspendLayout();
             grpTrainControl.SuspendLayout();
@@ -368,12 +373,14 @@
             tabMain.Controls.Add(tabCleaner);
             tabMain.Controls.Add(tabGraph);
             tabMain.Controls.Add(tabTrainTest);
+            tabMain.Controls.Add(tabAiCompile);
             tabMain.Location = new Point(45, 1194);
             tabMain.Margin = new Padding(4);
             tabMain.Name = "tabMain";
             tabMain.SelectedIndex = 0;
             tabMain.Size = new Size(2397, 314);
             tabMain.TabIndex = 7;
+
             // 
             // tabCleaner
             // 
@@ -393,6 +400,46 @@
             tabCleaner.Size = new Size(2381, 260);
             tabCleaner.TabIndex = 0;
             tabCleaner.Text = "데이터 정리";
+            // 
+            // tabAiCompile
+            // 
+            // lstHighErrorFrames
+            lstHighErrorFrames.FormattingEnabled = true;
+            lstHighErrorFrames.Location = new Point(16, 16);
+            lstHighErrorFrames.Name = "lstHighErrorFrames";
+            lstHighErrorFrames.Size = new Size(520, 160);
+            lstHighErrorFrames.TabIndex = 0;
+            lstHighErrorFrames.SelectedIndexChanged += lstHighErrorFrames_SelectedIndexChanged;
+
+            // btnRunAICompile
+            btnRunAICompile.Font = new Font("나눔고딕", 10.125F);
+            btnRunAICompile.Location = new Point(552, 24);
+            btnRunAICompile.Name = "btnRunAICompile";
+            btnRunAICompile.Size = new Size(140, 52);
+            btnRunAICompile.TabIndex = 1;
+            btnRunAICompile.Text = "오차 추출";
+            btnRunAICompile.UseVisualStyleBackColor = true;
+            btnRunAICompile.Click += btnRunAICompile_Click;
+
+            // btnDeleteHighError
+            btnDeleteHighError.Font = new Font("나눔고딕", 10.125F);
+            btnDeleteHighError.Location = new Point(552, 96);
+            btnDeleteHighError.Name = "btnDeleteHighError";
+            btnDeleteHighError.Size = new Size(140, 52);
+            btnDeleteHighError.TabIndex = 2;
+            btnDeleteHighError.Text = "삭제";
+            btnDeleteHighError.UseVisualStyleBackColor = true;
+            btnDeleteHighError.Click += btnDeleteHighError_Click;
+
+            tabAiCompile.Controls.Add(lstHighErrorFrames);
+            tabAiCompile.Controls.Add(btnDeleteHighError);
+            tabAiCompile.Controls.Add(btnRunAICompile);
+            tabAiCompile.Location = new Point(4, 24);
+            tabAiCompile.Name = "tabAiCompile";
+            tabAiCompile.Padding = new Padding(3);
+            tabAiCompile.Size = new Size(2381, 260);
+            tabAiCompile.TabIndex = 3;
+            tabAiCompile.Text = "AI 컴파일";
             // 
             // groupBoxTrash
             // 
@@ -1393,6 +1440,7 @@
             grpTestImage.ResumeLayout(false);
             ((System.ComponentModel.ISupportInitialize)picTestImage).EndInit();
             grpTrainSetting.ResumeLayout(false);
+            tabAiCompile.ResumeLayout(false);
             groupFrameList.ResumeLayout(false);
             ((System.ComponentModel.ISupportInitialize)picFrame).EndInit();
             ((System.ComponentModel.ISupportInitialize)trackFrame).EndInit();
@@ -1423,6 +1471,7 @@
         private TabPage tabCleaner;
         private TabPage tabGraph;//
         private TabPage tabTrainTest;
+        private TabPage tabAiCompile;
         private Label lblProgress;
         private Label lblTrainStatus;
         private Button btnSelectTestImage;
@@ -1504,5 +1553,8 @@
         private Label lblFrame2;
         private Label lblThrottle2;
         private TextBox txtSummaryLog;
+        private ListBox lstHighErrorFrames;
+        private Button btnDeleteHighError;
+        private Button btnRunAICompile;
     }
 }
