@@ -68,6 +68,7 @@
             btnSetLeft = new Button();
             tabGraph = new TabPage();
             tabTrainTest = new TabPage();
+            txtSummaryLog = new TextBox();
             grpPredictResult = new GroupBox();
             panel4 = new Panel();
             lblTrainStatus2 = new Label();
@@ -90,13 +91,13 @@
             btnSelectTestImage = new Button();
             grpTrainSetting = new GroupBox();
             btnSelectModel = new Button();
-            txtLog = new TextBox();
             btnModelTest = new Button();
-            toolTip1 = new ToolTip(components);
+            txtLog = new TextBox();
             tabAiCompile = new TabPage();
             lstHighErrorFrames = new ListBox();
             btnDeleteHighError = new Button();
             btnRunAICompile = new Button();
+            toolTip1 = new ToolTip(components);
             btnLoadConfig = new Button();
             lblConfigPath = new Label();
             lstFrames = new ListBox();
@@ -127,7 +128,6 @@
             chkUseVenv = new CheckBox();
             rdoRemote = new RadioButton();
             groupBoxDataLoad = new GroupBox();
-            txtSummaryLog = new TextBox();
             groupDataView.SuspendLayout();
             ((System.ComponentModel.ISupportInitialize)pictureBox2).BeginInit();
             ((System.ComponentModel.ISupportInitialize)pictureBoxAngle).BeginInit();
@@ -137,13 +137,13 @@
             tabCleaner.SuspendLayout();
             groupBoxTrash.SuspendLayout();
             tabTrainTest.SuspendLayout();
-            tabAiCompile.SuspendLayout();
             grpPredictResult.SuspendLayout();
             grpTrainProgress.SuspendLayout();
             grpTrainControl.SuspendLayout();
             grpTestImage.SuspendLayout();
             ((System.ComponentModel.ISupportInitialize)picTestImage).BeginInit();
             grpTrainSetting.SuspendLayout();
+            tabAiCompile.SuspendLayout();
             groupFrameList.SuspendLayout();
             ((System.ComponentModel.ISupportInitialize)picFrame).BeginInit();
             ((System.ComponentModel.ISupportInitialize)trackFrame).BeginInit();
@@ -380,7 +380,6 @@
             tabMain.SelectedIndex = 0;
             tabMain.Size = new Size(2397, 314);
             tabMain.TabIndex = 7;
-
             // 
             // tabCleaner
             // 
@@ -400,46 +399,6 @@
             tabCleaner.Size = new Size(2381, 260);
             tabCleaner.TabIndex = 0;
             tabCleaner.Text = "데이터 정리";
-            // 
-            // tabAiCompile
-            // 
-            // lstHighErrorFrames
-            lstHighErrorFrames.FormattingEnabled = true;
-            lstHighErrorFrames.Location = new Point(16, 16);
-            lstHighErrorFrames.Name = "lstHighErrorFrames";
-            lstHighErrorFrames.Size = new Size(520, 160);
-            lstHighErrorFrames.TabIndex = 0;
-            lstHighErrorFrames.SelectedIndexChanged += lstHighErrorFrames_SelectedIndexChanged;
-
-            // btnRunAICompile
-            btnRunAICompile.Font = new Font("나눔고딕", 10.125F);
-            btnRunAICompile.Location = new Point(552, 24);
-            btnRunAICompile.Name = "btnRunAICompile";
-            btnRunAICompile.Size = new Size(140, 52);
-            btnRunAICompile.TabIndex = 1;
-            btnRunAICompile.Text = "오차 추출";
-            btnRunAICompile.UseVisualStyleBackColor = true;
-            btnRunAICompile.Click += btnRunAICompile_Click;
-
-            // btnDeleteHighError
-            btnDeleteHighError.Font = new Font("나눔고딕", 10.125F);
-            btnDeleteHighError.Location = new Point(552, 96);
-            btnDeleteHighError.Name = "btnDeleteHighError";
-            btnDeleteHighError.Size = new Size(140, 52);
-            btnDeleteHighError.TabIndex = 2;
-            btnDeleteHighError.Text = "삭제";
-            btnDeleteHighError.UseVisualStyleBackColor = true;
-            btnDeleteHighError.Click += btnDeleteHighError_Click;
-
-            tabAiCompile.Controls.Add(lstHighErrorFrames);
-            tabAiCompile.Controls.Add(btnDeleteHighError);
-            tabAiCompile.Controls.Add(btnRunAICompile);
-            tabAiCompile.Location = new Point(4, 24);
-            tabAiCompile.Name = "tabAiCompile";
-            tabAiCompile.Padding = new Padding(3);
-            tabAiCompile.Size = new Size(2381, 260);
-            tabAiCompile.TabIndex = 3;
-            tabAiCompile.Text = "AI 컴파일";
             // 
             // groupBoxTrash
             // 
@@ -671,13 +630,27 @@
             tabTrainTest.Controls.Add(grpTestImage);
             tabTrainTest.Controls.Add(grpTrainSetting);
             tabTrainTest.Controls.Add(txtLog);
-            tabTrainTest.Controls.Add(btnModelTest);
             tabTrainTest.Location = new Point(8, 46);
             tabTrainTest.Margin = new Padding(4);
             tabTrainTest.Name = "tabTrainTest";
             tabTrainTest.Size = new Size(2381, 260);
             tabTrainTest.TabIndex = 2;
             tabTrainTest.Text = "학습/테스트";
+            // 
+            // txtSummaryLog
+            // 
+            txtSummaryLog.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
+            txtSummaryLog.BackColor = SystemColors.ButtonHighlight;
+            txtSummaryLog.Font = new Font("나눔고딕", 8.999999F, FontStyle.Regular, GraphicsUnit.Point, 0);
+            txtSummaryLog.Location = new Point(2036, 13);
+            txtSummaryLog.Margin = new Padding(4);
+            txtSummaryLog.Multiline = true;
+            txtSummaryLog.Name = "txtSummaryLog";
+            txtSummaryLog.ReadOnly = true;
+            txtSummaryLog.ScrollBars = ScrollBars.Vertical;
+            txtSummaryLog.Size = new Size(341, 224);
+            txtSummaryLog.TabIndex = 31;
+            txtSummaryLog.Text = "준비 완료...\r\n";
             // 
             // grpPredictResult
             // 
@@ -925,6 +898,7 @@
             // grpTrainSetting
             // 
             grpTrainSetting.Controls.Add(btnSelectModel);
+            grpTrainSetting.Controls.Add(btnModelTest);
             grpTrainSetting.Font = new Font("나눔고딕", 8.999999F, FontStyle.Regular, GraphicsUnit.Point, 129);
             grpTrainSetting.Location = new Point(537, 18);
             grpTrainSetting.Name = "grpTrainSetting";
@@ -945,6 +919,19 @@
             btnSelectModel.UseVisualStyleBackColor = true;
             btnSelectModel.Click += btnSelectModel_Click;
             // 
+            // btnModelTest
+            // 
+            btnModelTest.Font = new Font("나눔고딕", 10.125F, FontStyle.Regular, GraphicsUnit.Point, 129);
+            btnModelTest.ImageAlign = ContentAlignment.MiddleLeft;
+            btnModelTest.Location = new Point(327, 35);
+            btnModelTest.Margin = new Padding(4);
+            btnModelTest.Name = "btnModelTest";
+            btnModelTest.Size = new Size(309, 53);
+            btnModelTest.TabIndex = 12;
+            btnModelTest.Text = "모델 테스트 실행";
+            btnModelTest.UseVisualStyleBackColor = true;
+            btnModelTest.Click += btnModelTest_Click;
+            // 
             // txtLog
             // 
             txtLog.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
@@ -960,20 +947,48 @@
             txtLog.TabIndex = 20;
             txtLog.Text = "준비 완료...\r\n";
             // 
-            // btnModelTest
+            // tabAiCompile
             // 
-            btnModelTest.Font = new Font("나눔고딕", 10.875F);
-            btnModelTest.Image = (Image)resources.GetObject("btnModelTest.Image");
-            btnModelTest.ImageAlign = ContentAlignment.MiddleLeft;
-            btnModelTest.Location = new Point(726, 299);
-            btnModelTest.Margin = new Padding(4);
-            btnModelTest.Name = "btnModelTest";
-            btnModelTest.Padding = new Padding(100, 0, 0, 0);
-            btnModelTest.Size = new Size(481, 53);
-            btnModelTest.TabIndex = 12;
-            btnModelTest.Text = "모델 테스트 실행";
-            btnModelTest.UseVisualStyleBackColor = true;
-            btnModelTest.Click += btnModelTest_Click;
+            tabAiCompile.Controls.Add(lstHighErrorFrames);
+            tabAiCompile.Controls.Add(btnDeleteHighError);
+            tabAiCompile.Controls.Add(btnRunAICompile);
+            tabAiCompile.Location = new Point(8, 46);
+            tabAiCompile.Name = "tabAiCompile";
+            tabAiCompile.Padding = new Padding(3);
+            tabAiCompile.Size = new Size(2381, 260);
+            tabAiCompile.TabIndex = 3;
+            tabAiCompile.Text = "AI 컴파일";
+            // 
+            // lstHighErrorFrames
+            // 
+            lstHighErrorFrames.FormattingEnabled = true;
+            lstHighErrorFrames.Location = new Point(16, 16);
+            lstHighErrorFrames.Name = "lstHighErrorFrames";
+            lstHighErrorFrames.Size = new Size(520, 132);
+            lstHighErrorFrames.TabIndex = 0;
+            lstHighErrorFrames.SelectedIndexChanged += lstHighErrorFrames_SelectedIndexChanged;
+            // 
+            // btnDeleteHighError
+            // 
+            btnDeleteHighError.Font = new Font("나눔고딕", 10.125F);
+            btnDeleteHighError.Location = new Point(552, 96);
+            btnDeleteHighError.Name = "btnDeleteHighError";
+            btnDeleteHighError.Size = new Size(140, 52);
+            btnDeleteHighError.TabIndex = 2;
+            btnDeleteHighError.Text = "삭제";
+            btnDeleteHighError.UseVisualStyleBackColor = true;
+            btnDeleteHighError.Click += btnDeleteHighError_Click;
+            // 
+            // btnRunAICompile
+            // 
+            btnRunAICompile.Font = new Font("나눔고딕", 10.125F);
+            btnRunAICompile.Location = new Point(552, 24);
+            btnRunAICompile.Name = "btnRunAICompile";
+            btnRunAICompile.Size = new Size(140, 52);
+            btnRunAICompile.TabIndex = 1;
+            btnRunAICompile.Text = "오차 추출";
+            btnRunAICompile.UseVisualStyleBackColor = true;
+            btnRunAICompile.Click += btnRunAICompile_Click;
             // 
             // toolTip1
             // 
@@ -1383,21 +1398,6 @@
             groupBoxDataLoad.TabStop = false;
             groupBoxDataLoad.Text = "데이터로드";
             groupBoxDataLoad.Enter += groupBoxDataLoad_Enter;
-            // 
-            // txtSummaryLog
-            // 
-            txtSummaryLog.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
-            txtSummaryLog.BackColor = SystemColors.ButtonHighlight;
-            txtSummaryLog.Font = new Font("나눔고딕", 8.999999F, FontStyle.Regular, GraphicsUnit.Point, 0);
-            txtSummaryLog.Location = new Point(2036, 13);
-            txtSummaryLog.Margin = new Padding(4);
-            txtSummaryLog.Multiline = true;
-            txtSummaryLog.Name = "txtSummaryLog";
-            txtSummaryLog.ReadOnly = true;
-            txtSummaryLog.ScrollBars = ScrollBars.Vertical;
-            txtSummaryLog.Size = new Size(341, 224);
-            txtSummaryLog.TabIndex = 31;
-            txtSummaryLog.Text = "준비 완료...\r\n";
             // 
             // Form1
             // 

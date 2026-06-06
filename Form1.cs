@@ -422,10 +422,11 @@ namespace DataManager
                 Sx(2397), Sy(314)
             );
 
-            
+
             ArrangeNavigatorControls();
             ArrangeCleanerControls();
             ScaleProblemAreaControls();
+            ApplySelectedTabLayout();
             ReloadTimelineForCurrentFrame();
         }
 
@@ -587,6 +588,9 @@ namespace DataManager
             // 하단 학습/테스트 탭
             CaptureBaseLayout(tabTrainTest);
 
+            // AI 컴파일 탭
+            CaptureBaseLayout(tabAiCompile);
+
             _baseLayoutCaptured = true;
         }
 
@@ -692,9 +696,33 @@ namespace DataManager
             ScaleChildrenByParent(groupBox2);
             ScaleChildrenByParent(groupBoxDataLoad);
             ScaleChildrenByParent(groupDataView);
+            /*
             ScaleChildrenByParent(tabCleaner);
             ScaleChildrenByParent(tabTrainTest);
+            ScaleChildrenByParent(tabAiCompile);
+            */
         }
+
+
+        private void ApplySelectedTabLayout()
+        {
+            if (!_baseLayoutCaptured) return;
+
+            if (tabMain.SelectedTab == tabCleaner)
+            {
+                ScaleChildrenByParent(tabCleaner);
+                ArrangeCleanerControls();
+            }
+            else if (tabMain.SelectedTab == tabTrainTest)
+            {
+                ScaleChildrenByParent(tabTrainTest);
+            }
+            else if (tabMain.SelectedTab == tabAiCompile)
+            {
+                ScaleChildrenByParent(tabAiCompile);
+            }
+        }
+
 
         private void ScaleTabTitleFont(TabControl tabControl)
         {
@@ -710,7 +738,6 @@ namespace DataManager
                 tabControl.Font.Style
             );
         }
-
 
         private bool IsFrameResizeGrip(Point location)
         {
@@ -2684,6 +2711,11 @@ namespace DataManager
         private void tabMain_SelectedIndexChanged(object? sender, EventArgs e)
         {
             RedrawGraphAfterLayout();
+
+            BeginInvoke(new Action(() =>
+            {
+                ApplySelectedTabLayout();
+            }));
         }
 
         private void RedrawGraphAfterLayout()
@@ -3908,24 +3940,43 @@ namespace DataManager
                 Button btn = kv.Key;
                 Image orig = kv.Value;
 
-                // default variant update
-                Image newScaled = CreateScaledButtonImage(orig, btn.ClientSize);
+                Size iconSize = GetButtonIconSize(btn);
+
                 if (_scaledButtonVariants.TryGetValue((btn, "default"), out Image? oldDefault) && oldDefault != null)
                 {
                     oldDefault.Dispose();
                 }
+
+                Image newScaled = CreateScaledButtonImage(orig, iconSize);
                 _scaledButtonVariants[(btn, "default")] = newScaled;
                 btn.Image = newScaled;
 
-                // play/stop variants 처리
                 if (btn == btnPlayStop)
                 {
-                    if (_scaledButtonVariants.TryGetValue((btn, "play"), out Image? oldPlay) && oldPlay != null) oldPlay.Dispose();
-                    if (_scaledButtonVariants.TryGetValue((btn, "stop"), out Image? oldStop) && oldStop != null) oldStop.Dispose();
-                    _scaledButtonVariants[(btn, "play")] = CreateScaledButtonImage(Properties.Resources.icons8_play_30, btn.ClientSize);
-                    _scaledButtonVariants[(btn, "stop")] = CreateScaledButtonImage(Properties.Resources.icons8_stop_30, btn.ClientSize);
+                    if (_scaledButtonVariants.TryGetValue((btn, "play"), out Image? oldPlay) && oldPlay != null)
+                        oldPlay.Dispose();
+
+                    if (_scaledButtonVariants.TryGetValue((btn, "stop"), out Image? oldStop) && oldStop != null)
+                        oldStop.Dispose();
+
+                    _scaledButtonVariants[(btn, "play")] =
+                        CreateScaledButtonImage(Properties.Resources.icons8_play_30, iconSize);
+
+                    _scaledButtonVariants[(btn, "stop")] =
+                        CreateScaledButtonImage(Properties.Resources.icons8_stop_30, iconSize);
                 }
             }
+        }
+
+        private Size GetButtonIconSize(Button btn)
+        {
+            float iconRatio = 0.68f;
+            int size = (int)Math.Round(btn.ClientSize.Height * iconRatio);
+
+            // 너무 작거나 너무 커지는 것 방지
+            size = Math.Clamp(size, 18, 48);
+
+            return new Size(size, size);
         }
 
         private void ClearScaledButtonImages()
