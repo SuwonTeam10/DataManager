@@ -49,14 +49,17 @@ namespace DataManager
         private const int TimelineMaximumVisibleCount = 60;
         private const int TimelineThumbWidth = 140;
         private const int TimelineThumbHeight = 105;
-        private const int TimelineIconSpacingX = 56;
-        private const int TimelineIconSpacingY = 44;
+        private const int TimelineIconGap = 0;
+        private Size currentTimelineThumbSize = new(TimelineThumbWidth, TimelineThumbHeight);
+        private int currentTimelineIconSpacingX = TimelineThumbWidth + TimelineIconGap;
+        private int currentTimelineIconSpacingY = TimelineThumbHeight + TimelineIconGap;
         private const int PlaybackBaseIntervalMs = 100;
         private const int PlaybackMinimumIntervalMs = 50;
         private int currentTimelineStart = -1;
         private int currentTimelineVisibleCount = -1;
         private bool isUpdatingTimelineSelection;
         private bool isTimelineRangeDragging;
+        private bool isLoadingTimeline;
         private bool hasTimelineRangeDragMoved;
         private int timelineDragStartIndex = -1;
         private int timelineDragCurrentIndex = -1;
@@ -215,7 +218,10 @@ namespace DataManager
             lvTimeline.MultiSelect = true;
             lvTimeline.ShowItemToolTips = true;
             lvTimeline.HandleCreated += (_, _) => ApplyTimelineIconSpacing();
-            lvTimeline.Resize += (_, _) => ReloadTimelineForCurrentFrame();
+            lvTimeline.Resize += (_, _) =>
+            {
+                if (!isLoadingTimeline) ReloadTimelineForCurrentFrame();
+            };
             lvTimeline.MouseDown += lvTimeline_MouseDown;
             lvTimeline.MouseMove += lvTimeline_MouseMove;
             lvTimeline.MouseUp += lvTimeline_MouseUp;
@@ -1900,7 +1906,6 @@ namespace DataManager
         private async Task LoadTubAsync(string selectedTubPath, bool quiet = false)
         {
             SetPlaybackState(false);
-            HideTrainingLossGraph();
 
             // 신버전 Tub은 catalog_*.catalog, 구버전 Tub은 record_*.json 파일을 사용한다.
             // 사용자가 data 폴더를 선택해도 내부 tub 폴더를 찾을 수 있도록 하위 폴더까지 검색한다.
@@ -2122,41 +2127,52 @@ namespace DataManager
 
         private void UpdateTimelineForFrame(int frameIndex)
         {
-            int visibleCount = GetTimelineVisibleCount();
-            int timelineStart = (frameIndex / visibleCount) * visibleCount;
-            if (timelineStart == currentTimelineStart && visibleCount == currentTimelineVisibleCount) return;
-
-            currentTimelineStart = timelineStart;
-            currentTimelineVisibleCount = visibleCount;
-            ApplyTimelineIconSpacing();
-            lvTimeline.BeginUpdate();
-            lvTimeline.Items.Clear();
-            timelineImages.Images.Clear();
-
+            bool wasLoadingTimeline = isLoadingTimeline;
+            isLoadingTimeline = true;
             try
             {
-                int timelineEnd = Math.Min(tubFrames.Count, timelineStart + visibleCount);
-                for (int i = timelineStart; i < timelineEnd; i++)
+                PrepareTimelineBeforeImageLoad();
+
+                int visibleCount = GetTimelineVisibleCount();
+                int timelineStart = (frameIndex / visibleCount) * visibleCount;
+                if (timelineStart == currentTimelineStart && visibleCount == currentTimelineVisibleCount) return;
+
+                currentTimelineStart = timelineStart;
+                currentTimelineVisibleCount = visibleCount;
+                ApplyTimelineIconSpacing();
+                lvTimeline.BeginUpdate();
+                lvTimeline.Items.Clear();
+                timelineImages.Images.Clear();
+
+                try
                 {
-                    TubFrame frame = tubFrames[i];
-                    string imageKey = i.ToString();
-                    timelineImages.Images.Add(imageKey, CreateTimelineThumbnail(frame.ImagePath));
-                    lvTimeline.Items.Add(new ListViewItem("", imageKey) { Tag = i, ToolTipText = frame.ToString() });
+                    int timelineEnd = Math.Min(tubFrames.Count, timelineStart + visibleCount);
+                    for (int i = timelineStart; i < timelineEnd; i++)
+                    {
+                        TubFrame frame = tubFrames[i];
+                        string imageKey = i.ToString();
+                        timelineImages.Images.Add(imageKey, CreateTimelineThumbnail(frame.ImagePath, currentTimelineThumbSize));
+                        lvTimeline.Items.Add(new ListViewItem("", imageKey) { Tag = i, ToolTipText = frame.ToString() });
+                    }
+                }
+                finally { lvTimeline.EndUpdate(); }
+
+                if (hasTimelineRangeDragMoved)
+                {
+                    ApplyTimelineRangeSelection();
                 }
             }
-            finally { lvTimeline.EndUpdate(); }
-
-            if (hasTimelineRangeDragMoved)
+            finally
             {
-                ApplyTimelineRangeSelection();
+                isLoadingTimeline = wasLoadingTimeline;
             }
         }
 
         private int GetTimelineVisibleCount()
         {
-            int availableWidth = Math.Max(0, lvTimeline.ClientSize.Width - 8);
-            int countByWidth = availableWidth / TimelineIconSpacingX;
-            return Math.Clamp(countByWidth, TimelineMinimumVisibleCount, TimelineMaximumVisibleCount);
+            int availableWidth = Math.Max(0, lvTimeline.ClientSize.Width);
+            int countByWidth = availableWidth / Math.Max(1, currentTimelineIconSpacingX);
+            return Math.Clamp(countByWidth, 1, Math.Max(TimelineMaximumVisibleCount, countByWidth));
         }
         private void ReloadTimelineForCurrentFrame()
         {
@@ -2167,6 +2183,17 @@ namespace DataManager
             currentTimelineVisibleCount = -1;
             int frameIndex = Math.Min(trackFrame.Value, tubFrames.Count - 1);
             UpdateTimelineForFrame(frameIndex);
+        }
+
+        // 썸네일을 넣기 전에 아이콘 크기와 간격만 확정해서 로딩 중 레이아웃이 움직이지 않게 한다.
+        private void PrepareTimelineBeforeImageLoad()
+        {
+            UpdateTimelineImageMetrics();
+            if (panelTrainingLoss.Visible)
+            {
+                LayoutTrainingLossOverlay();
+                panelTrainingLoss.BringToFront();
+            }
         }
 
         private void lvTimeline_MouseDown(object? sender, MouseEventArgs e)
@@ -2578,27 +2605,57 @@ namespace DataManager
             return new Bitmap(source);
         }
 
-        private static Image CreateTimelineThumbnail(string imagePath)
+        private static Image CreateTimelineThumbnail(string imagePath, Size thumbnailSize)
         {
             if (!File.Exists(imagePath))
             {
-                Bitmap missing = new Bitmap(TimelineThumbWidth, TimelineThumbHeight);
+                Bitmap missing = new Bitmap(thumbnailSize.Width, thumbnailSize.Height);
                 using Graphics graphics = Graphics.FromImage(missing);
                 graphics.Clear(Color.Black);
                 using Pen pen = new Pen(Color.DarkGray);
-                graphics.DrawRectangle(pen, 0, 0, TimelineThumbWidth - 1, TimelineThumbHeight - 1);
+                graphics.DrawRectangle(pen, 0, 0, thumbnailSize.Width - 1, thumbnailSize.Height - 1);
                 return missing;
             }
             using FileStream stream = new FileStream(imagePath, FileMode.Open, FileAccess.Read);
             using Image source = Image.FromStream(stream);
-            return new Bitmap(source, new Size(TimelineThumbWidth, TimelineThumbHeight));
+            return new Bitmap(source, thumbnailSize);
         }
 
         // ListView 기본 큰 아이콘 간격이 넓어서 썸네일이 한 줄에 촘촘히 보이도록 직접 조정한다.
         private void ApplyTimelineIconSpacing()
         {
             if (!lvTimeline.IsHandleCreated) return;
-            SendMessage(lvTimeline.Handle, LvmSetIconSpacing, IntPtr.Zero, MakeLParam(TimelineIconSpacingX, TimelineIconSpacingY));
+            SendMessage(lvTimeline.Handle, LvmSetIconSpacing, IntPtr.Zero, MakeLParam(currentTimelineIconSpacingX, currentTimelineIconSpacingY));
+        }
+
+        // 썸네일이 서로 겹치지 않도록 현재 타임라인 폭에 맞춰 이미지 크기와 아이콘 간격을 함께 계산한다.
+        private void UpdateTimelineImageMetrics()
+        {
+            int availableWidth = Math.Max(1, lvTimeline.ClientSize.Width);
+            int availableHeight = Math.Max(1, lvTimeline.ClientSize.Height);
+            int thumbHeight = Math.Clamp(
+                availableHeight,
+                36,
+                TimelineThumbHeight);
+            int heightBasedWidth = thumbHeight * TimelineThumbWidth / TimelineThumbHeight;
+            int thumbWidth = Math.Clamp(
+                heightBasedWidth,
+                56,
+                TimelineThumbWidth);
+
+            Size newSize = new(thumbWidth, thumbHeight);
+            if (newSize != currentTimelineThumbSize)
+            {
+                currentTimelineThumbSize = newSize;
+                timelineImages.Images.Clear();
+                timelineImages.ImageSize = newSize;
+                currentTimelineStart = -1;
+                currentTimelineVisibleCount = -1;
+            }
+
+            currentTimelineIconSpacingX = currentTimelineThumbSize.Width + TimelineIconGap;
+            currentTimelineIconSpacingY = currentTimelineThumbSize.Height + TimelineIconGap;
+            ApplyTimelineIconSpacing();
         }
 
 
