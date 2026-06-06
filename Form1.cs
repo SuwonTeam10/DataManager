@@ -47,9 +47,10 @@ namespace DataManager
         private readonly ImageList timelineImages = new();
         private const int TimelineMinimumVisibleCount = 20;
         private const int TimelineMaximumVisibleCount = 60;
-        private const int TimelineMinimumIconSpacingX = 56;
-        private const int TimelineMinimumIconSpacingY = 44;
-        private const int TimelineIconPadding = 2;
+        private const int TimelineThumbWidth = 140;
+        private const int TimelineThumbHeight = 105;
+        private const int TimelineIconSpacingX = 56;
+        private const int TimelineIconSpacingY = 44;
         private const int PlaybackBaseIntervalMs = 100;
         private const int PlaybackMinimumIntervalMs = 50;
         private int currentTimelineStart = -1;
@@ -202,7 +203,7 @@ namespace DataManager
             tabCleaner.Resize += (_, _) => ArrangeCleanerControls();
 
             // 타임라인 썸네일 이미지 리스트 설정
-            timelineImages.ImageSize = GetTimelineThumbnailSize();
+            timelineImages.ImageSize = new Size(TimelineThumbWidth, TimelineThumbHeight);
             timelineImages.ColorDepth = ColorDepth.Depth32Bit;
             lvTimeline.LargeImageList = timelineImages;
             lvTimeline.View = View.LargeIcon;
@@ -313,24 +314,25 @@ namespace DataManager
         {
             int bottomGap = 8;
             int resizeBarTopGap = 2;
-            int minimumNavigatorHeight = MinNavigatorHeight;
+            int minimumNavigatorHeight = GetMinimumNavigatorHeight();
             int appliedNavigatorHeight = Math.Max(navigatorHeight, minimumNavigatorHeight);
+            int extraHeight = Math.Max(0, ClientSize.Height - 881);
 
-            int tabHeight = GetResponsiveTabHeight();
-            int timelineHeight = GetResponsiveTimelineHeight();
-            int timelineMinimumHeight = panelTrainingLoss.Visible
-                ? TrainingLossMinimumPanelHeight
-                : TimelineMinimumPanelHeight;
 
-            timelineHeight = Math.Max(timelineMinimumHeight, timelineHeight);
+            int tabHeight = DefaultTabPanelHeight + (extraHeight * 30 / 100);
+            int timelineHeight = TimelinePanelHeight + (extraHeight * 15 / 100);
+            tabHeight = Math.Max(MinimumTabVisibleHeight, tabHeight);
+            timelineHeight = Math.Max(TimelineMinimumPanelHeight, timelineHeight);
 
-            int surplus = -GetLowerLayoutShortage(appliedNavigatorHeight, timelineHeight, tabHeight, bottomGap, resizeBarTopGap);
-            if (surplus > 0)
-            {
-                tabHeight += surplus;
-            }
+            int availableBelowNavigator = ClientSize.Height
+                - bottomGap
+                - groupTubNavigator.Top
+                - appliedNavigatorHeight
+                - resizeBarTopGap
+                - FrameResizeBarHeight
+                - (LayoutGap * 2);
 
-            int shortage = GetLowerLayoutShortage(appliedNavigatorHeight, timelineHeight, tabHeight, bottomGap, resizeBarTopGap);
+            int shortage = (timelineHeight + tabHeight) - availableBelowNavigator;
             if (shortage > 0)
             {
                 int tabShrink = Math.Min(shortage, tabHeight - MinimumTabVisibleHeight);
@@ -340,16 +342,14 @@ namespace DataManager
 
             if (shortage > 0)
             {
-                int timelineShrink = Math.Min(shortage, timelineHeight - timelineMinimumHeight);
+                int timelineShrink = Math.Min(shortage, timelineHeight - TimelineMinimumPanelHeight);
                 timelineHeight -= timelineShrink;
                 shortage -= timelineShrink;
             }
 
             if (shortage > 0)
             {
-                int navigatorShrink = Math.Min(shortage, appliedNavigatorHeight - minimumNavigatorHeight);
-                appliedNavigatorHeight -= navigatorShrink;
-                shortage -= navigatorShrink;
+                appliedNavigatorHeight = Math.Max(minimumNavigatorHeight, appliedNavigatorHeight - shortage);
             }
 
             tabMain.Height = tabHeight;
@@ -371,32 +371,6 @@ namespace DataManager
             ArrangeNavigatorControls();
         }
 
-        private int GetLowerLayoutShortage(int navigatorHeightValue, int timelineHeight, int tabHeight, int bottomGap, int resizeBarTopGap)
-        {
-            int availableBelowNavigator = ClientSize.Height
-                - bottomGap
-                - groupTubNavigator.Top
-                - navigatorHeightValue
-                - resizeBarTopGap
-                - FrameResizeBarHeight
-                - (LayoutGap * 2);
-
-            return (timelineHeight + tabHeight) - availableBelowNavigator;
-        }
-
-        private int GetResponsiveTimelineHeight()
-        {
-            float scaleY = ClientSize.Height / (float)DesignBaseHeight;
-            int preferredHeight = (int)Math.Round(TimelinePanelHeight * scaleY);
-            return Math.Clamp(preferredHeight, TimelineMinimumPanelHeight, TimelinePanelHeight);
-        }
-
-        private int GetResponsiveTabHeight()
-        {
-            float scaleY = ClientSize.Height / (float)DesignBaseHeight;
-            int preferredHeight = (int)Math.Round(DefaultTabPanelHeight * scaleY);
-            return Math.Max(MinimumTabVisibleHeight, preferredHeight);
-        }
 
 
         private void ApplyResponsiveMainLayout()
@@ -439,28 +413,20 @@ namespace DataManager
 
             groupTimeline.SetBounds(
                 Sx(56), Sy(1005),
-                Sx(2397), GetResponsiveTimelineHeight()
+                 Sx(2397), Sy(168)
             );
 
-            int tabHeight = GetResponsiveTabHeight();
-            int tabTop = ClientSize.Height - tabHeight - 8;
+            
             tabMain.SetBounds(
-                Sx(56), tabTop,
-                Sx(2397), tabHeight
+                Sx(56), Sy(1185),
+                Sx(2397), Sy(314)
             );
 
-            groupTimeline.Top = tabMain.Top - groupTimeline.Height - LayoutGap;
-
-            int navigatorBottom = groupTimeline.Top - LayoutGap;
-            int filledNavigatorHeight = Math.Max(MinNavigatorHeight, navigatorBottom - groupTubNavigator.Top);
-            navigatorHeight = filledNavigatorHeight;
-            groupTubNavigator.Height = filledNavigatorHeight;
-            groupFrameList.Height = filledNavigatorHeight;
-            ArrangeLeftDataPanels(groupTubNavigator.Bottom);
 
             ArrangeNavigatorControls();
             ArrangeCleanerControls();
             ScaleProblemAreaControls();
+            ApplySelectedTabLayout();
             ReloadTimelineForCurrentFrame();
         }
 
@@ -517,8 +483,8 @@ namespace DataManager
             int sidePadding = ScaleLayout(24, layoutScale);
             int imageTop = ScaleLayout(25, layoutScale);
             int imageSidePadding = ScaleLayout(25, layoutScale);
-            int buttonHeight = Math.Clamp(ScaleLayout(42, layoutScale), 28, 42);
-            int comboHeight = Math.Clamp(ScaleLayout(28, layoutScale), 24, 28);
+            int buttonHeight = ScaleLayout(42, layoutScale);
+            int comboHeight = ScaleLayout(28, layoutScale);
             int speedComboWidth = ScaleLayout(80, layoutScale);
             int autoPlayWidth = ScaleLayout(88, layoutScale);
             int speedGap = ScaleLayout(16, layoutScale);
@@ -550,8 +516,8 @@ namespace DataManager
             int areaWidth = areaRight - areaLeft;
 
             int gap = Math.Clamp(areaWidth / 32, ScaleLayout(8, layoutScale), ScaleLayout(18, layoutScale));
-            int smallWidth = Math.Clamp((areaWidth - ScaleLayout(122, layoutScale) - (gap * 4)) / 4, 42, 92);
-            int playWidth = Math.Clamp(areaWidth - (smallWidth * 4) - (gap * 4), 112, 210);
+            int smallWidth = Math.Clamp((areaWidth - ScaleLayout(122, layoutScale) - (gap * 4)) / 4, ScaleLayout(52, layoutScale), ScaleLayout(92, layoutScale));
+            int playWidth = Math.Clamp(areaWidth - (smallWidth * 4) - (gap * 4), ScaleLayout(122, layoutScale), ScaleLayout(210, layoutScale));
             int totalWidth = (smallWidth * 4) + playWidth + (gap * 4);
             int x = areaLeft + Math.Max(0, (areaWidth - totalWidth) / 2);
 
@@ -576,8 +542,7 @@ namespace DataManager
         {
             float widthScale = width / 900f;
             float heightScale = height / 520f;
-            float largeFrameCompactScale = 1f - (Math.Max(0, height - 520) / 900f);
-            return Math.Clamp(Math.Min(Math.Min(widthScale, heightScale * 1.15f), largeFrameCompactScale), 0.68f, 1f);
+            return Math.Clamp(Math.Min(widthScale, heightScale * 1.15f), 1f, 1.35f);
         }
 
         private static int ScaleLayout(int value, float scale)
@@ -591,40 +556,14 @@ namespace DataManager
 
             int margin = 8;
             int trashHeight = Math.Max(178, tabCleaner.ClientSize.Height - (margin * 2));
+            groupBoxTrash.Height = trashHeight;
 
-            btnFilter.Location = new Point(376, 21);
-            chkThrottleZero.Location = new Point(384, 64);
-            chkMissingImage.Location = new Point(384, 103);
-            chkAbnormalAngle.Location = new Point(384, 142);
-            chkThrottleZero.Visible = true;
-            chkMissingImage.Visible = true;
-            chkAbnormalAngle.Visible = true;
+            int bottomRowY = trashHeight - 31;
+            lblTrashProgress.Top = bottomRowY + 3;
+            progressBarTrash.Top = bottomRowY + 3;
+            lblTrashPercent.Top = bottomRowY + 3;
+            lstTrash.Height = Math.Max(90, bottomRowY - lstTrash.Top - 5);
 
-            int filterRight = Math.Max(btnFilter.Right, Math.Max(chkThrottleZero.Right, Math.Max(chkMissingImage.Right, chkAbnormalAngle.Right)));
-            int trashLeftLimit = filterRight + 26;
-            int availableTrashWidth = tabCleaner.ClientSize.Width - trashLeftLimit - margin;
-            int trashWidth = Math.Max(420, Math.Min(921, availableTrashWidth));
-            int trashLeft = Math.Max(trashLeftLimit, tabCleaner.ClientSize.Width - trashWidth - margin);
-            groupBoxTrash.SetBounds(trashLeft, margin, trashWidth, trashHeight);
-
-            int listWidth = Math.Clamp(groupBoxTrash.ClientSize.Width / 2, 300, 460);
-            int listLeft = groupBoxTrash.ClientSize.Width - listWidth - 28;
-            int controlsRight = listLeft - 28;
-            int leftColumn = 40;
-            int rightColumn = Math.Min(262, Math.Max(leftColumn + 170, controlsRight - 240));
-
-            btnDelete.SetBounds(leftColumn, 34, 151, 36);
-            btnRestore.SetBounds(leftColumn, 78, 151, 36);
-            btnEmptyTrash.SetBounds(rightColumn, 34, Math.Min(175, controlsRight - rightColumn), 36);
-            btnReloadTub.SetBounds(rightColumn, 78, Math.Min(232, controlsRight - rightColumn), 36);
-
-            lblTrastList.Location = new Point(listLeft, 16);
-            lstTrash.SetBounds(listLeft, 50, listWidth, Math.Max(92, groupBoxTrash.ClientSize.Height - 86));
-
-            int progressTop = Math.Max(btnReloadTub.Bottom + 14, groupBoxTrash.ClientSize.Height - 36);
-            lblTrashProgress.Location = new Point(leftColumn, progressTop + 3);
-            progressBarTrash.SetBounds(leftColumn + 104, progressTop + 2, 165, 19);
-            lblTrashPercent.Location = new Point(progressBarTrash.Right + 10, progressTop + 3);
         }
 
         // ==========================================
@@ -649,9 +588,13 @@ namespace DataManager
             // 하단 학습/테스트 탭
             CaptureBaseLayout(tabTrainTest);
 
+            // AI 컴파일 탭
+            CaptureBaseLayout(tabAiCompile);
+
             _baseLayoutCaptured = true;
         }
 
+        
         // 부모 컨트롤 내부의 모든 자식 컨트롤 정보를 재귀적으로 저장
         private void CaptureBaseLayout(Control parent)
         {
@@ -667,6 +610,24 @@ namespace DataManager
                     CaptureBaseLayout(child);
                 }
             }
+        }
+
+        //그룹박스들 이름들도 같이 키우기
+        private void ScaleGroupBoxTitleFont(GroupBox groupBox)
+        {
+            float scaleX = ClientSize.Width / (float)DesignBaseWidth;
+            float scaleY = ClientSize.Height / (float)DesignBaseHeight;
+
+            float fontScale = Math.Min(scaleX, scaleY);
+
+            // 125% 화면에서 너무 작아지는 것 방지
+            fontScale = Math.Clamp(fontScale, 1.0f, 1.6f);
+
+            groupBox.Font = new Font(
+                groupBox.Font.FontFamily,
+                9.5f * fontScale,
+                groupBox.Font.Style
+            );
         }
 
         // ==========================================
@@ -722,18 +683,60 @@ namespace DataManager
         // ==========================================
         private void ScaleProblemAreaControls()
         {
-            // 상단 서버 연결 설정
-            ScaleChildrenByParent(groupBox2);
+            ScaleGroupBoxTitleFont(groupBox2);
+            ScaleGroupBoxTitleFont(groupBoxDataLoad);
+            ScaleGroupBoxTitleFont(groupDataView);
+            ScaleGroupBoxTitleFont(groupTubNavigator);
+            ScaleGroupBoxTitleFont(groupFrameList);
+            ScaleGroupBoxTitleFont(groupTimeline);
+            ScaleGroupBoxTitleFont(groupBoxTrash);
 
-            // 왼쪽 데이터 영역
+            ScaleTabTitleFont(tabMain);
+
+            ScaleChildrenByParent(groupBox2);
             ScaleChildrenByParent(groupBoxDataLoad);
             ScaleChildrenByParent(groupDataView);
-
-            // 하단 데이터 정리 탭
+            /*
             ScaleChildrenByParent(tabCleaner);
-
-            // 하단 학습/테스트 탭
             ScaleChildrenByParent(tabTrainTest);
+            ScaleChildrenByParent(tabAiCompile);
+            */
+        }
+
+
+        private void ApplySelectedTabLayout()
+        {
+            if (!_baseLayoutCaptured) return;
+
+            if (tabMain.SelectedTab == tabCleaner)
+            {
+                ScaleChildrenByParent(tabCleaner);
+                ArrangeCleanerControls();
+            }
+            else if (tabMain.SelectedTab == tabTrainTest)
+            {
+                ScaleChildrenByParent(tabTrainTest);
+            }
+            else if (tabMain.SelectedTab == tabAiCompile)
+            {
+                ScaleChildrenByParent(tabAiCompile);
+            }
+        }
+
+
+        private void ScaleTabTitleFont(TabControl tabControl)
+        {
+            float scaleX = ClientSize.Width / (float)DesignBaseWidth;
+            float scaleY = ClientSize.Height / (float)DesignBaseHeight;
+
+            float fontScale = Math.Min(scaleX, scaleY);
+            fontScale = Math.Clamp(fontScale, 1.0f, 1.6f);
+
+            tabControl.Font = new Font(
+                tabControl.Font.FontFamily,
+                9.5f * fontScale,
+                tabControl.Font.Style
+            );
         }
 
         private bool IsFrameResizeGrip(Point location)
@@ -763,7 +766,7 @@ namespace DataManager
 
             int currentMouseY = PointToClient(Cursor.Position).Y;
             navigatorHeight = resizeStartNavigatorHeight + currentMouseY - resizeStartMouseY;
-            ArrangeTimelineAndTabs();
+            //ArrangeTimelineAndTabs();
         }
 
         private void picFrame_MouseLeave(object? sender, EventArgs e)
@@ -2137,7 +2140,7 @@ namespace DataManager
                 {
                     TubFrame frame = tubFrames[i];
                     string imageKey = i.ToString();
-                    timelineImages.Images.Add(imageKey, CreateTimelineThumbnail(frame.ImagePath, GetTimelineThumbnailSize()));
+                    timelineImages.Images.Add(imageKey, CreateTimelineThumbnail(frame.ImagePath));
                     lvTimeline.Items.Add(new ListViewItem("", imageKey) { Tag = i, ToolTipText = frame.ToString() });
                 }
             }
@@ -2152,12 +2155,9 @@ namespace DataManager
         private int GetTimelineVisibleCount()
         {
             int availableWidth = Math.Max(0, lvTimeline.ClientSize.Width - 8);
-            int thumbnailHeight = Math.Max(1, lvTimeline.ClientSize.Height - TimelineIconPadding - 4);
-            int desiredSpacingX = Math.Max(TimelineMinimumIconSpacingX, (int)Math.Round(thumbnailHeight * 4d / 3d) + TimelineIconPadding);
-            int countByWidth = availableWidth / desiredSpacingX;
+            int countByWidth = availableWidth / TimelineIconSpacingX;
             return Math.Clamp(countByWidth, TimelineMinimumVisibleCount, TimelineMaximumVisibleCount);
         }
-
         private void ReloadTimelineForCurrentFrame()
         {
             ApplyTimelineIconSpacing();
@@ -2578,51 +2578,29 @@ namespace DataManager
             return new Bitmap(source);
         }
 
-        private static Image CreateTimelineThumbnail(string imagePath, Size thumbnailSize)
+        private static Image CreateTimelineThumbnail(string imagePath)
         {
             if (!File.Exists(imagePath))
             {
-                Bitmap missing = new Bitmap(thumbnailSize.Width, thumbnailSize.Height);
+                Bitmap missing = new Bitmap(TimelineThumbWidth, TimelineThumbHeight);
                 using Graphics graphics = Graphics.FromImage(missing);
                 graphics.Clear(Color.Black);
                 using Pen pen = new Pen(Color.DarkGray);
-                graphics.DrawRectangle(pen, 0, 0, thumbnailSize.Width - 1, thumbnailSize.Height - 1);
+                graphics.DrawRectangle(pen, 0, 0, TimelineThumbWidth - 1, TimelineThumbHeight - 1);
                 return missing;
             }
             using FileStream stream = new FileStream(imagePath, FileMode.Open, FileAccess.Read);
             using Image source = Image.FromStream(stream);
-            return new Bitmap(source, thumbnailSize);
+            return new Bitmap(source, new Size(TimelineThumbWidth, TimelineThumbHeight));
         }
 
         // ListView 기본 큰 아이콘 간격이 넓어서 썸네일이 한 줄에 촘촘히 보이도록 직접 조정한다.
         private void ApplyTimelineIconSpacing()
         {
             if (!lvTimeline.IsHandleCreated) return;
-            Size thumbnailSize = GetTimelineThumbnailSize();
-            if (timelineImages.ImageSize != thumbnailSize)
-            {
-                timelineImages.ImageSize = thumbnailSize;
-            }
-            Size iconSpacing = GetTimelineIconSpacing();
-            SendMessage(lvTimeline.Handle, LvmSetIconSpacing, IntPtr.Zero, MakeLParam(iconSpacing.Width, iconSpacing.Height));
+            SendMessage(lvTimeline.Handle, LvmSetIconSpacing, IntPtr.Zero, MakeLParam(TimelineIconSpacingX, TimelineIconSpacingY));
         }
 
-        private Size GetTimelineThumbnailSize()
-        {
-            Size iconSpacing = GetTimelineIconSpacing();
-            return new Size(
-                Math.Max(1, iconSpacing.Width - TimelineIconPadding),
-                Math.Max(1, iconSpacing.Height - TimelineIconPadding));
-        }
-
-        private Size GetTimelineIconSpacing()
-        {
-            int visibleCount = currentTimelineVisibleCount > 0 ? currentTimelineVisibleCount : GetTimelineVisibleCount();
-            int availableWidth = Math.Max(TimelineMinimumIconSpacingX, lvTimeline.ClientSize.Width - 8);
-            int spacingX = Math.Max(TimelineMinimumIconSpacingX, availableWidth / Math.Max(1, visibleCount));
-            int spacingY = Math.Max(TimelineMinimumIconSpacingY, lvTimeline.ClientSize.Height - 4);
-            return new Size(spacingX, spacingY);
-        }
 
         private static IntPtr MakeLParam(int lowWord, int highWord)
         {
@@ -2733,6 +2711,11 @@ namespace DataManager
         private void tabMain_SelectedIndexChanged(object? sender, EventArgs e)
         {
             RedrawGraphAfterLayout();
+
+            BeginInvoke(new Action(() =>
+            {
+                ApplySelectedTabLayout();
+            }));
         }
 
         private void RedrawGraphAfterLayout()
@@ -2762,7 +2745,7 @@ namespace DataManager
                 return;
             }
 
-            Rectangle plot = new Rectangle(64, 32, Math.Max(10, bitmap.Width - 128), Math.Max(10, bitmap.Height - 60));
+            Rectangle plot = new Rectangle(64, 24, Math.Max(10, bitmap.Width - 128), Math.Max(10, bitmap.Height - 72));
             graphPlotBounds = plot;
             graphVisibleFrames = visibleFrames;
             DrawGraphFrame(graphics, plot);
@@ -3957,24 +3940,43 @@ namespace DataManager
                 Button btn = kv.Key;
                 Image orig = kv.Value;
 
-                // default variant update
-                Image newScaled = CreateScaledButtonImage(orig, btn.ClientSize);
+                Size iconSize = GetButtonIconSize(btn);
+
                 if (_scaledButtonVariants.TryGetValue((btn, "default"), out Image? oldDefault) && oldDefault != null)
                 {
                     oldDefault.Dispose();
                 }
+
+                Image newScaled = CreateScaledButtonImage(orig, iconSize);
                 _scaledButtonVariants[(btn, "default")] = newScaled;
                 btn.Image = newScaled;
 
-                // play/stop variants 처리
                 if (btn == btnPlayStop)
                 {
-                    if (_scaledButtonVariants.TryGetValue((btn, "play"), out Image? oldPlay) && oldPlay != null) oldPlay.Dispose();
-                    if (_scaledButtonVariants.TryGetValue((btn, "stop"), out Image? oldStop) && oldStop != null) oldStop.Dispose();
-                    _scaledButtonVariants[(btn, "play")] = CreateScaledButtonImage(Properties.Resources.icons8_play_30, btn.ClientSize);
-                    _scaledButtonVariants[(btn, "stop")] = CreateScaledButtonImage(Properties.Resources.icons8_stop_30, btn.ClientSize);
+                    if (_scaledButtonVariants.TryGetValue((btn, "play"), out Image? oldPlay) && oldPlay != null)
+                        oldPlay.Dispose();
+
+                    if (_scaledButtonVariants.TryGetValue((btn, "stop"), out Image? oldStop) && oldStop != null)
+                        oldStop.Dispose();
+
+                    _scaledButtonVariants[(btn, "play")] =
+                        CreateScaledButtonImage(Properties.Resources.icons8_play_30, iconSize);
+
+                    _scaledButtonVariants[(btn, "stop")] =
+                        CreateScaledButtonImage(Properties.Resources.icons8_stop_30, iconSize);
                 }
             }
+        }
+
+        private Size GetButtonIconSize(Button btn)
+        {
+            float iconRatio = 0.68f;
+            int size = (int)Math.Round(btn.ClientSize.Height * iconRatio);
+
+            // 너무 작거나 너무 커지는 것 방지
+            size = Math.Clamp(size, 18, 48);
+
+            return new Size(size, size);
         }
 
         private void ClearScaledButtonImages()
