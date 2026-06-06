@@ -65,6 +65,8 @@ namespace DataManager
         private int timelineDragCurrentIndex = -1;
         private int timelineDragEdgeDirection;
         private readonly System.Windows.Forms.Timer timelineDragTimer = new();
+        private bool isFrameListMouseDragging;
+        private int lastFrameListPreviewIndex = -1;
         private int playbackFrameStep = 1;
         private const int DefaultNavigatorHeight = 827;     //
         private const int MinNavigatorHeight = 360;
@@ -203,6 +205,9 @@ namespace DataManager
             toolTip1.SetToolTip(btnEmptyTrash, "휴지통의 프레임을 완전히 삭제합니다. 되돌릴 수 없습니다(원본 복사본은 deleted 폴더에 백업).");
             SetupFilterTooltips();
             lstFrames.SelectionMode = SelectionMode.MultiExtended;
+            lstFrames.MouseDown += lstFrames_MouseDown;
+            lstFrames.MouseMove += lstFrames_MouseMove;
+            lstFrames.MouseUp += lstFrames_MouseUp;
             lstTrash.CheckOnClick = false;
             lstTrash.MouseDown += LstTrash_MouseDown;
             lstTrash.MouseMove += LstTrash_MouseMove;
@@ -2202,7 +2207,7 @@ namespace DataManager
                 PrepareTimelineBeforeImageLoad();
 
                 int visibleCount = GetTimelineVisibleCount();
-                int timelineStart = (frameIndex / visibleCount) * visibleCount;
+                int timelineStart = GetCenteredTimelineStart(frameIndex, visibleCount);
                 if (timelineStart == currentTimelineStart && visibleCount == currentTimelineVisibleCount) return;
 
                 currentTimelineStart = timelineStart;
@@ -2242,6 +2247,16 @@ namespace DataManager
             int countByWidth = availableWidth / Math.Max(1, currentTimelineIconSpacingX);
             return Math.Clamp(countByWidth, 1, Math.Max(TimelineMaximumVisibleCount, countByWidth));
         }
+
+        private int GetCenteredTimelineStart(int frameIndex, int visibleCount)
+        {
+            if (tubFrames.Count == 0 || visibleCount <= 0) return 0;
+
+            int centerOffset = Math.Max(0, (visibleCount - 1) / 2);
+            int maxStart = Math.Max(0, tubFrames.Count - visibleCount);
+            return Math.Clamp(frameIndex - centerOffset, 0, maxStart);
+        }
+
         private void ReloadTimelineForCurrentFrame()
         {
             ApplyTimelineIconSpacing();
@@ -2365,6 +2380,7 @@ namespace DataManager
             rangeSelectionOrigin = RangeSelectionOrigin.TimelineDrag;
             UpdateRangeLabel();
             ApplyTimelineRangeSelection();
+            ShowDragPreviewFrame(timelineDragCurrentIndex);
         }
 
         private void ApplyTimelineRangeSelection()
@@ -2425,7 +2441,7 @@ namespace DataManager
             }
         }
 
-        private void ShowFrame(int index, bool syncFrameListSelection = true, bool syncTimelineSelection = true)
+        private void ShowFrame(int index, bool syncFrameListSelection = true, bool syncTimelineSelection = true, bool updateTimelineWindow = true)
         {
             if (index < 0 || index >= tubFrames.Count) return;
 
@@ -2443,7 +2459,10 @@ namespace DataManager
             }
 
             trackFrame.Value = index;
-            UpdateTimelineForFrame(index);
+            if (updateTimelineWindow)
+            {
+                UpdateTimelineForFrame(index);
+            }
 
             int timelineItemIndex = index - currentTimelineStart;
             if (syncTimelineSelection && timelineItemIndex >= 0 && timelineItemIndex < lvTimeline.Items.Count)
@@ -3072,6 +3091,48 @@ namespace DataManager
                 ShowFrame(index);
             }
         }
+
+        private void lstFrames_MouseDown(object? sender, MouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Left || tubFrames.Count == 0) return;
+
+            isFrameListMouseDragging = true;
+            lastFrameListPreviewIndex = -1;
+            PreviewFrameListDragEnd(e.Location);
+        }
+
+        private void lstFrames_MouseMove(object? sender, MouseEventArgs e)
+        {
+            if (!isFrameListMouseDragging || e.Button != MouseButtons.Left) return;
+
+            PreviewFrameListDragEnd(e.Location);
+        }
+
+        private void lstFrames_MouseUp(object? sender, MouseEventArgs e)
+        {
+            if (!isFrameListMouseDragging) return;
+
+            PreviewFrameListDragEnd(e.Location);
+            isFrameListMouseDragging = false;
+            lastFrameListPreviewIndex = -1;
+        }
+
+        private void PreviewFrameListDragEnd(Point location)
+        {
+            int index = lstFrames.IndexFromPoint(location);
+            if (index < 0 || index >= tubFrames.Count || index == lastFrameListPreviewIndex) return;
+
+            lastFrameListPreviewIndex = index;
+            ShowDragPreviewFrame(index);
+        }
+
+        private void ShowDragPreviewFrame(int index)
+        {
+            if (index < 0 || index >= tubFrames.Count || trackFrame.Value == index) return;
+
+            ShowFrame(index, syncFrameListSelection: false, syncTimelineSelection: false, updateTimelineWindow: false);
+        }
+
         private void trackFrame_Scroll(object sender, EventArgs e) => ShowFrame(trackFrame.Value);
         private void btnFirst_Click(object? sender, EventArgs e) { int i = FirstActiveIndex(); if (i >= 0) ShowFrame(i); }
         private void btnPrev_Click(object? sender, EventArgs e) { int i = PrevActiveIndex(trackFrame.Value); if (i >= 0) ShowFrame(i); }
