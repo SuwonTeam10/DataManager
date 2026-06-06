@@ -81,6 +81,11 @@ namespace DataManager
         private bool suppressNextFrameClick;
         private int resizeStartMouseY;
         private int resizeStartNavigatorHeight;
+        private Rectangle resizeStartNavigatorBounds;
+        private Rectangle resizeStartTimelineBounds;
+        private Rectangle resizeStartTabBounds;
+        private int frameDragMaxTimelineHeight = -1;
+        private int frameDragMaxTabHeight = -1;
         private const int MinimumResponsiveFormWidth = 1320;
         private const int LeftDataPanelGap = 12;
         private const int MinimumDataInfoPanelHeight = 264;
@@ -428,6 +433,8 @@ namespace DataManager
                 Sx(2397), Sy(314)
             );
 
+            frameDragMaxTimelineHeight = groupTimeline.Height;
+            frameDragMaxTabHeight = tabMain.Height;
 
             ArrangeNavigatorControls();
             ArrangeCleanerControls();
@@ -750,6 +757,63 @@ namespace DataManager
             return location.Y >= picFrame.ClientSize.Height - FrameResizeGripHeight;
         }
 
+        private void ApplyFrameDragLayout(int desiredNavigatorHeight)
+        {
+            int bottomGap = 8;
+            int availableBottom = ClientSize.Height - bottomGap;
+            int minimumNavigatorHeight = GetMinimumNavigatorHeight();
+
+            int navigatorTop = resizeStartNavigatorBounds.Top;
+            int navigatorHeightToApply = Math.Max(minimumNavigatorHeight, desiredNavigatorHeight);
+            int timelineHeight = Math.Max(resizeStartTimelineBounds.Height, frameDragMaxTimelineHeight);
+            int tabHeight = Math.Max(resizeStartTabBounds.Height, frameDragMaxTabHeight);
+
+            int timelineTop = navigatorTop + navigatorHeightToApply + LayoutGap;
+            int tabTop = timelineTop + timelineHeight + LayoutGap;
+            int overflow = tabTop + tabHeight - availableBottom;
+
+            if (overflow > 0)
+            {
+                int tabShrink = Math.Min(overflow, tabHeight - MinimumTabVisibleHeight);
+                tabHeight -= tabShrink;
+                overflow -= tabShrink;
+            }
+
+            if (overflow > 0)
+            {
+                int timelineShrink = Math.Min(overflow, timelineHeight - TimelineMinimumPanelHeight);
+                timelineHeight -= timelineShrink;
+                overflow -= timelineShrink;
+                tabTop = navigatorTop + navigatorHeightToApply + LayoutGap + timelineHeight + LayoutGap;
+            }
+
+            if (overflow > 0)
+            {
+                navigatorHeightToApply = Math.Max(minimumNavigatorHeight, navigatorHeightToApply - overflow);
+                timelineTop = navigatorTop + navigatorHeightToApply + LayoutGap;
+                tabTop = timelineTop + timelineHeight + LayoutGap;
+            }
+
+            navigatorHeight = navigatorHeightToApply;
+
+            groupTubNavigator.Height = navigatorHeightToApply;
+            groupFrameList.Height = navigatorHeightToApply;
+            ArrangeLeftDataPanels(groupTubNavigator.Bottom);
+
+            groupTimeline.Top = timelineTop;
+            groupTimeline.Height = timelineHeight;
+            tabMain.Top = tabTop;
+            tabMain.Height = tabHeight;
+
+            ArrangeNavigatorControls();
+            ArrangeCleanerControls();
+            if (panelTrainingLoss.Visible)
+            {
+                LayoutTrainingLossOverlay();
+                panelTrainingLoss.BringToFront();
+            }
+        }
+
         private void picFrame_MouseDown(object? sender, MouseEventArgs e)
         {
             if (e.Button != MouseButtons.Left || !IsFrameResizeGrip(e.Location)) return;
@@ -758,6 +822,11 @@ namespace DataManager
             suppressNextFrameClick = true;
             resizeStartMouseY = PointToClient(Cursor.Position).Y;
             resizeStartNavigatorHeight = groupTubNavigator.Height;
+            resizeStartNavigatorBounds = groupTubNavigator.Bounds;
+            resizeStartTimelineBounds = groupTimeline.Bounds;
+            resizeStartTabBounds = tabMain.Bounds;
+            frameDragMaxTimelineHeight = Math.Max(frameDragMaxTimelineHeight, groupTimeline.Height);
+            frameDragMaxTabHeight = Math.Max(frameDragMaxTabHeight, tabMain.Height);
             picFrame.Capture = true;
             picFrame.Cursor = Cursors.HSplit;
         }
@@ -771,8 +840,7 @@ namespace DataManager
             }
 
             int currentMouseY = PointToClient(Cursor.Position).Y;
-            navigatorHeight = resizeStartNavigatorHeight + currentMouseY - resizeStartMouseY;
-            //ArrangeTimelineAndTabs();
+            ApplyFrameDragLayout(resizeStartNavigatorHeight + currentMouseY - resizeStartMouseY);
         }
 
         private void picFrame_MouseLeave(object? sender, EventArgs e)
