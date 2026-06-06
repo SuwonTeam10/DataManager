@@ -297,6 +297,37 @@ namespace DataManager
             }
         }
 
+        protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+        {
+            if (keyData == Keys.Left && !HasFocusedTextInput(this))
+            {
+                int index = PrevActiveIndex(trackFrame.Value);
+                if (index >= 0) ShowFrame(index);
+                return true;
+            }
+
+            if (keyData == Keys.Right && !HasFocusedTextInput(this))
+            {
+                int index = NextActiveIndex(trackFrame.Value);
+                if (index >= 0) ShowFrame(index);
+                return true;
+            }
+
+            if (keyData == Keys.Space && !HasFocusedTextInput(this))
+            {
+                btnPlayStop.PerformClick();
+                return true;
+            }
+
+            if (keyData == Keys.Delete && !HasFocusedTextInput(this))
+            {
+                btnDelete.PerformClick();
+                return true;
+            }
+
+            return base.ProcessCmdKey(ref msg, keyData);
+        }
+
         private static bool HasFocusedTextInput(Control parent)
         {
             foreach (Control control in parent.Controls)
@@ -2230,6 +2261,8 @@ namespace DataManager
                 }
                 finally { lvTimeline.EndUpdate(); }
 
+                RefreshTimelineNow();
+
                 if (hasTimelineRangeDragMoved)
                 {
                     ApplyTimelineRangeSelection();
@@ -2239,6 +2272,14 @@ namespace DataManager
             {
                 isLoadingTimeline = wasLoadingTimeline;
             }
+        }
+
+        private void RefreshTimelineNow()
+        {
+            if (!lvTimeline.IsHandleCreated) return;
+
+            lvTimeline.Invalidate();
+            lvTimeline.Update();
         }
 
         private int GetTimelineVisibleCount()
@@ -2459,6 +2500,19 @@ namespace DataManager
             }
 
             trackFrame.Value = index;
+
+            // 프레임 이미지는 썸네일 타임라인 재로딩보다 먼저 갱신한다.
+            // 5프레임 이후에는 타임라인이 현재 프레임을 가운데로 맞추며 자주 다시 로딩되므로,
+            // 이미지 갱신이 뒤로 밀리면 방향키를 길게 눌렀을 때 화면 표시가 늦어질 수 있다.
+            picFrame.Image = frameImageCache.Get(frame.ImagePath);
+
+            if (!File.Exists(frame.ImagePath)) missingImageFrames.Add(index);
+
+            UpdateFrameInfoLabels(frame, index);
+            UpdatePredictionResultLabels(frame);
+            picFrame.Invalidate();
+            picFrame.Update();
+
             if (updateTimelineWindow)
             {
                 UpdateTimelineForFrame(index);
@@ -2473,16 +2527,8 @@ namespace DataManager
                 lvTimeline.Items[timelineItemIndex].Focused = true;
                 lvTimeline.Items[timelineItemIndex].EnsureVisible();
                 isUpdatingTimelineSelection = false;
+                RefreshTimelineNow();
             }
-
-            // 캐시가 소유한 이미지를 표시한다. (캐시가 Dispose를 책임지므로 여기서 Dispose하지 않는다.)
-            picFrame.Image = frameImageCache.Get(frame.ImagePath);
-
-            if (!File.Exists(frame.ImagePath)) missingImageFrames.Add(index);
-
-            UpdateFrameInfoLabels(frame, index);
-            UpdatePredictionResultLabels(frame);
-            picFrame.Invalidate();
         }
 
 
