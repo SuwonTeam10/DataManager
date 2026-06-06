@@ -18,6 +18,9 @@ namespace DataManager
 {
     public partial class Form1 : Form
     {
+        [DllImport("user32.dll")]
+        private static extern short GetAsyncKeyState(Keys key);
+
         // ==========================================
         // 전역 변수 선언
         // ==========================================
@@ -68,6 +71,8 @@ namespace DataManager
         private bool isFrameListMouseDragging;
         private int lastFrameListPreviewIndex = -1;
         private int playbackFrameStep = 1;
+        private bool isEnterSelectingFrames;
+        private readonly HashSet<int> enterSelectedFrameIndices = new();
         private const int DefaultNavigatorHeight = 827;     //
         private const int MinNavigatorHeight = 360;
         private const int TimelinePanelHeight = 168;    //
@@ -150,6 +155,7 @@ namespace DataManager
 
             KeyPreview = true;
             KeyDown += Form1_KeyDown;
+            KeyUp += Form1_KeyUp;
 
             // 프로그램 시작 시 기본 실행기를 로컬로 세팅
             _executor = new ICE.LocalExecutor();
@@ -273,53 +279,78 @@ namespace DataManager
 
         private void Form1_KeyDown(object? sender, KeyEventArgs e)
         {
-            if (e.Modifiers != Keys.None) return;
-            if (HasFocusedTextInput(this)) return;
+        }
 
-            switch (e.KeyCode)
+        private void Form1_KeyUp(object? sender, KeyEventArgs e)
+        {
+            if (e.KeyCode == Keys.Enter)
             {
-                case Keys.Delete:
-                    e.SuppressKeyPress = true;
-                    btnDelete.PerformClick();
-                    break;
-                case Keys.Space:
-                    e.SuppressKeyPress = true;
-                    btnPlayStop.PerformClick();
-                    break;
-                case Keys.Left:
-                    e.SuppressKeyPress = true;
-                    btnPrev.PerformClick();
-                    break;
-                case Keys.Right:
-                    e.SuppressKeyPress = true;
-                    btnNext.PerformClick();
-                    break;
+                isEnterSelectingFrames = false;
             }
         }
 
         protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
         {
-            if (keyData == Keys.Left && !HasFocusedTextInput(this))
+            if (HasFocusedTextInput(this)) return base.ProcessCmdKey(ref msg, keyData);
+
+            Keys keyCode = keyData & Keys.KeyCode;
+            Keys modifiers = keyData & Keys.Modifiers;
+            if (modifiers != Keys.None) return base.ProcessCmdKey(ref msg, keyData);
+
+            if (keyCode is Keys.Left or Keys.A)
             {
                 int index = PrevActiveIndex(trackFrame.Value);
-                if (index >= 0) ShowFrame(index);
+                if (index >= 0)
+                {
+                    ShowFrame(index);
+                    AddCurrentFrameToSelectionIfEnterHeld();
+                }
                 return true;
             }
 
-            if (keyData == Keys.Right && !HasFocusedTextInput(this))
+            if (keyCode is Keys.Right or Keys.D)
             {
                 int index = NextActiveIndex(trackFrame.Value);
-                if (index >= 0) ShowFrame(index);
+                if (index >= 0)
+                {
+                    ShowFrame(index);
+                    AddCurrentFrameToSelectionIfEnterHeld();
+                }
                 return true;
             }
 
-            if (keyData == Keys.Space && !HasFocusedTextInput(this))
+            if (keyCode is Keys.Up or Keys.W)
+            {
+                ChangePlaybackSpeed(1);
+                return true;
+            }
+
+            if (keyCode is Keys.Down or Keys.S)
+            {
+                ChangePlaybackSpeed(-1);
+                return true;
+            }
+
+            if (keyCode == Keys.Enter)
+            {
+                isEnterSelectingFrames = true;
+                AddCurrentFrameToSelection();
+                return true;
+            }
+
+            if (keyCode == Keys.Escape)
+            {
+                ClearAllFrameSelections();
+                return true;
+            }
+
+            if (keyCode == Keys.Space)
             {
                 btnPlayStop.PerformClick();
                 return true;
             }
 
-            if (keyData == Keys.Delete && !HasFocusedTextInput(this))
+            if (keyCode == Keys.Delete)
             {
                 btnDelete.PerformClick();
                 return true;
@@ -970,7 +1001,10 @@ namespace DataManager
 
             ToolStripMenuItem menuHotkeys = new ToolStripMenuItem("⌨️ 단축키 안내");
             menuHotkeys.DropDownItems.Add("Space Bar : 자동 재생 / 정지 토글");
-            menuHotkeys.DropDownItems.Add("← / → 방향키 : 프레임 1칸씩 이동");
+            menuHotkeys.DropDownItems.Add("A / D 또는 ← / → : 이전/다음 프레임 이동");
+            menuHotkeys.DropDownItems.Add("W / S 또는 ↑ / ↓ : 재생 속도 조절");
+            menuHotkeys.DropDownItems.Add("Enter : 현재 프레임 선택 추가");
+            menuHotkeys.DropDownItems.Add("Esc : 선택한 프레임/범위 전체 취소");
             menuHotkeys.DropDownItems.Add("Delete : 선택한 프레임 또는 지정 범위를 휴지통으로 이동");
             menuHotkeys.MouseEnter += (s, e) => menuHotkeys.ShowDropDown();
 
@@ -1960,7 +1994,8 @@ namespace DataManager
         private void PlayTimer_Tick(object? sender, EventArgs e)
         {
             // 재생 중에는 트랙바 값만 바꾸지 않고 ShowFrame을 호출해서 이미지/라벨/목록 선택까지 같이 갱신한다.
-            int next = AdvanceActiveIndex(trackFrame.Value, playbackFrameStep);
+            int current = trackFrame.Value;
+            int next = AdvanceActiveIndex(current, playbackFrameStep);
             if (next < 0)
             {
                 if (chkAutoPlay.Checked)
@@ -1968,7 +2003,9 @@ namespace DataManager
                     int firstActive = FirstActiveIndex();
                     if (firstActive >= 0)
                     {
-                        ShowFrame(firstActive);
+                        AddActiveFrameRangeToSelectionIfEnterHeld(current, LastActiveIndex());
+                        ShowFrame(firstActive, syncFrameListSelection: !HasAccumulatedEnterSelection(), syncTimelineSelection: !HasAccumulatedEnterSelection());
+                        AddCurrentFrameToSelectionIfEnterHeld();
                         return;
                     }
                 }
@@ -1977,7 +2014,8 @@ namespace DataManager
                 return;
             }
 
-            ShowFrame(next);
+            AddActiveFrameRangeToSelectionIfEnterHeld(current, next);
+            ShowFrame(next, syncFrameListSelection: !HasAccumulatedEnterSelection(), syncTimelineSelection: !HasAccumulatedEnterSelection());
         }
 
         protected override void OnFormClosing(FormClosingEventArgs e)
@@ -2210,6 +2248,9 @@ namespace DataManager
 
         private void ResetTubView()
         {
+            isEnterSelectingFrames = false;
+            enterSelectedFrameIndices.Clear();
+
             lstFrames.BeginUpdate();
             lstFrames.Items.Clear();
             lvTimeline.Items.Clear();
@@ -2266,6 +2307,10 @@ namespace DataManager
                 if (hasTimelineRangeDragMoved)
                 {
                     ApplyTimelineRangeSelection();
+                }
+                else if (HasAccumulatedEnterSelection())
+                {
+                    ApplyEnterFrameSelectionToTimeline();
                 }
             }
             finally
@@ -2482,13 +2527,144 @@ namespace DataManager
             }
         }
 
+        private void AddCurrentFrameToSelection()
+        {
+            int index = trackFrame.Value;
+            if (index < 0 || index >= tubFrames.Count || index >= lstFrames.Items.Count) return;
+
+            enterSelectedFrameIndices.Add(index);
+            lstFrames.SelectedIndexChanged -= lstFrames_SelectedIndexChanged;
+            try
+            {
+                lstFrames.SetSelected(index, true);
+                lstFrames.TopIndex = Math.Max(0, Math.Min(index, lstFrames.Items.Count - 1));
+            }
+            finally
+            {
+                lstFrames.SelectedIndexChanged += lstFrames_SelectedIndexChanged;
+            }
+
+            ApplyEnterFrameSelectionToTimeline();
+        }
+
+        private void ClearAllFrameSelections()
+        {
+            ClearRangeSelection();
+            isEnterSelectingFrames = false;
+            enterSelectedFrameIndices.Clear();
+
+            lstFrames.SelectedIndexChanged -= lstFrames_SelectedIndexChanged;
+            try
+            {
+                lstFrames.ClearSelected();
+            }
+            finally
+            {
+                lstFrames.SelectedIndexChanged += lstFrames_SelectedIndexChanged;
+            }
+
+            isUpdatingTimelineSelection = true;
+            try
+            {
+                foreach (ListViewItem item in lvTimeline.Items)
+                {
+                    item.Selected = false;
+                    item.Focused = false;
+                }
+            }
+            finally
+            {
+                isUpdatingTimelineSelection = false;
+            }
+
+            RefreshTimelineNow();
+        }
+
+        private bool HasAccumulatedEnterSelection()
+        {
+            return enterSelectedFrameIndices.Count > 0 || isEnterSelectingFrames;
+        }
+
+        private bool IsEnterKeyPhysicallyDown()
+        {
+            return (GetAsyncKeyState(Keys.Enter) & unchecked((short)0x8000)) != 0;
+        }
+
+        private void AddCurrentFrameToSelectionIfEnterHeld()
+        {
+            isEnterSelectingFrames = IsEnterKeyPhysicallyDown();
+            if (!isEnterSelectingFrames) return;
+
+            AddCurrentFrameToSelection();
+        }
+
+        private void AddActiveFrameRangeToSelectionIfEnterHeld(int from, int to)
+        {
+            isEnterSelectingFrames = IsEnterKeyPhysicallyDown();
+            if (!isEnterSelectingFrames) return;
+            if (from < 0 || to < 0 || from >= tubFrames.Count || to >= tubFrames.Count) return;
+
+            int index = NextActiveIndex(from);
+            if (index < 0) return;
+
+            lstFrames.SelectedIndexChanged -= lstFrames_SelectedIndexChanged;
+            try
+            {
+                while (index >= 0 && index <= to)
+                {
+                    enterSelectedFrameIndices.Add(index);
+                    if (index < lstFrames.Items.Count) lstFrames.SetSelected(index, true);
+                    index = NextActiveIndex(index);
+                }
+
+                int selectedIndex = Math.Max(0, Math.Min(trackFrame.Value, lstFrames.Items.Count - 1));
+                if (lstFrames.Items.Count > 0) lstFrames.TopIndex = selectedIndex;
+            }
+            finally
+            {
+                lstFrames.SelectedIndexChanged += lstFrames_SelectedIndexChanged;
+            }
+
+            ApplyEnterFrameSelectionToTimeline();
+        }
+
+        private void ApplyEnterFrameSelectionToTimeline()
+        {
+            if (lvTimeline.Items.Count == 0) return;
+
+            isUpdatingTimelineSelection = true;
+            try
+            {
+                foreach (ListViewItem item in lvTimeline.Items)
+                {
+                    if (item.Tag is not int frameIndex) continue;
+
+                    item.Selected = enterSelectedFrameIndices.Contains(frameIndex);
+                    item.Focused = frameIndex == trackFrame.Value;
+                }
+
+                int visibleIndex = trackFrame.Value - currentTimelineStart;
+                if (visibleIndex >= 0 && visibleIndex < lvTimeline.Items.Count)
+                {
+                    lvTimeline.Items[visibleIndex].EnsureVisible();
+                }
+            }
+            finally
+            {
+                isUpdatingTimelineSelection = false;
+            }
+
+            RefreshTimelineNow();
+        }
+
         private void ShowFrame(int index, bool syncFrameListSelection = true, bool syncTimelineSelection = true, bool updateTimelineWindow = true)
         {
             if (index < 0 || index >= tubFrames.Count) return;
 
             TubFrame frame = tubFrames[index];
+            bool preserveAccumulatedSelection = HasAccumulatedEnterSelection();
 
-            if (syncFrameListSelection)
+            if (syncFrameListSelection && !preserveAccumulatedSelection)
             {
                 lstFrames.SelectedIndexChanged -= lstFrames_SelectedIndexChanged;
                 if (index < lstFrames.Items.Count)
@@ -2519,6 +2695,12 @@ namespace DataManager
             }
 
             int timelineItemIndex = index - currentTimelineStart;
+            if (preserveAccumulatedSelection)
+            {
+                ApplyEnterFrameSelectionToTimeline();
+                return;
+            }
+
             if (syncTimelineSelection && timelineItemIndex >= 0 && timelineItemIndex < lvTimeline.Items.Count)
             {
                 isUpdatingTimelineSelection = true;
@@ -4114,6 +4296,17 @@ namespace DataManager
             string speedText = cmbPlaySpeed.SelectedItem?.ToString() ?? "1x";
             speedText = speedText.Trim().TrimEnd('x', 'X');
             return int.TryParse(speedText, out int speed) ? Math.Clamp(speed, 1, 8) : 1;
+        }
+
+        private void ChangePlaybackSpeed(int direction)
+        {
+            if (cmbPlaySpeed.Items.Count == 0) return;
+
+            int currentIndex = cmbPlaySpeed.SelectedIndex >= 0 ? cmbPlaySpeed.SelectedIndex : 0;
+            int nextIndex = Math.Clamp(currentIndex + direction, 0, cmbPlaySpeed.Items.Count - 1);
+            if (nextIndex == cmbPlaySpeed.SelectedIndex) return;
+
+            cmbPlaySpeed.SelectedIndex = nextIndex;
         }
 
         private void UpdatePlaybackControlsVisual(bool isPlaying)
