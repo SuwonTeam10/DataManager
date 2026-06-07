@@ -85,6 +85,8 @@ namespace DataManager
         private SortedSet<int>? dragBaseSelection = null;          // 드래그 시작 시 선택 스냅샷(타임라인·목록 공용)
         private bool isRefreshingSelectionVisuals = false;         // 선택 시각화 재진입 가드
         private int frameListDragStartIndex = -1;                  // 목록 드래그 앵커
+        private int selectionAnchorIndex = -1;                     // Shift+클릭 범위 기준 앵커
+        private Keys frameListDownModifiers = Keys.None;           // 목록 클릭 시 Shift/Ctrl 상태
         private const int DefaultNavigatorHeight = 827;     //
         private const int MinNavigatorHeight = 360;
         private const int TimelinePanelHeight = 168;    //
@@ -2348,6 +2350,7 @@ namespace DataManager
             isEnterSelectingFrames = false;
             selectedFrames.Clear();
             pendingRangeAnchor = -1;
+            selectionAnchorIndex = -1;
             dragBaseSelection = null;
 
             lstFrames.BeginUpdate();
@@ -2615,6 +2618,7 @@ namespace DataManager
         {
             selectedFrames.Clear();
             pendingRangeAnchor = -1;
+            selectionAnchorIndex = -1;
             dragBaseSelection = null;
             isEnterSelectingFrames = false;
             timelineDragStartIndex = -1;
@@ -3592,6 +3596,7 @@ namespace DataManager
             isFrameListMouseDragging = true;
             frameListDragStartIndex = lstFrames.IndexFromPoint(e.Location);
             lastFrameListPreviewIndex = frameListDragStartIndex;
+            frameListDownModifiers = Control.ModifierKeys & (Keys.Shift | Keys.Control);
             dragBaseSelection = new SortedSet<int>(selectedFrames);
             if (frameListDragStartIndex >= 0) ShowDragPreviewFrame(frameListDragStartIndex);
         }
@@ -3619,16 +3624,44 @@ namespace DataManager
             if (!isFrameListMouseDragging) return;
 
             bool moved = lastFrameListPreviewIndex >= 0 && lastFrameListPreviewIndex != frameListDragStartIndex;
+            int clicked = frameListDragStartIndex;
+            Keys mods = frameListDownModifiers;
             isFrameListMouseDragging = false;
             dragBaseSelection = null;
-
-            if (!moved && frameListDragStartIndex >= 0)
-            {
-                ClearSelection();
-                ShowFrame(frameListDragStartIndex);
-            }
             frameListDragStartIndex = -1;
             lastFrameListPreviewIndex = -1;
+            frameListDownModifiers = Keys.None;
+
+            if (moved)
+            {
+                selectionAnchorIndex = clicked;   // 드래그 후 앵커는 시작점
+                return;
+            }
+            if (clicked < 0 || clicked >= tubFrames.Count) return;
+
+            if ((mods & Keys.Control) != 0)
+            {
+                // Ctrl+클릭: 해당 프레임을 공유 선택에서 토글
+                if (!selectedFrames.Remove(clicked)) selectedFrames.Add(clicked);
+                selectionAnchorIndex = clicked;
+                RefreshSelectionVisuals();
+                ShowFrame(clicked);
+            }
+            else if ((mods & Keys.Shift) != 0)
+            {
+                // Shift+클릭: 앵커~클릭 범위를 공유 선택에 누적
+                int anchor = selectionAnchorIndex >= 0 ? selectionAnchorIndex : clicked;
+                CommitRange(anchor, clicked);
+                RefreshSelectionVisuals();
+                ShowFrame(clicked);
+            }
+            else
+            {
+                // 일반 클릭: 선택 해제 + 이동
+                ClearSelection();
+                ShowFrame(clicked);
+                selectionAnchorIndex = clicked;
+            }
         }
 
         private void ShowDragPreviewFrame(int index)
