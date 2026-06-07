@@ -4081,8 +4081,6 @@ namespace DataManager
             if (usedRange)
             {
                 (int lo, int hi) = GetEffectiveRange();
-                DialogResult res = MessageBox.Show($"범위 {lo}~{hi}의 프레임을 휴지통으로 보냅니다.\ncatalog에서 즉시 제거되어 학습·테스트에서 빠지며, [복원]으로 되돌릴 수 있습니다.\n\n계속하시겠습니까?", "삭제 (catalog에서 제거)", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
-                if (res == DialogResult.No) return;
                 for (int i = lo; i <= hi; i++) targets.Add((tubFrames[i], "수동 삭제"));
             }
             else
@@ -4093,11 +4091,6 @@ namespace DataManager
                 {
                     MessageBox.Show("삭제할 프레임을 목록에서 선택하거나 [시작 지정]/[끝 지정]으로 범위를 정하세요.", "삭제", MessageBoxButtons.OK, MessageBoxIcon.Information);
                     return;
-                }
-                if (indices.Count > 1)
-                {
-                    DialogResult res = MessageBox.Show($"선택한 {indices.Count}개 프레임을 휴지통으로 보냅니다.\ncatalog에서 즉시 제거되어 학습·테스트에서 빠지며, [복원]으로 되돌릴 수 있습니다.\n\n계속하시겠습니까?", "삭제 (catalog에서 제거)", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
-                    if (res == DialogResult.No) return;
                 }
                 foreach (int idx in indices) targets.Add((tubFrames[idx], "수동 삭제"));
             }
