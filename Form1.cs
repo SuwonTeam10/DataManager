@@ -80,7 +80,11 @@ namespace DataManager
         private readonly object frameImagePrefetchLock = new();
         private bool isEnterSelectingFrames;
         private int keyboardFrameMoveDirection;
-        private readonly HashSet<int> enterSelectedFrameIndices = new();
+        private readonly SortedSet<int> selectedFrames = new();   // 공유 선택(절대 tubFrames 인덱스) - 모든 선택 기능의 단일 진실원
+        private int pendingRangeAnchor = -1;                       // 시작 지정 앵커(-1=없음)
+        private SortedSet<int>? dragBaseSelection = null;          // 드래그 시작 시 선택 스냅샷(타임라인·목록 공용)
+        private bool isRefreshingSelectionVisuals = false;         // 선택 시각화 재진입 가드
+        private int frameListDragStartIndex = -1;                  // 목록 드래그 앵커
         private const int DefaultNavigatorHeight = 827;     //
         private const int MinNavigatorHeight = 360;
         private const int TimelinePanelHeight = 168;    //
@@ -120,17 +124,6 @@ namespace DataManager
         private bool _baseLayoutCaptured = false;
 
 
-        private enum RangeSelectionOrigin
-        {
-            None,
-            TimelineDrag,
-            ManualButton
-        }
-
-        // 데이터 정리(필터/삭제) 대상 범위. -1은 미지정.
-        private int rangeStart = -1;
-        private int rangeEnd = -1;
-        private RangeSelectionOrigin rangeSelectionOrigin = RangeSelectionOrigin.None;
 
         // 자동 재생 성능을 위한 표시용 이미지 LRU 캐시(메모리 상한 적용). 캐시가 Bitmap 소유권을 가진다.
         private readonly FrameImageCache frameImageCache;
@@ -2105,7 +2098,7 @@ namespace DataManager
                     if (firstActive >= 0)
                     {
                         AddActiveFrameRangeToSelectionIfEnterHeld(current, LastActiveIndex());
-                        ShowFrame(firstActive, syncFrameListSelection: !HasAccumulatedEnterSelection(), syncTimelineSelection: !HasAccumulatedEnterSelection());
+                        ShowFrame(firstActive, syncFrameListSelection: !HasSelection(), syncTimelineSelection: !HasSelection());
                         AddCurrentFrameToSelectionIfEnterHeld();
                         return;
                     }
@@ -2116,7 +2109,7 @@ namespace DataManager
             }
 
             AddActiveFrameRangeToSelectionIfEnterHeld(current, next);
-            ShowFrame(next, syncFrameListSelection: !HasAccumulatedEnterSelection(), syncTimelineSelection: !HasAccumulatedEnterSelection());
+            ShowFrame(next, syncFrameListSelection: !HasSelection(), syncTimelineSelection: !HasSelection());
         }
 
         protected override void OnFormClosing(FormClosingEventArgs e)
@@ -2195,10 +2188,10 @@ namespace DataManager
             CancelFrameImagePrefetch();
             frameImageCache.Clear();
             timelineThumbnailCache.Clear();
-            rangeStart = -1;
-            rangeEnd = -1;
-            rangeSelectionOrigin = RangeSelectionOrigin.None;
-            UpdateRangeLabel();
+            selectedFrames.Clear();
+            pendingRangeAnchor = -1;
+            dragBaseSelection = null;
+            UpdateSelectionLabel();
 
             try
             {
@@ -2353,7 +2346,9 @@ namespace DataManager
         private void ResetTubView()
         {
             isEnterSelectingFrames = false;
-            enterSelectedFrameIndices.Clear();
+            selectedFrames.Clear();
+            pendingRangeAnchor = -1;
+            dragBaseSelection = null;
 
             lstFrames.BeginUpdate();
             lstFrames.Items.Clear();
@@ -2408,14 +2403,7 @@ namespace DataManager
 
                 RefreshTimelineNow();
 
-                if (hasTimelineRangeDragMoved)
-                {
-                    ApplyTimelineRangeSelection();
-                }
-                else if (HasAccumulatedEnterSelection())
-                {
-                    ApplyEnterFrameSelectionToTimeline();
-                }
+                SyncTimelineSelectionFromModel();
             }
             finally
             {
@@ -2479,7 +2467,7 @@ namespace DataManager
             e.Graphics.DrawImage(timelineImage, imageBounds);
 
             bool isSelectedFrame = e.Item.Tag is int selectedFrameIndex
-                && enterSelectedFrameIndices.Contains(selectedFrameIndex);
+                && selectedFrames.Contains(selectedFrameIndex);
             if (e.Item.Selected || isSelectedFrame)
             {
                 using SolidBrush selectedBrush = new SolidBrush(Color.FromArgb(80, Color.DodgerBlue));
@@ -2530,6 +2518,7 @@ namespace DataManager
             hasTimelineRangeDragMoved = false;
             timelineDragStartIndex = frameIndex;
             timelineDragCurrentIndex = frameIndex;
+            dragBaseSelection = new SortedSet<int>(selectedFrames);
             lvTimeline.Capture = true;
         }
 
@@ -2573,7 +2562,7 @@ namespace DataManager
 
             if (shouldShowFrame && clickedIndex >= 0)
             {
-                ClearRangeForSingleFrameNavigation();
+                ClearSelection();
                 ShowFrame(clickedIndex);
             }
         }
@@ -2606,137 +2595,60 @@ namespace DataManager
             timelineDragEdgeDirection = 0;
             timelineDragTimer.Stop();
             lvTimeline.Capture = false;
-            if (hasTimelineRangeDragMoved)
-            {
-                ApplyTimelineRangeSelection();
-            }
+            dragBaseSelection = null;
         }
 
         private void UpdateTimelineDragRange(int currentIndex)
         {
             timelineDragCurrentIndex = Math.Clamp(currentIndex, 0, tubFrames.Count - 1);
-            rangeStart = timelineDragStartIndex;
-            rangeEnd = timelineDragCurrentIndex;
-            rangeSelectionOrigin = RangeSelectionOrigin.TimelineDrag;
-            UpdateRangeLabel();
-            ApplyTimelineRangeSelection();
+            int lo = Math.Min(timelineDragStartIndex, timelineDragCurrentIndex);
+            int hi = Math.Max(timelineDragStartIndex, timelineDragCurrentIndex);
+            selectedFrames.Clear();
+            if (dragBaseSelection != null) selectedFrames.UnionWith(dragBaseSelection);
+            for (int i = lo; i <= hi; i++) if (i >= 0 && i < tubFrames.Count) selectedFrames.Add(i);
+            RefreshSelectionVisuals();
             ShowDragPreviewFrame(timelineDragCurrentIndex);
         }
 
-        private void ApplyTimelineRangeSelection()
+        // 공유 선택을 모두 해제하고 시각화를 갱신한다.
+        private void ClearSelection()
         {
-            if (lvTimeline.Items.Count == 0) return;
-
-            isUpdatingTimelineSelection = true;
-            try
-            {
-                if (rangeStart < 0 && rangeEnd < 0)
-                {
-                    foreach (ListViewItem item in lvTimeline.Items) item.Selected = false;
-                    return;
-                }
-
-                (int lo, int hi) = GetEffectiveRange();
-                foreach (ListViewItem item in lvTimeline.Items)
-                {
-                    if (item.Tag is not int frameIndex) continue;
-                    item.Selected = frameIndex >= lo && frameIndex <= hi;
-                    item.Focused = frameIndex == timelineDragCurrentIndex;
-                }
-
-                int visibleIndex = timelineDragCurrentIndex - currentTimelineStart;
-                if (visibleIndex >= 0 && visibleIndex < lvTimeline.Items.Count)
-                {
-                    lvTimeline.Items[visibleIndex].EnsureVisible();
-                }
-            }
-            finally
-            {
-                isUpdatingTimelineSelection = false;
-            }
-        }
-
-        private void ClearRangeSelection()
-        {
-            rangeStart = -1;
-            rangeEnd = -1;
-            rangeSelectionOrigin = RangeSelectionOrigin.None;
+            selectedFrames.Clear();
+            pendingRangeAnchor = -1;
+            dragBaseSelection = null;
+            isEnterSelectingFrames = false;
             timelineDragStartIndex = -1;
             timelineDragCurrentIndex = -1;
             hasTimelineRangeDragMoved = false;
-            UpdateRangeLabel();
+            RefreshSelectionVisuals();
         }
 
-        private void ClearRangeForSingleFrameNavigation()
+        // [a..b] 구간을 공유 선택에 누적한다.
+        private void CommitRange(int a, int b)
         {
-            if (rangeSelectionOrigin == RangeSelectionOrigin.TimelineDrag)
-            {
-                ClearRangeSelection();
-                return;
-            }
-
-            if (rangeSelectionOrigin == RangeSelectionOrigin.ManualButton && rangeStart >= 0 && rangeEnd >= 0)
-            {
-                ClearRangeSelection();
-            }
+            if (tubFrames.Count == 0) return;
+            int lo = Math.Clamp(Math.Min(a, b), 0, tubFrames.Count - 1);
+            int hi = Math.Clamp(Math.Max(a, b), 0, tubFrames.Count - 1);
+            for (int i = lo; i <= hi; i++) selectedFrames.Add(i);
         }
 
         private void AddCurrentFrameToSelection()
         {
             int index = trackFrame.Value;
-            if (index < 0 || index >= tubFrames.Count || index >= lstFrames.Items.Count) return;
-
-            enterSelectedFrameIndices.Add(index);
-            lstFrames.SelectedIndexChanged -= lstFrames_SelectedIndexChanged;
-            try
-            {
-                lstFrames.SetSelected(index, true);
-                lstFrames.TopIndex = Math.Max(0, Math.Min(index, lstFrames.Items.Count - 1));
-            }
-            finally
-            {
-                lstFrames.SelectedIndexChanged += lstFrames_SelectedIndexChanged;
-            }
-
-            ApplyEnterFrameSelectionToTimeline();
+            if (index < 0 || index >= tubFrames.Count) return;
+            selectedFrames.Add(index);
+            RefreshSelectionVisuals();
         }
 
         private void ClearAllFrameSelections()
         {
-            ClearRangeSelection();
-            isEnterSelectingFrames = false;
-            enterSelectedFrameIndices.Clear();
-
-            lstFrames.SelectedIndexChanged -= lstFrames_SelectedIndexChanged;
-            try
-            {
-                lstFrames.ClearSelected();
-            }
-            finally
-            {
-                lstFrames.SelectedIndexChanged += lstFrames_SelectedIndexChanged;
-            }
-
-            isUpdatingTimelineSelection = true;
-            try
-            {
-                foreach (ListViewItem item in lvTimeline.Items)
-                {
-                    item.Selected = false;
-                    item.Focused = false;
-                }
-            }
-            finally
-            {
-                isUpdatingTimelineSelection = false;
-            }
-
+            ClearSelection();
             RefreshTimelineNow();
         }
 
-        private bool HasAccumulatedEnterSelection()
+        private bool HasSelection()
         {
-            return enterSelectedFrameIndices.Count > 0 || isEnterSelectingFrames;
+            return selectedFrames.Count > 0;
         }
 
         private bool IsEnterKeyPhysicallyDown()
@@ -2765,29 +2677,74 @@ namespace DataManager
 
             int index = NextActiveIndex(from);
             if (index < 0) return;
-
-            lstFrames.SelectedIndexChanged -= lstFrames_SelectedIndexChanged;
-            try
+            while (index >= 0 && index <= to)
             {
-                while (index >= 0 && index <= to)
-                {
-                    enterSelectedFrameIndices.Add(index);
-                    if (index < lstFrames.Items.Count) lstFrames.SetSelected(index, true);
-                    index = NextActiveIndex(index);
-                }
-
-                int selectedIndex = Math.Max(0, Math.Min(trackFrame.Value, lstFrames.Items.Count - 1));
-                if (lstFrames.Items.Count > 0) lstFrames.TopIndex = selectedIndex;
+                selectedFrames.Add(index);
+                index = NextActiveIndex(index);
             }
-            finally
-            {
-                lstFrames.SelectedIndexChanged += lstFrames_SelectedIndexChanged;
-            }
-
-            ApplyEnterFrameSelectionToTimeline();
+            RefreshSelectionVisuals();
         }
 
-        private void ApplyEnterFrameSelectionToTimeline()
+        // 선택 요약 라벨 텍스트.
+        private string DescribeSelection()
+        {
+            string anchorSuffix = pendingRangeAnchor >= 0 ? $" · 지정 시작 @{pendingRangeAnchor}" : "";
+            if (selectedFrames.Count == 0) return "선택: 없음" + anchorSuffix;
+
+            int runs = 0, prev = int.MinValue;
+            foreach (int i in selectedFrames)
+            {
+                if (i != prev + 1) runs++;
+                prev = i;
+            }
+            return $"선택: {selectedFrames.Count}개 / {runs}범위" + anchorSuffix;
+        }
+
+        private void UpdateSelectionLabel()
+        {
+            lblRange.Text = DescribeSelection();
+        }
+
+        // 삭제/필터 대상 인덱스(선택이 있으면 그 집합, 없으면 전체).
+        private List<int> GetTargetIndices()
+        {
+            if (selectedFrames.Count > 0) return selectedFrames.Where(i => i >= 0 && i < tubFrames.Count).ToList();
+            return Enumerable.Range(0, tubFrames.Count).ToList();
+        }
+
+        // 공유 선택을 목록·타임라인·라벨에 반영하는 단일 동기화점(그래프 음영은 커밋에서 추가).
+        private void RefreshSelectionVisuals()
+        {
+            if (isRefreshingSelectionVisuals) return;
+            isRefreshingSelectionVisuals = true;
+            try
+            {
+                lstFrames.SelectedIndexChanged -= lstFrames_SelectedIndexChanged;
+                try
+                {
+                    lstFrames.BeginUpdate();
+                    lstFrames.ClearSelected();
+                    if (selectedFrames.Count > 0)
+                    {
+                        foreach (int i in selectedFrames)
+                            if (i >= 0 && i < lstFrames.Items.Count) lstFrames.SetSelected(i, true);
+                    }
+                    else if (trackFrame.Value >= 0 && trackFrame.Value < lstFrames.Items.Count)
+                    {
+                        lstFrames.SetSelected(trackFrame.Value, true);
+                    }
+                    lstFrames.EndUpdate();
+                }
+                finally { lstFrames.SelectedIndexChanged += lstFrames_SelectedIndexChanged; }
+
+                SyncTimelineSelectionFromModel();
+                UpdateSelectionLabel();
+            }
+            finally { isRefreshingSelectionVisuals = false; }
+        }
+
+        // 타임라인 항목 선택/포커스를 공유 선택 기준으로 맞춘다(목록 갱신 없이 타임라인만).
+        private void SyncTimelineSelectionFromModel()
         {
             if (lvTimeline.Items.Count == 0) return;
 
@@ -2798,7 +2755,7 @@ namespace DataManager
                 {
                     if (item.Tag is not int frameIndex) continue;
 
-                    bool shouldBeSelected = enterSelectedFrameIndices.Contains(frameIndex);
+                    bool shouldBeSelected = selectedFrames.Contains(frameIndex);
                     bool shouldBeFocused = frameIndex == trackFrame.Value;
                     if (item.Selected == shouldBeSelected && item.Focused == shouldBeFocused) continue;
 
@@ -2824,7 +2781,7 @@ namespace DataManager
             if (index < 0 || index >= tubFrames.Count) return;
 
             TubFrame frame = tubFrames[index];
-            bool preserveAccumulatedSelection = HasAccumulatedEnterSelection();
+            bool preserveAccumulatedSelection = HasSelection();
             int previousFrameIndex = trackFrame.Value;
 
             if (syncFrameListSelection && !preserveAccumulatedSelection)
@@ -2860,7 +2817,7 @@ namespace DataManager
             int timelineItemIndex = index - currentTimelineStart;
             if (preserveAccumulatedSelection)
             {
-                ApplyEnterFrameSelectionToTimeline();
+                SyncTimelineSelectionFromModel();
                 InvalidateTimelineFrames(previousFrameIndex, index);
                 ScheduleFrameImagePrefetch(index);
                 return;
@@ -3580,7 +3537,7 @@ namespace DataManager
         private void AddLog(string message) => txtLog.AppendText(Environment.NewLine + message);
         private void lstFrames_SelectedIndexChanged(object sender, EventArgs e)
         {
-            ClearRangeForSingleFrameNavigation();
+            if (isRefreshingSelectionVisuals || isFrameListMouseDragging) return;
             if (lstFrames.SelectedIndex >= 0)
             {
                 ShowFrame(lstFrames.SelectedIndex, syncFrameListSelection: false);
@@ -3589,46 +3546,58 @@ namespace DataManager
 
         private void lvTimeline_SelectedIndexChanged(object sender, EventArgs e)
         {
-            if (isUpdatingTimelineSelection || isTimelineRangeDragging) return;
+            if (isUpdatingTimelineSelection || isTimelineRangeDragging || isRefreshingSelectionVisuals) return;
             if (lvTimeline.SelectedItems.Count > 0 && lvTimeline.SelectedItems[0].Tag is int index)
             {
-                ClearRangeForSingleFrameNavigation();
                 ShowFrame(index);
             }
         }
 
+        // 목록 드래그 = 공유 선택에 범위 누적, 단순 클릭 = 선택 해제 + 이동(트래시 목록과 동일한 클릭-vs-드래그).
         private void lstFrames_MouseDown(object? sender, MouseEventArgs e)
         {
             if (e.Button != MouseButtons.Left || tubFrames.Count == 0) return;
 
             isFrameListMouseDragging = true;
-            lastFrameListPreviewIndex = -1;
-            PreviewFrameListDragEnd(e.Location);
+            frameListDragStartIndex = lstFrames.IndexFromPoint(e.Location);
+            lastFrameListPreviewIndex = frameListDragStartIndex;
+            dragBaseSelection = new SortedSet<int>(selectedFrames);
+            if (frameListDragStartIndex >= 0) ShowDragPreviewFrame(frameListDragStartIndex);
         }
 
         private void lstFrames_MouseMove(object? sender, MouseEventArgs e)
         {
             if (!isFrameListMouseDragging || e.Button != MouseButtons.Left) return;
 
-            PreviewFrameListDragEnd(e.Location);
+            int index = lstFrames.IndexFromPoint(e.Location);
+            if (index < 0 || index >= tubFrames.Count || index == lastFrameListPreviewIndex) return;
+            lastFrameListPreviewIndex = index;
+
+            if (frameListDragStartIndex >= 0 && index != frameListDragStartIndex)
+            {
+                selectedFrames.Clear();
+                if (dragBaseSelection != null) selectedFrames.UnionWith(dragBaseSelection);
+                CommitRange(frameListDragStartIndex, index);
+                RefreshSelectionVisuals();
+            }
+            ShowDragPreviewFrame(index);
         }
 
         private void lstFrames_MouseUp(object? sender, MouseEventArgs e)
         {
             if (!isFrameListMouseDragging) return;
 
-            PreviewFrameListDragEnd(e.Location);
+            bool moved = lastFrameListPreviewIndex >= 0 && lastFrameListPreviewIndex != frameListDragStartIndex;
             isFrameListMouseDragging = false;
+            dragBaseSelection = null;
+
+            if (!moved && frameListDragStartIndex >= 0)
+            {
+                ClearSelection();
+                ShowFrame(frameListDragStartIndex);
+            }
+            frameListDragStartIndex = -1;
             lastFrameListPreviewIndex = -1;
-        }
-
-        private void PreviewFrameListDragEnd(Point location)
-        {
-            int index = lstFrames.IndexFromPoint(location);
-            if (index < 0 || index >= tubFrames.Count || index == lastFrameListPreviewIndex) return;
-
-            lastFrameListPreviewIndex = index;
-            ShowDragPreviewFrame(index);
         }
 
         private void ShowDragPreviewFrame(int index)
@@ -3935,38 +3904,35 @@ namespace DataManager
         // ==========================================
         // 6. 데이터 필터링 (범위 지정 + 조건 필터)
         // ==========================================
+        // 시작 지정: 앵커만 잡아둔다(끝 지정 시 한 범위로 누적).
         private void btnSetLeft_Click(object? sender, EventArgs e)
         {
             if (tubFrames.Count == 0) return;
-            rangeStart = trackFrame.Value;
-            rangeSelectionOrigin = RangeSelectionOrigin.ManualButton;
-            UpdateRangeLabel();
+            pendingRangeAnchor = trackFrame.Value;
+            UpdateSelectionLabel();
         }
 
+        // 끝 지정: 앵커~현재를 한 범위로 공유 선택에 누적(여러 번 하면 여러 범위).
         private void btnSetRight_Click(object? sender, EventArgs e)
         {
             if (tubFrames.Count == 0) return;
-            rangeEnd = trackFrame.Value;
-            rangeSelectionOrigin = RangeSelectionOrigin.ManualButton;
-            UpdateRangeLabel();
+            if (pendingRangeAnchor >= 0)
+            {
+                CommitRange(pendingRangeAnchor, trackFrame.Value);
+                pendingRangeAnchor = -1;
+            }
+            else
+            {
+                selectedFrames.Add(trackFrame.Value);
+            }
+            RefreshSelectionVisuals();
         }
 
-        private void UpdateRangeLabel()
-        {
-            string left = rangeStart >= 0 ? rangeStart.ToString() : "-";
-            string right = rangeEnd >= 0 ? rangeEnd.ToString() : "-";
-            lblRange.Text = $"범위: {left} ~ {right}";
-        }
-
-        // 지정된 범위를 [lo, hi]로 정규화한다. 범위가 전혀 지정되지 않았으면 전체 구간을 반환한다.
+        // 필터 통계용 구간. 선택이 없으면 전체, 있으면 선택의 [최소..최대].
         private (int lo, int hi) GetEffectiveRange()
         {
-            if (rangeStart < 0 && rangeEnd < 0) return (0, tubFrames.Count - 1);
-            int a = rangeStart < 0 ? rangeEnd : rangeStart;
-            int b = rangeEnd < 0 ? rangeStart : rangeEnd;
-            int lo = Math.Max(0, Math.Min(a, b));
-            int hi = Math.Min(tubFrames.Count - 1, Math.Max(a, b));
-            return (lo, hi);
+            if (selectedFrames.Count == 0) return (0, tubFrames.Count - 1);
+            return (selectedFrames.Min, selectedFrames.Max);
         }
 
         private async void btnFilter_Click(object? sender, EventArgs e)
@@ -3986,7 +3952,7 @@ namespace DataManager
             HashSet<int> abnormal = chkAbnormalAngle.Checked ? DetectAbnormalAngleFrames(lo, hi) : new HashSet<int>();
 
             List<(TubFrame, string)> targets = new List<(TubFrame, string)>();
-            for (int i = lo; i <= hi; i++)
+            foreach (int i in GetTargetIndices())
             {
                 TubFrame frame = tubFrames[i];
                 string? reason = null;
@@ -4000,12 +3966,12 @@ namespace DataManager
             try { moved = DeleteFramesToTrash(targets); }
             catch (Exception ex) { MessageBox.Show($"필터 적용 중 오류: {ex.Message}", "필터 오류", MessageBoxButtons.OK, MessageBoxIcon.Error); AddLog($"필터 오류: {ex.Message}"); return; }
 
-            AddLog($"필터 적용: 범위 {lo}~{hi}에서 {moved}개 프레임을 catalog에서 제거하고 휴지통으로 이동했습니다.");
             if (moved == 0)
             {
                 MessageBox.Show("조건에 해당하는 프레임이 없습니다.", "필터 적용", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
+            AddLog($"필터로 {moved}개 프레임을 catalog에서 제거하고 휴지통으로 이동했습니다.");
             await LoadTubAsync(tubPath, quiet: true);
         }
 
@@ -4076,30 +4042,20 @@ namespace DataManager
                 return;
             }
 
+            if (selectedFrames.Count == 0)
+            {
+                MessageBox.Show("삭제할 프레임을 선택하세요.\n([시작 지정]/[끝 지정] 또는 타임라인·목록 드래그로 선택)", "삭제", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
             List<(TubFrame, string)> targets = new List<(TubFrame, string)>();
-            bool usedRange = rangeStart >= 0 || rangeEnd >= 0;
-            if (usedRange)
-            {
-                (int lo, int hi) = GetEffectiveRange();
-                for (int i = lo; i <= hi; i++) targets.Add((tubFrames[i], "수동 삭제"));
-            }
-            else
-            {
-                List<int> indices = new List<int>();
-                foreach (int idx in lstFrames.SelectedIndices) indices.Add(idx);
-                if (indices.Count == 0)
-                {
-                    MessageBox.Show("삭제할 프레임을 목록에서 선택하거나 [시작 지정]/[끝 지정]으로 범위를 정하세요.", "삭제", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                    return;
-                }
-                foreach (int idx in indices) targets.Add((tubFrames[idx], "수동 삭제"));
-            }
+            foreach (int i in selectedFrames)
+                if (i >= 0 && i < tubFrames.Count) targets.Add((tubFrames[i], "수동 삭제"));
 
             int moved;
             try { moved = DeleteFramesToTrash(targets); }
             catch (Exception ex) { MessageBox.Show($"삭제 중 오류: {ex.Message}", "삭제 오류", MessageBoxButtons.OK, MessageBoxIcon.Error); AddLog($"삭제 오류: {ex.Message}"); return; }
 
-            if (usedRange) ClearRangeSelection();
             AddLog($"{moved}개 프레임을 catalog에서 제거하고 휴지통으로 이동했습니다(복원 가능).");
             await LoadTubAsync(tubPath, quiet: true);
         }
