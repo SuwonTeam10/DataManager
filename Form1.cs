@@ -726,12 +726,7 @@ namespace DataManager
             int trashHeight = Math.Max(178, tabCleaner.ClientSize.Height - (margin * 2));
             groupBoxTrash.Height = trashHeight;
 
-            int bottomRowY = trashHeight - 31;
-            lblTrashProgress.Top = bottomRowY + 3;
-            progressBarTrash.Top = bottomRowY + 3;
-            lblTrashPercent.Top = bottomRowY + 3;
-            lstTrash.Height = Math.Max(90, bottomRowY - lstTrash.Top - 5);
-
+            lstTrash.Height = Math.Max(90, trashHeight - lstTrash.Top - margin);
         }
 
         // ==========================================
@@ -2218,7 +2213,6 @@ namespace DataManager
                 if (tubFrames.Count > 0) ShowFrame(0);
                 LoadTrashStore();
                 RebuildTrashList();
-                UpdateTrashGauge();
                 RenderTubGraph();
                 foreach (string error in result.Errors) AddLog(error);
                 AddLog($"Load Tub 완료: {tubFrames.Count}개 프레임 ({(isOldRecordTub ? "구버전 record JSON" : "catalog")} 형식)");
@@ -4173,7 +4167,6 @@ namespace DataManager
                 if (File.Exists(TrashJsonlPath)) File.Delete(TrashJsonlPath);
                 trashStore.Clear();
                 RebuildTrashList();
-                UpdateTrashGauge();
 
                 AddLog($"휴지통 비우기(완전 삭제) 완료: {n}건 영구 삭제.");
                 MessageBox.Show($"휴지통을 비웠습니다(완전 삭제).\n\n삭제된 항목: {n}건", "휴지통 비우기 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -4408,16 +4401,6 @@ namespace DataManager
             if (File.Exists(m)) File.Delete(m);
         }
 
-        // 휴지통 비율 게이지 갱신. deleted = 휴지통 보관 수, total = 활성 + 보관.
-        private void UpdateTrashGauge()
-        {
-            int deleted = trashStore.Count;
-            int total = tubFrames.Count + deleted;
-            int pct = total == 0 ? 0 : (int)Math.Round(deleted * 100.0 / total);
-            pct = Math.Clamp(pct, progressBarTrash.Minimum, progressBarTrash.Maximum);
-            progressBarTrash.Value = pct;
-            lblTrashPercent.Text = $"{pct}%";
-        }
 
         // ==========================================
         // 내부 클래스
@@ -5058,7 +5041,6 @@ namespace DataManager
             ResetTubView();
             if (tubFrames.Count > 0) ShowFrame(0);
             RebuildTrashList();
-            UpdateTrashGauge();
             RenderTubGraph();
 
             AddLog($"AI 오차 프레임 {moved}개를 catalog에서 제거하고 휴지통으로 이동했습니다.");

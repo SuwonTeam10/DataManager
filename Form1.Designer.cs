@@ -50,9 +50,6 @@
             tabMain = new TabControl();
             tabCleaner = new TabPage();
             groupBoxTrash = new GroupBox();
-            lblTrashPercent = new Label();
-            lblTrashProgress = new Label();
-            progressBarTrash = new ProgressBar();
             lblTrastList = new Label();
             btnEmptyTrash = new Button();
             btnRestore = new Button();
@@ -403,9 +400,6 @@
             // groupBoxTrash
             // 
             groupBoxTrash.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Right;
-            groupBoxTrash.Controls.Add(lblTrashPercent);
-            groupBoxTrash.Controls.Add(lblTrashProgress);
-            groupBoxTrash.Controls.Add(progressBarTrash);
             groupBoxTrash.Controls.Add(lblTrastList);
             groupBoxTrash.Controls.Add(btnEmptyTrash);
             groupBoxTrash.Controls.Add(btnRestore);
@@ -421,36 +415,7 @@
             groupBoxTrash.TabIndex = 20;
             groupBoxTrash.TabStop = false;
             groupBoxTrash.Text = "휴지통";
-            // 
-            // lblTrashPercent
-            // 
-            lblTrashPercent.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
-            lblTrashPercent.AutoSize = true;
-            lblTrashPercent.Location = new Point(441, 172);
-            lblTrashPercent.Name = "lblTrashPercent";
-            lblTrashPercent.Size = new Size(53, 28);
-            lblTrashPercent.TabIndex = 22;
-            lblTrashPercent.Text = "0%";
-            // 
-            // lblTrashProgress
-            // 
-            lblTrashProgress.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
-            lblTrashProgress.AutoSize = true;
-            lblTrashProgress.Location = new Point(27, 172);
-            lblTrashProgress.Name = "lblTrashProgress";
-            lblTrashProgress.Size = new Size(141, 28);
-            lblTrashProgress.TabIndex = 21;
-            lblTrashProgress.Text = "삭제 진행률:";
-            // 
-            // progressBarTrash
-            // 
-            progressBarTrash.Anchor = AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
-            progressBarTrash.Location = new Point(176, 172);
-            progressBarTrash.Name = "progressBarTrash";
-            progressBarTrash.Size = new Size(259, 30);
-            progressBarTrash.Style = ProgressBarStyle.Continuous;
-            progressBarTrash.TabIndex = 20;
-            // 
+            //
             // lblTrastList
             // 
             lblTrastList.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
@@ -1524,9 +1489,6 @@
         private Label lblSpeed;
         private Label lblCurrentFrame2;
         private Label lblCurrentFrame;
-        private Label lblTrashProgress;
-        private ProgressBar progressBarTrash;
-        private Label lblTrashPercent;
         private GroupBox grpTestImage;
         private PictureBox picTestImage;
         private GroupBox grpTrainSetting;
