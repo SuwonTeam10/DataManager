@@ -2741,6 +2741,7 @@ namespace DataManager
                 UpdateSelectionLabel();
             }
             finally { isRefreshingSelectionVisuals = false; }
+            RenderTubGraph();
         }
 
         // 타임라인 항목 선택/포커스를 공유 선택 기준으로 맞춘다(목록 갱신 없이 타임라인만).
@@ -3355,6 +3356,7 @@ namespace DataManager
             graphPlotBounds = plot;
             graphVisibleFrames = visibleFrames;
             DrawGraphFrame(graphics, plot);
+            DrawSelectionShading(graphics, plot, visibleFrames.Count);
 
             // 프레임 수가 많아도 그래프 폭만큼만 샘플링해서 UI 렉을 줄인다.
             if (chkGraphAngle.Checked)
@@ -3381,6 +3383,35 @@ namespace DataManager
             Image? oldImage = picDataGraph.Image;
             picDataGraph.Image = bitmap;
             oldImage?.Dispose();
+        }
+
+        // 공유 선택 구간을 그래프에 반투명 음영으로 표시한다(연속 구간을 하나의 띠로 합침).
+        private void DrawSelectionShading(Graphics graphics, Rectangle plot, int count)
+        {
+            if (selectedFrames.Count == 0 || count <= 0) return;
+            using SolidBrush brush = new SolidBrush(Color.FromArgb(48, Color.DodgerBlue));
+
+            int runStart = int.MinValue, prev = int.MinValue;
+            foreach (int idx in selectedFrames)
+            {
+                if (idx < 0 || idx >= count) continue;
+                if (idx != prev + 1)
+                {
+                    if (runStart >= 0) FillSelectionBand(graphics, brush, plot, count, runStart, prev);
+                    runStart = idx;
+                }
+                prev = idx;
+            }
+            if (runStart >= 0) FillSelectionBand(graphics, brush, plot, count, runStart, prev);
+        }
+
+        private static void FillSelectionBand(Graphics graphics, Brush brush, Rectangle plot, int count, int a, int b)
+        {
+            float xa = count == 1 ? plot.Left : plot.Left + (float)(a * plot.Width / (double)(count - 1));
+            float xb = count == 1 ? plot.Left : plot.Left + (float)(b * plot.Width / (double)(count - 1));
+            float left = Math.Min(xa, xb);
+            float width = Math.Max(2f, Math.Abs(xb - xa));
+            graphics.FillRectangle(brush, left, plot.Top, width, plot.Height);
         }
 
         private static void DrawGraphFrame(Graphics graphics, Rectangle plot)
