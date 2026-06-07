@@ -9,6 +9,7 @@ using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using static DataManager.ICE;
@@ -48,6 +49,7 @@ namespace DataManager
         // 디스크 휴지통 보관 목록(deleted/trash.jsonl 미러). 삭제된 레코드는 tubFrames에서 빠지고 여기에만 존재한다.
         private readonly List<TrashEntry> trashStore = new();
         private readonly ImageList timelineImages = new();
+        private readonly TimelineThumbnailCache timelineThumbnailCache;
         private const int TimelineMinimumVisibleCount = 20;
         private const int TimelineMaximumVisibleCount = 60;
         private const int TimelineThumbWidth = 140;
@@ -68,10 +70,16 @@ namespace DataManager
         private int timelineDragCurrentIndex = -1;
         private int timelineDragEdgeDirection;
         private readonly System.Windows.Forms.Timer timelineDragTimer = new();
+        private readonly System.Windows.Forms.Timer keyboardFrameMoveTimer = new();
         private bool isFrameListMouseDragging;
         private int lastFrameListPreviewIndex = -1;
         private int playbackFrameStep = 1;
+        private const int FrameImagePrefetchCount = 8;
+        private const int PlaybackFrameImagePrefetchCount = 16;
+        private CancellationTokenSource? frameImagePrefetchCts;
+        private readonly object frameImagePrefetchLock = new();
         private bool isEnterSelectingFrames;
+        private int keyboardFrameMoveDirection;
         private readonly HashSet<int> enterSelectedFrameIndices = new();
         private const int DefaultNavigatorHeight = 827;     //
         private const int MinNavigatorHeight = 360;
@@ -168,8 +176,12 @@ namespace DataManager
             playTimer.Interval = 100; // 0.1초 간격
             playTimer.Tick += PlayTimer_Tick;
 
+            keyboardFrameMoveTimer.Interval = 70;
+            keyboardFrameMoveTimer.Tick += KeyboardFrameMoveTimer_Tick;
+
             // 표시용 이미지 캐시 초기화 (최근 64프레임 유지)
             frameImageCache = new FrameImageCache(64, LoadImage);
+            timelineThumbnailCache = new TimelineThumbnailCache(240, CreateTimelineThumbnail);
 
             // 상단 메뉴바 동적 생성
             CreateTopMenu();
@@ -233,6 +245,8 @@ namespace DataManager
             lvTimeline.HideSelection = false;
             lvTimeline.MultiSelect = true;
             lvTimeline.ShowItemToolTips = true;
+            lvTimeline.OwnerDraw = true;
+            lvTimeline.DrawItem += lvTimeline_DrawItem;
             lvTimeline.HandleCreated += (_, _) => ApplyTimelineIconSpacing();
             lvTimeline.Resize += (_, _) =>
             {
@@ -286,6 +300,11 @@ namespace DataManager
             if (e.KeyCode == Keys.Enter)
             {
                 isEnterSelectingFrames = false;
+                StopKeyboardFrameMoveTimer();
+            }
+            else if (e.KeyCode is Keys.Left or Keys.Right or Keys.A or Keys.D)
+            {
+                UpdateKeyboardFrameMoveTimerFromHeldKeys();
             }
         }
 
@@ -299,23 +318,13 @@ namespace DataManager
 
             if (keyCode is Keys.Left or Keys.A)
             {
-                int index = PrevActiveIndex(trackFrame.Value);
-                if (index >= 0)
-                {
-                    ShowFrame(index);
-                    AddCurrentFrameToSelectionIfEnterHeld();
-                }
+                HandleKeyboardFrameMove(-1);
                 return true;
             }
 
             if (keyCode is Keys.Right or Keys.D)
             {
-                int index = NextActiveIndex(trackFrame.Value);
-                if (index >= 0)
-                {
-                    ShowFrame(index);
-                    AddCurrentFrameToSelectionIfEnterHeld();
-                }
+                HandleKeyboardFrameMove(1);
                 return true;
             }
 
@@ -335,6 +344,7 @@ namespace DataManager
             {
                 isEnterSelectingFrames = true;
                 AddCurrentFrameToSelection();
+                UpdateKeyboardFrameMoveTimerFromHeldKeys();
                 return true;
             }
 
@@ -357,6 +367,84 @@ namespace DataManager
             }
 
             return base.ProcessCmdKey(ref msg, keyData);
+        }
+
+        private void HandleKeyboardFrameMove(int direction)
+        {
+            if (keyboardFrameMoveTimer.Enabled && keyboardFrameMoveDirection == direction) return;
+
+            MoveFrameByKeyboard(direction);
+
+            if (IsEnterKeyPhysicallyDown())
+            {
+                keyboardFrameMoveDirection = direction;
+                keyboardFrameMoveTimer.Start();
+            }
+        }
+
+        private void KeyboardFrameMoveTimer_Tick(object? sender, EventArgs e)
+        {
+            if (!IsEnterKeyPhysicallyDown())
+            {
+                StopKeyboardFrameMoveTimer();
+                return;
+            }
+
+            int direction = GetHeldKeyboardFrameMoveDirection();
+            if (direction == 0)
+            {
+                StopKeyboardFrameMoveTimer();
+                return;
+            }
+
+            keyboardFrameMoveDirection = direction;
+            MoveFrameByKeyboard(direction);
+        }
+
+        private void MoveFrameByKeyboard(int direction)
+        {
+            int index = direction < 0
+                ? PrevActiveIndex(trackFrame.Value)
+                : NextActiveIndex(trackFrame.Value);
+
+            if (index < 0) return;
+
+            ShowFrame(index);
+            AddCurrentFrameToSelectionIfEnterHeld();
+        }
+
+        private void UpdateKeyboardFrameMoveTimerFromHeldKeys()
+        {
+            if (!IsEnterKeyPhysicallyDown())
+            {
+                StopKeyboardFrameMoveTimer();
+                return;
+            }
+
+            int direction = GetHeldKeyboardFrameMoveDirection();
+            if (direction == 0)
+            {
+                StopKeyboardFrameMoveTimer();
+                return;
+            }
+
+            keyboardFrameMoveDirection = direction;
+            keyboardFrameMoveTimer.Start();
+        }
+
+        private void StopKeyboardFrameMoveTimer()
+        {
+            keyboardFrameMoveTimer.Stop();
+            keyboardFrameMoveDirection = 0;
+        }
+
+        private int GetHeldKeyboardFrameMoveDirection()
+        {
+            if (keyboardFrameMoveDirection < 0 && (IsKeyPhysicallyDown(Keys.Left) || IsKeyPhysicallyDown(Keys.A))) return -1;
+            if (keyboardFrameMoveDirection > 0 && (IsKeyPhysicallyDown(Keys.Right) || IsKeyPhysicallyDown(Keys.D))) return 1;
+            if (IsKeyPhysicallyDown(Keys.Left) || IsKeyPhysicallyDown(Keys.A)) return -1;
+            if (IsKeyPhysicallyDown(Keys.Right) || IsKeyPhysicallyDown(Keys.D)) return 1;
+            return 0;
         }
 
         private static bool HasFocusedTextInput(Control parent)
@@ -800,6 +888,7 @@ namespace DataManager
             else if (tabMain.SelectedTab == tabAiCompile)
             {
                 ScaleChildrenByParent(tabAiCompile);
+                if (panelTrainingLoss.Visible) LayoutTrainingLossOverlay();
             }
         }
 
@@ -1319,11 +1408,12 @@ namespace DataManager
             panelTrainingLoss.Dock = DockStyle.None;
             panelTrainingLoss.BackColor = Color.White;
             panelTrainingLoss.Padding = new Padding(6, 4, 6, 6);
-            panelTrainingLoss.Visible = false;
+            panelTrainingLoss.Visible = true;
 
             lblTrainingLossSummary.Dock = DockStyle.None;
             lblTrainingLossSummary.TextAlign = ContentAlignment.MiddleLeft;
             lblTrainingLossSummary.Font = new Font("나눔고딕", 9F, FontStyle.Bold);
+            lblTrainingLossSummary.Text = "학습 완료 후 loss 그래프가 여기에 표시됩니다.";
 
             btnCloseTrainingLoss.Text = "X";
             btnCloseTrainingLoss.Size = new Size(28, 24);
@@ -1363,41 +1453,55 @@ namespace DataManager
                 LayoutTrainingLossOverlay();
                 if (panelTrainingLoss.Visible) DrawTrainingLossGraph();
             };
-            groupTimeline.Resize += (_, _) =>
+            tabAiCompile.Resize += (_, _) =>
             {
                 if (!panelTrainingLoss.Visible) return;
                 LayoutTrainingLossOverlay();
                 DrawTrainingLossGraph();
             };
-            Controls.Add(panelTrainingLoss);
+            tabAiCompile.Controls.Add(panelTrainingLoss);
             LayoutTrainingLossOverlay();
+            DrawTrainingLossGraph();
         }
 
         private void LayoutTrainingLossOverlay()
         {
-            int panelMargin = 6;
-            int titleHeight = Math.Max(22, groupTimeline.Padding.Top + 18);
+            int margin = 10;
+            int controlsRight = Math.Max(btnRunAICompile.Right, Math.Max(btnDeleteHighError.Right, lstHighErrorFrames.Right));
+            int controlsBottom = Math.Max(btnRunAICompile.Bottom, Math.Max(btnDeleteHighError.Bottom, lstHighErrorFrames.Bottom));
+            int left = controlsRight + margin;
+            int top = margin;
+            int width = tabAiCompile.ClientSize.Width - left - margin;
+
+            if (width < 360)
+            {
+                left = margin;
+                top = controlsBottom + margin;
+                width = tabAiCompile.ClientSize.Width - margin * 2;
+            }
+
+            int height = tabAiCompile.ClientSize.Height - top - margin;
 
             panelTrainingLoss.SetBounds(
-                groupTimeline.Left + panelMargin,
-                groupTimeline.Top + titleHeight,
-                Math.Max(1, groupTimeline.Width - panelMargin * 2),
-                Math.Max(1, groupTimeline.Height - titleHeight - panelMargin));
+                Math.Max(margin, left),
+                Math.Max(margin, top),
+                Math.Max(260, width),
+                Math.Max(120, height));
 
-            int left = panelTrainingLoss.Padding.Left;
-            int top = panelTrainingLoss.Padding.Top;
-            int width = Math.Max(1, panelTrainingLoss.ClientSize.Width - panelTrainingLoss.Padding.Horizontal);
-            int summaryWidth = Math.Max(1, width - btnCloseTrainingLoss.Width - 8);
+            int innerLeft = panelTrainingLoss.Padding.Left;
+            int innerTop = panelTrainingLoss.Padding.Top;
+            int innerWidth = Math.Max(1, panelTrainingLoss.ClientSize.Width - panelTrainingLoss.Padding.Horizontal);
+            int summaryWidth = Math.Max(1, innerWidth - btnCloseTrainingLoss.Width - 8);
 
-            lblTrainingLossSummary.SetBounds(left, top, summaryWidth, 28);
+            lblTrainingLossSummary.SetBounds(innerLeft, innerTop, summaryWidth, 30);
             btnCloseTrainingLoss.Location = new Point(
                 Math.Max(6, panelTrainingLoss.ClientSize.Width - btnCloseTrainingLoss.Width - 8),
                 5);
             btnCloseTrainingLoss.BringToFront();
 
             int graphTop = lblTrainingLossSummary.Bottom + 4;
-            int graphHeight = Math.Max(30, panelTrainingLoss.ClientSize.Height - graphTop - panelTrainingLoss.Padding.Bottom);
-            picTrainingLossGraph.SetBounds(left, graphTop, width, graphHeight);
+            int graphHeight = Math.Max(70, panelTrainingLoss.ClientSize.Height - graphTop - panelTrainingLoss.Padding.Bottom);
+            picTrainingLossGraph.SetBounds(innerLeft, graphTop, innerWidth, graphHeight);
             panelTrainingLoss.PerformLayout();
             picTrainingLossGraph.Update();
         }
@@ -1410,10 +1514,12 @@ namespace DataManager
 
         private void HideTrainingLossGraph()
         {
-            panelTrainingLoss.Visible = false;
+            lblTrainingLossSummary.Text = "학습 완료 후 loss 그래프가 여기에 표시됩니다.";
             lblTrainingLossHover.Visible = false;
-            lvTimeline.Visible = true;
-            ArrangeTimelineAndTabs();
+            trainingLossPlotBounds = Rectangle.Empty;
+            panelTrainingLoss.Visible = true;
+            LayoutTrainingLossOverlay();
+            DrawTrainingLossGraph();
         }
 
         private void CaptureTrainingLoss(string logText)
@@ -1452,10 +1558,10 @@ namespace DataManager
                     $"전체 학습 점수 {score}점 ({GetTrainingScoreGrade(score)})  |  프레임 {tubFrames.Count:N0}개  |  최종 loss {latest.Loss:0.#####}  |  loss가 낮아질수록 예측 오차가 줄어듭니다.";
             }
 
-            lvTimeline.Visible = false;
+            tabMain.SelectedTab = tabAiCompile;
             panelTrainingLoss.Visible = true;
             panelTrainingLoss.BringToFront();
-            ArrangeTimelineAndTabs();
+            ApplySelectedTabLayout();
             RedrawTrainingLossGraphAfterLayout();
         }
 
@@ -2021,7 +2127,9 @@ namespace DataManager
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
             if (_executor != null) _executor.Stop();
+            CancelFrameImagePrefetch();
             frameImageCache.Clear();
+            timelineThumbnailCache.Clear();
             ClearScaledButtonImages();
             base.OnFormClosing(e);
         }
@@ -2089,7 +2197,9 @@ namespace DataManager
             lstFrames.Items.Clear();
             lvTimeline.Items.Clear();
             picFrame.Image = null;
+            CancelFrameImagePrefetch();
             frameImageCache.Clear();
+            timelineThumbnailCache.Clear();
             rangeStart = -1;
             rangeEnd = -1;
             rangeSelectionOrigin = RangeSelectionOrigin.None;
@@ -2296,7 +2406,7 @@ namespace DataManager
                     {
                         TubFrame frame = tubFrames[i];
                         string imageKey = i.ToString();
-                        timelineImages.Images.Add(imageKey, CreateTimelineThumbnail(frame.ImagePath, currentTimelineThumbSize));
+                        timelineImages.Images.Add(imageKey, timelineThumbnailCache.GetClone(frame.ImagePath, currentTimelineThumbSize));
                         lvTimeline.Items.Add(new ListViewItem("", imageKey) { Tag = i, ToolTipText = frame.ToString() });
                     }
                 }
@@ -2327,6 +2437,24 @@ namespace DataManager
             lvTimeline.Update();
         }
 
+        private void InvalidateTimelineFrame(int frameIndex)
+        {
+            if (!lvTimeline.IsHandleCreated || currentTimelineStart < 0) return;
+
+            int visibleIndex = frameIndex - currentTimelineStart;
+            if (visibleIndex < 0 || visibleIndex >= lvTimeline.Items.Count) return;
+
+            lvTimeline.Invalidate(lvTimeline.Items[visibleIndex].Bounds);
+        }
+
+        private void InvalidateTimelineFrames(params int[] frameIndices)
+        {
+            foreach (int frameIndex in frameIndices)
+            {
+                InvalidateTimelineFrame(frameIndex);
+            }
+        }
+
         private int GetTimelineVisibleCount()
         {
             int availableWidth = Math.Max(0, lvTimeline.ClientSize.Width);
@@ -2341,6 +2469,38 @@ namespace DataManager
             int centerOffset = Math.Max(0, (visibleCount - 1) / 2);
             int maxStart = Math.Max(0, tubFrames.Count - visibleCount);
             return Math.Clamp(frameIndex - centerOffset, 0, maxStart);
+        }
+
+        private void lvTimeline_DrawItem(object? sender, DrawListViewItemEventArgs e)
+        {
+            e.Graphics.FillRectangle(SystemBrushes.Window, e.Bounds);
+            if (e.Item.ImageKey is not string imageKey || !timelineImages.Images.ContainsKey(imageKey)) return;
+
+            Rectangle imageBounds = new Rectangle(e.Bounds.Location, currentTimelineThumbSize);
+            imageBounds.Intersect(lvTimeline.ClientRectangle);
+            if (imageBounds.Width <= 0 || imageBounds.Height <= 0) return;
+
+            Image? timelineImage = timelineImages.Images[imageKey];
+            if (timelineImage == null) return;
+            e.Graphics.DrawImage(timelineImage, imageBounds);
+
+            bool isSelectedFrame = e.Item.Tag is int selectedFrameIndex
+                && enterSelectedFrameIndices.Contains(selectedFrameIndex);
+            if (e.Item.Selected || isSelectedFrame)
+            {
+                using SolidBrush selectedBrush = new SolidBrush(Color.FromArgb(80, Color.DodgerBlue));
+                e.Graphics.FillRectangle(selectedBrush, imageBounds);
+            }
+
+            if (e.Item.Tag is int frameIndex && frameIndex == trackFrame.Value)
+            {
+                Rectangle borderBounds = imageBounds;
+                borderBounds.Width -= 1;
+                borderBounds.Height -= 1;
+
+                using Pen currentFramePen = new Pen(Color.Orange, 3);
+                e.Graphics.DrawRectangle(currentFramePen, borderBounds);
+            }
         }
 
         private void ReloadTimelineForCurrentFrame()
@@ -2587,7 +2747,12 @@ namespace DataManager
 
         private bool IsEnterKeyPhysicallyDown()
         {
-            return (GetAsyncKeyState(Keys.Enter) & unchecked((short)0x8000)) != 0;
+            return IsKeyPhysicallyDown(Keys.Enter);
+        }
+
+        private static bool IsKeyPhysicallyDown(Keys key)
+        {
+            return (GetAsyncKeyState(key) & unchecked((short)0x8000)) != 0;
         }
 
         private void AddCurrentFrameToSelectionIfEnterHeld()
@@ -2639,8 +2804,13 @@ namespace DataManager
                 {
                     if (item.Tag is not int frameIndex) continue;
 
-                    item.Selected = enterSelectedFrameIndices.Contains(frameIndex);
-                    item.Focused = frameIndex == trackFrame.Value;
+                    bool shouldBeSelected = enterSelectedFrameIndices.Contains(frameIndex);
+                    bool shouldBeFocused = frameIndex == trackFrame.Value;
+                    if (item.Selected == shouldBeSelected && item.Focused == shouldBeFocused) continue;
+
+                    item.Selected = shouldBeSelected;
+                    item.Focused = shouldBeFocused;
+                    lvTimeline.Invalidate(item.Bounds);
                 }
 
                 int visibleIndex = trackFrame.Value - currentTimelineStart;
@@ -2653,8 +2823,6 @@ namespace DataManager
             {
                 isUpdatingTimelineSelection = false;
             }
-
-            RefreshTimelineNow();
         }
 
         private void ShowFrame(int index, bool syncFrameListSelection = true, bool syncTimelineSelection = true, bool updateTimelineWindow = true)
@@ -2663,6 +2831,7 @@ namespace DataManager
 
             TubFrame frame = tubFrames[index];
             bool preserveAccumulatedSelection = HasAccumulatedEnterSelection();
+            int previousFrameIndex = trackFrame.Value;
 
             if (syncFrameListSelection && !preserveAccumulatedSelection)
             {
@@ -2698,18 +2867,131 @@ namespace DataManager
             if (preserveAccumulatedSelection)
             {
                 ApplyEnterFrameSelectionToTimeline();
+                InvalidateTimelineFrames(previousFrameIndex, index);
+                ScheduleFrameImagePrefetch(index);
                 return;
             }
 
             if (syncTimelineSelection && timelineItemIndex >= 0 && timelineItemIndex < lvTimeline.Items.Count)
             {
                 isUpdatingTimelineSelection = true;
-                foreach (ListViewItem item in lvTimeline.Items) item.Selected = false;
-                lvTimeline.Items[timelineItemIndex].Selected = true;
-                lvTimeline.Items[timelineItemIndex].Focused = true;
-                lvTimeline.Items[timelineItemIndex].EnsureVisible();
-                isUpdatingTimelineSelection = false;
-                RefreshTimelineNow();
+                try
+                {
+                    ListViewItem selectedItem = lvTimeline.Items[timelineItemIndex];
+                    foreach (ListViewItem item in lvTimeline.Items)
+                    {
+                        bool shouldBeSelected = item == selectedItem;
+                        bool shouldBeFocused = item == selectedItem;
+                        if (item.Selected == shouldBeSelected && item.Focused == shouldBeFocused) continue;
+
+                        item.Selected = shouldBeSelected;
+                        item.Focused = shouldBeFocused;
+                        lvTimeline.Invalidate(item.Bounds);
+                    }
+                    selectedItem.EnsureVisible();
+                }
+                finally
+                {
+                    isUpdatingTimelineSelection = false;
+                }
+            }
+
+            InvalidateTimelineFrames(previousFrameIndex, index);
+            ScheduleFrameImagePrefetch(index);
+        }
+
+        private void ScheduleFrameImagePrefetch(int frameIndex)
+        {
+            if (tubFrames.Count == 0) return;
+
+            int imagePrefetchCount = playTimer.Enabled ? PlaybackFrameImagePrefetchCount : FrameImagePrefetchCount;
+            int thumbnailPrefetchCount = Math.Max(currentTimelineVisibleCount, TimelineMinimumVisibleCount)
+                + (playTimer.Enabled ? TimelineMaximumVisibleCount : TimelineMinimumVisibleCount);
+            List<string> imagePaths = GetNextFrameImagePaths(frameIndex, imagePrefetchCount);
+            List<string> thumbnailPaths = GetNextFrameImagePaths(frameIndex, thumbnailPrefetchCount);
+            if (imagePaths.Count == 0 && thumbnailPaths.Count == 0) return;
+
+            CancellationTokenSource cts = new();
+            Size thumbnailSize = currentTimelineThumbSize;
+            lock (frameImagePrefetchLock)
+            {
+                frameImagePrefetchCts?.Cancel();
+                frameImagePrefetchCts?.Dispose();
+                frameImagePrefetchCts = cts;
+            }
+
+            _ = Task.Run(() =>
+            {
+                PrefetchFrameImages(imagePaths, cts.Token);
+                PrefetchTimelineThumbnails(thumbnailPaths, thumbnailSize, cts.Token);
+            }, cts.Token);
+        }
+
+        private List<string> GetNextFrameImagePaths(int frameIndex, int count)
+        {
+            List<string> imagePaths = new();
+            int current = frameIndex;
+
+            for (int i = 0; i < count; i++)
+            {
+                int next = NextActiveIndex(current);
+                if (next < 0) break;
+
+                string imagePath = tubFrames[next].ImagePath;
+                if (!string.IsNullOrWhiteSpace(imagePath) && File.Exists(imagePath))
+                {
+                    imagePaths.Add(imagePath);
+                }
+
+                current = next;
+            }
+
+            return imagePaths;
+        }
+
+        private void PrefetchFrameImages(IEnumerable<string> imagePaths, CancellationToken cancellationToken)
+        {
+            foreach (string imagePath in imagePaths)
+            {
+                if (cancellationToken.IsCancellationRequested) return;
+                if (frameImageCache.Contains(imagePath)) continue;
+
+                try
+                {
+                    frameImageCache.Preload(imagePath, cancellationToken);
+                }
+                catch
+                {
+                    // 실제 표시 시점의 LoadImage가 누락 이미지를 처리하므로, 미리 읽기 실패는 조용히 건너뛴다.
+                }
+            }
+        }
+
+        private void PrefetchTimelineThumbnails(IEnumerable<string> imagePaths, Size thumbnailSize, CancellationToken cancellationToken)
+        {
+            foreach (string imagePath in imagePaths)
+            {
+                if (cancellationToken.IsCancellationRequested) return;
+                if (timelineThumbnailCache.Contains(imagePath, thumbnailSize)) continue;
+
+                try
+                {
+                    timelineThumbnailCache.Preload(imagePath, thumbnailSize, cancellationToken);
+                }
+                catch
+                {
+                    // 타임라인 표시 시점에 누락 썸네일을 다시 처리하므로, 미리 읽기 실패는 조용히 건너뛴다.
+                }
+            }
+        }
+
+        private void CancelFrameImagePrefetch()
+        {
+            lock (frameImagePrefetchLock)
+            {
+                frameImagePrefetchCts?.Cancel();
+                frameImagePrefetchCts?.Dispose();
+                frameImagePrefetchCts = null;
             }
         }
 
@@ -2963,6 +3245,7 @@ namespace DataManager
             {
                 currentTimelineThumbSize = newSize;
                 timelineImages.Images.Clear();
+                timelineThumbnailCache.Clear();
                 timelineImages.ImageSize = newSize;
                 currentTimelineStart = -1;
                 currentTimelineVisibleCount = -1;
@@ -3117,7 +3400,7 @@ namespace DataManager
                 return;
             }
 
-            Rectangle plot = new Rectangle(64, 24, Math.Max(10, bitmap.Width - 128), Math.Max(10, bitmap.Height - 72));
+            Rectangle plot = new Rectangle(54, 18, Math.Max(10, bitmap.Width - 108), Math.Max(10, bitmap.Height - 56));
             graphPlotBounds = plot;
             graphVisibleFrames = visibleFrames;
             DrawGraphFrame(graphics, plot);
@@ -4193,11 +4476,146 @@ namespace DataManager
             }
         }
 
+        // 타임라인 썸네일 전용 LRU 캐시. ImageList에는 복사본을 넘겨 표시 중 이미지와 캐시 수명을 분리한다.
+        private sealed class TimelineThumbnailCache
+        {
+            private readonly int capacity;
+            private readonly Func<string, Size, Image> loader;
+            private readonly object sync = new();
+            private readonly Dictionary<string, Image> map = new(StringComparer.OrdinalIgnoreCase);
+            private readonly LinkedList<string> order = new(); // 앞쪽이 최근 사용
+
+            public TimelineThumbnailCache(int capacity, Func<string, Size, Image> loader)
+            {
+                this.capacity = Math.Max(1, capacity);
+                this.loader = loader;
+            }
+
+            public Image GetClone(string imagePath, Size thumbnailSize)
+            {
+                string key = MakeKey(imagePath, thumbnailSize);
+                lock (sync)
+                {
+                    if (map.TryGetValue(key, out Image? cached))
+                    {
+                        order.Remove(key);
+                        order.AddFirst(key);
+                        return (Image)cached.Clone();
+                    }
+                }
+
+                Image image = loader(imagePath, thumbnailSize);
+                List<Image> evictedImages = new();
+
+                lock (sync)
+                {
+                    if (map.TryGetValue(key, out Image? cached))
+                    {
+                        image.Dispose();
+                        order.Remove(key);
+                        order.AddFirst(key);
+                        return (Image)cached.Clone();
+                    }
+
+                    map[key] = image;
+                    order.AddFirst(key);
+
+                    while (order.Count > capacity)
+                    {
+                        string oldest = order.Last!.Value;
+                        order.RemoveLast();
+                        if (map.Remove(oldest, out Image? evicted)) evictedImages.Add(evicted);
+                    }
+
+                    image = (Image)image.Clone();
+                }
+
+                foreach (Image evictedImage in evictedImages)
+                {
+                    evictedImage.Dispose();
+                }
+
+                return image;
+            }
+
+            public bool Contains(string imagePath, Size thumbnailSize)
+            {
+                string key = MakeKey(imagePath, thumbnailSize);
+                lock (sync)
+                {
+                    return map.ContainsKey(key);
+                }
+            }
+
+            public void Preload(string imagePath, Size thumbnailSize, CancellationToken cancellationToken)
+            {
+                string key = MakeKey(imagePath, thumbnailSize);
+                lock (sync)
+                {
+                    if (map.ContainsKey(key)) return;
+                }
+
+                Image image = loader(imagePath, thumbnailSize);
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    image.Dispose();
+                    return;
+                }
+
+                List<Image> evictedImages = new();
+                lock (sync)
+                {
+                    if (map.ContainsKey(key))
+                    {
+                        image.Dispose();
+                        return;
+                    }
+
+                    map[key] = image;
+                    order.AddFirst(key);
+
+                    while (order.Count > capacity)
+                    {
+                        string oldest = order.Last!.Value;
+                        order.RemoveLast();
+                        if (map.Remove(oldest, out Image? evicted)) evictedImages.Add(evicted);
+                    }
+                }
+
+                foreach (Image evictedImage in evictedImages)
+                {
+                    evictedImage.Dispose();
+                }
+            }
+
+            public void Clear()
+            {
+                List<Image> images;
+                lock (sync)
+                {
+                    images = map.Values.ToList();
+                    map.Clear();
+                    order.Clear();
+                }
+
+                foreach (Image image in images)
+                {
+                    image.Dispose();
+                }
+            }
+
+            private static string MakeKey(string imagePath, Size thumbnailSize)
+            {
+                return $"{thumbnailSize.Width}x{thumbnailSize.Height}|{imagePath}";
+            }
+        }
+
         // 표시용 이미지 LRU 캐시. 용량을 초과하면 가장 오래 전 사용한 이미지를 Dispose하여 메모리를 제한한다.
         private sealed class FrameImageCache
         {
             private readonly int capacity;
             private readonly Func<string, Image> loader;
+            private readonly object sync = new();
             private readonly Dictionary<string, Image> map = new();
             private readonly LinkedList<string> order = new(); // 앞쪽이 최근 사용
 
@@ -4209,31 +4627,110 @@ namespace DataManager
 
             public Image Get(string key)
             {
-                if (map.TryGetValue(key, out Image? cached))
+                lock (sync)
                 {
-                    order.Remove(key);
-                    order.AddFirst(key);
-                    return cached;
+                    if (map.TryGetValue(key, out Image? cached))
+                    {
+                        order.Remove(key);
+                        order.AddFirst(key);
+                        return cached;
+                    }
                 }
 
                 Image image = loader(key);
-                map[key] = image;
-                order.AddFirst(key);
+                List<Image> evictedImages = new();
 
-                while (order.Count > capacity)
+                lock (sync)
                 {
-                    string oldest = order.Last!.Value;
-                    order.RemoveLast();
-                    if (map.Remove(oldest, out Image? evicted)) evicted.Dispose();
+                    if (map.TryGetValue(key, out Image? cached))
+                    {
+                        image.Dispose();
+                        order.Remove(key);
+                        order.AddFirst(key);
+                        return cached;
+                    }
+
+                    map[key] = image;
+                    order.AddFirst(key);
+
+                    while (order.Count > capacity)
+                    {
+                        string oldest = order.Last!.Value;
+                        order.RemoveLast();
+                        if (map.Remove(oldest, out Image? evicted)) evictedImages.Add(evicted);
+                    }
                 }
+
+                foreach (Image evictedImage in evictedImages)
+                {
+                    evictedImage.Dispose();
+                }
+
                 return image;
+            }
+
+            public bool Contains(string key)
+            {
+                lock (sync)
+                {
+                    return map.ContainsKey(key);
+                }
+            }
+
+            public void Preload(string key, CancellationToken cancellationToken)
+            {
+                lock (sync)
+                {
+                    if (map.ContainsKey(key)) return;
+                }
+
+                Image image = loader(key);
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    image.Dispose();
+                    return;
+                }
+
+                List<Image> evictedImages = new();
+                lock (sync)
+                {
+                    if (map.ContainsKey(key))
+                    {
+                        image.Dispose();
+                        return;
+                    }
+
+                    map[key] = image;
+                    order.AddFirst(key);
+
+                    while (order.Count > capacity)
+                    {
+                        string oldest = order.Last!.Value;
+                        order.RemoveLast();
+                        if (map.Remove(oldest, out Image? evicted)) evictedImages.Add(evicted);
+                    }
+                }
+
+                foreach (Image evictedImage in evictedImages)
+                {
+                    evictedImage.Dispose();
+                }
             }
 
             public void Clear()
             {
-                foreach (Image image in map.Values) image.Dispose();
-                map.Clear();
-                order.Clear();
+                List<Image> images;
+                lock (sync)
+                {
+                    images = map.Values.ToList();
+                    map.Clear();
+                    order.Clear();
+                }
+
+                foreach (Image image in images)
+                {
+                    image.Dispose();
+                }
             }
         }
 
