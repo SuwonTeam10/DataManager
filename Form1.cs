@@ -2372,6 +2372,77 @@ namespace DataManager
             finally { lstFrames.EndUpdate(); }
         }
 
+        private TubFrame? FindFrameToShowAfterRemoval(HashSet<TubFrame> removeSet, int currentIndex)
+        {
+            if (tubFrames.Count == 0) return null;
+
+            if (currentIndex >= 0 && currentIndex < tubFrames.Count && !removeSet.Contains(tubFrames[currentIndex]))
+                return tubFrames[currentIndex];
+
+            for (int i = Math.Max(0, currentIndex + 1); i < tubFrames.Count; i++)
+                if (!removeSet.Contains(tubFrames[i])) return tubFrames[i];
+
+            for (int i = Math.Min(currentIndex - 1, tubFrames.Count - 1); i >= 0; i--)
+                if (!removeSet.Contains(tubFrames[i])) return tubFrames[i];
+
+            return null;
+        }
+
+        private void RefreshTubViewAfterDeletion(TubFrame? frameToKeep, int fallbackIndex)
+        {
+            ResetTubView();
+            RebuildTrashList();
+            RenderTubGraph();
+
+            if (tubFrames.Count == 0)
+            {
+                picFrame.Image = null;
+                UpdateFrameInfoLabels(null, -1);
+                SetPlaybackState(false);
+                return;
+            }
+
+            int index = frameToKeep != null ? tubFrames.IndexOf(frameToKeep) : -1;
+            if (index < 0) index = Math.Clamp(fallbackIndex, 0, tubFrames.Count - 1);
+            ShowFrame(index);
+        }
+
+        private void RefreshTubViewAfterRestore(IEnumerable<TubFrame> restoredFrames, TubFrame? frameToKeep, int fallbackIndex)
+        {
+            foreach (TubFrame frame in restoredFrames)
+            {
+                if (!tubFrames.Any(existing =>
+                    existing.FrameNumber == frame.FrameNumber &&
+                    string.Equals(existing.ImageFileName, frame.ImageFileName, StringComparison.OrdinalIgnoreCase)))
+                {
+                    tubFrames.Add(frame);
+                }
+            }
+
+            tubFrames.Sort((a, b) =>
+            {
+                int frameCompare = a.FrameNumber.CompareTo(b.FrameNumber);
+                if (frameCompare != 0) return frameCompare;
+                return string.Compare(a.ImageFileName, b.ImageFileName, StringComparison.OrdinalIgnoreCase);
+            });
+
+            ResetTubView();
+            RebuildTrashList();
+            RenderTubGraph();
+
+            if (tubFrames.Count == 0)
+            {
+                picFrame.Image = null;
+                UpdateFrameInfoLabels(null, -1);
+                SetPlaybackState(false);
+                return;
+            }
+
+            int index = frameToKeep != null ? tubFrames.IndexOf(frameToKeep) : -1;
+            if (index < 0) index = Math.Clamp(fallbackIndex, 0, tubFrames.Count - 1);
+            ShowFrame(index);
+        }
+
         private void UpdateTimelineForFrame(int frameIndex)
         {
             bool wasLoadingTimeline = isLoadingTimeline;
@@ -3837,6 +3908,90 @@ namespace DataManager
             trashStore.Remove(entry);
         }
 
+        private TubFrame? CreateRestoredTubFrame(TrashEntry entry)
+        {
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(entry.Line))
+                {
+                    string catalogName = string.IsNullOrEmpty(entry.Catalog) ? "catalog_0.catalog" : entry.Catalog;
+                    string catalogPath = Path.Combine(tubPath, catalogName.Replace('/', Path.DirectorySeparatorChar));
+                    string tubBasePath = Path.GetDirectoryName(catalogPath) ?? tubPath;
+                    string imageBasePath = GetImageBasePath(tubBasePath);
+                    Dictionary<string, Dictionary<string, string>> imageLookupCache = new();
+                    Dictionary<string, string>? imageLookup = null;
+
+                    using JsonDocument document = JsonDocument.Parse(entry.Line);
+                    JsonElement root = document.RootElement;
+                    string imageFileName = GetStringValue(root, "cam/image_array");
+                    if (string.IsNullOrWhiteSpace(imageFileName)) imageFileName = entry.Image;
+                    string imagePath = FindImagePath(tubBasePath, imageBasePath, imageLookupCache, ref imageLookup, imageFileName);
+                    if (!File.Exists(imagePath))
+                    {
+                        string restoredPath = Path.Combine(GetImageBasePath(tubPath), Path.GetFileName(imageFileName));
+                        if (File.Exists(restoredPath)) imagePath = restoredPath;
+                    }
+
+                    return new TubFrame
+                    {
+                        FrameNumber = GetIntValue(root, "_index", entry.Frame),
+                        ImageFileName = imageFileName,
+                        ImagePath = imagePath,
+                        SourceDataPath = entry.SourceDataPath,
+                        Angle = GetDoubleValue(root, "user/angle"),
+                        Throttle = GetDoubleValue(root, "user/throttle")
+                    };
+                }
+
+                if (IsOldRecordFile(entry.SourceDataPath) && File.Exists(entry.SourceDataPath))
+                {
+                    string tubBasePath = Path.GetDirectoryName(entry.SourceDataPath) ?? tubPath;
+                    string imageBasePath = GetImageBasePath(tubBasePath);
+                    Dictionary<string, Dictionary<string, string>> imageLookupCache = new();
+                    Dictionary<string, string>? imageLookup = null;
+
+                    using JsonDocument document = JsonDocument.Parse(File.ReadAllText(entry.SourceDataPath));
+                    JsonElement root = document.RootElement;
+                    string imageFileName = GetStringValue(root, "cam/image_array");
+                    if (string.IsNullOrWhiteSpace(imageFileName)) imageFileName = entry.Image;
+                    string imagePath = FindImagePath(tubBasePath, imageBasePath, imageLookupCache, ref imageLookup, imageFileName);
+                    if (!File.Exists(imagePath))
+                    {
+                        string restoredPath = Path.Combine(GetImageBasePath(tubPath), Path.GetFileName(imageFileName));
+                        if (File.Exists(restoredPath)) imagePath = restoredPath;
+                    }
+
+                    return new TubFrame
+                    {
+                        FrameNumber = GetIntValue(root, "_index", entry.Frame),
+                        ImageFileName = imageFileName,
+                        ImagePath = imagePath,
+                        SourceDataPath = entry.SourceDataPath,
+                        Angle = GetDoubleValue(root, "user/angle"),
+                        Throttle = GetDoubleValue(root, "user/throttle")
+                    };
+                }
+            }
+            catch (Exception ex)
+            {
+                AddLog($"복원 프레임 구성 오류: Frame {entry.Frame:D6} - {ex.Message}");
+            }
+
+            string fallbackImagePath = File.Exists(Path.Combine(GetImageBasePath(tubPath), entry.Image))
+                ? Path.Combine(GetImageBasePath(tubPath), entry.Image)
+                : entry.DeletedImagePath;
+
+            return new TubFrame
+            {
+                FrameNumber = entry.Frame,
+                ImageFileName = entry.Image,
+                ImagePath = fallbackImagePath,
+                SourceDataPath = entry.SourceDataPath,
+                Angle = entry.Angle,
+                Throttle = entry.Throttle
+            };
+        }
+
         // 휴지통 보관 목록(trashStore)으로 lstTrash를 다시 구성한다.
         private void RebuildTrashList()
         {
@@ -3999,7 +4154,7 @@ namespace DataManager
             return (selectedFrames.Min, selectedFrames.Max);
         }
 
-        private async void btnFilter_Click(object? sender, EventArgs e)
+        private void btnFilter_Click(object? sender, EventArgs e)
         {
             if (tubFrames.Count == 0)
             {
@@ -4026,6 +4181,10 @@ namespace DataManager
                 if (reason != null) targets.Add((frame, reason));
             }
 
+            HashSet<TubFrame> targetFrames = targets.Select(t => t.Item1).ToHashSet();
+            TubFrame? frameToKeep = FindFrameToShowAfterRemoval(targetFrames, trackFrame.Value);
+            int fallbackIndex = trackFrame.Value;
+
             int moved;
             try { moved = DeleteFramesToTrash(targets); }
             catch (Exception ex) { MessageBox.Show($"필터 적용 중 오류: {ex.Message}", "필터 오류", MessageBoxButtons.OK, MessageBoxIcon.Error); AddLog($"필터 오류: {ex.Message}"); return; }
@@ -4036,7 +4195,7 @@ namespace DataManager
                 return;
             }
             AddLog($"필터로 {moved}개 프레임을 catalog에서 제거하고 휴지통으로 이동했습니다.");
-            await LoadTubAsync(tubPath, quiet: true);
+            RefreshTubViewAfterDeletion(frameToKeep, fallbackIndex);
         }
 
         // 비정상 조향각(이상치) 프레임 인덱스를 반환한다.
@@ -4097,7 +4256,7 @@ namespace DataManager
         // ==========================================
         // 7. 데이터 삭제 / 복원 / 휴지통 비우기
         // ==========================================
-        private async void btnDelete_Click(object? sender, EventArgs e)
+        private void btnDelete_Click(object? sender, EventArgs e)
         {
             if (tubFrames.Count == 0) return;
             if (string.IsNullOrWhiteSpace(tubPath))
@@ -4116,15 +4275,19 @@ namespace DataManager
             foreach (int i in selectedFrames)
                 if (i >= 0 && i < tubFrames.Count) targets.Add((tubFrames[i], "수동 삭제"));
 
+            HashSet<TubFrame> targetFrames = targets.Select(t => t.Item1).ToHashSet();
+            TubFrame? frameToKeep = FindFrameToShowAfterRemoval(targetFrames, trackFrame.Value);
+            int fallbackIndex = trackFrame.Value;
+
             int moved;
             try { moved = DeleteFramesToTrash(targets); }
             catch (Exception ex) { MessageBox.Show($"삭제 중 오류: {ex.Message}", "삭제 오류", MessageBoxButtons.OK, MessageBoxIcon.Error); AddLog($"삭제 오류: {ex.Message}"); return; }
 
             AddLog($"{moved}개 프레임을 catalog에서 제거하고 휴지통으로 이동했습니다(복원 가능).");
-            await LoadTubAsync(tubPath, quiet: true);
+            RefreshTubViewAfterDeletion(frameToKeep, fallbackIndex);
         }
 
-        private async void btnRestore_Click(object? sender, EventArgs e)
+        private void btnRestore_Click(object? sender, EventArgs e)
         {
             if (lstTrash.CheckedItems.Count == 0)
             {
@@ -4133,10 +4296,19 @@ namespace DataManager
             }
 
             List<TrashEntry> selected = lstTrash.CheckedItems.Cast<TrashEntry>().ToList();
+            TubFrame? frameToKeep = trackFrame.Value >= 0 && trackFrame.Value < tubFrames.Count ? tubFrames[trackFrame.Value] : null;
+            int fallbackIndex = trackFrame.Value;
+            List<TubFrame> restoredFrames = new();
             int restored = 0;
             try
             {
-                foreach (TrashEntry entry in selected) { RestoreEntry(entry); restored++; }
+                foreach (TrashEntry entry in selected)
+                {
+                    RestoreEntry(entry);
+                    TubFrame? restoredFrame = CreateRestoredTubFrame(entry);
+                    if (restoredFrame != null) restoredFrames.Add(restoredFrame);
+                    restored++;
+                }
                 WriteTrashStore();
                 SyncManifestToCatalogs();
             }
@@ -4146,7 +4318,7 @@ namespace DataManager
                 AddLog($"복원 오류: {ex.Message}");
             }
             AddLog($"{restored}개 프레임을 복원(catalog에 재삽입)했습니다.");
-            await LoadTubAsync(tubPath, quiet: true);
+            RefreshTubViewAfterRestore(restoredFrames, frameToKeep, fallbackIndex);
         }
 
         // 완전 삭제: 디스크 휴지통(deleted/trash.jsonl + images)을 영구 삭제한다.
@@ -5040,6 +5212,10 @@ namespace DataManager
                 if (tubFrames.Contains(entry.Frame)) targets.Add((entry.Frame, "AI 컴파일 오차 데이터"));
             }
 
+            HashSet<TubFrame> targetFrames = targets.Select(t => t.Item1).ToHashSet();
+            TubFrame? frameToKeep = FindFrameToShowAfterRemoval(targetFrames, trackFrame.Value);
+            int fallbackIndex = trackFrame.Value;
+
             int moved;
             try { moved = DeleteFramesToTrash(targets); }
             catch (Exception ex) { MessageBox.Show($"삭제 중 오류: {ex.Message}", "삭제 오류", MessageBoxButtons.OK, MessageBoxIcon.Error); AddLog($"삭제 오류: {ex.Message}"); return; }
@@ -5050,11 +5226,8 @@ namespace DataManager
                 lstHighErrorFrames.Items.Remove(entry);
             }
 
-            // 삭제된 프레임은 tubFrames에서 빠졌으므로 뷰를 재구성한다.
-            ResetTubView();
-            if (tubFrames.Count > 0) ShowFrame(0);
-            RebuildTrashList();
-            RenderTubGraph();
+            // 삭제된 프레임은 tubFrames에서 빠졌으므로 재로딩하지 않고 현재 위치 기준으로 뷰만 재구성한다.
+            RefreshTubViewAfterDeletion(frameToKeep, fallbackIndex);
 
             AddLog($"AI 오차 프레임 {moved}개를 catalog에서 제거하고 휴지통으로 이동했습니다.");
             MessageBox.Show($"선택한 {moved}개의 오차 프레임을 휴지통으로 이동했습니다!\n(완전 삭제는 [데이터 정리] 탭의 휴지통 비우기를 이용하세요.)", "이동 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
