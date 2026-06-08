@@ -87,6 +87,7 @@ namespace DataManager
         private int frameListDragStartIndex = -1;                  // 목록 드래그 앵커
         private int selectionAnchorIndex = -1;                     // Shift+클릭 범위 기준 앵커
         private Keys frameListDownModifiers = Keys.None;           // 목록 클릭 시 Shift/Ctrl 상태
+        private Keys timelineDownModifiers = Keys.None;            // 타임라인 클릭 시 Shift/Ctrl 상태
         private const int DefaultNavigatorHeight = 827;     //
         private const int MinNavigatorHeight = 360;
         private const int TimelinePanelHeight = 168;    //
@@ -2592,6 +2593,7 @@ namespace DataManager
             hasTimelineRangeDragMoved = false;
             timelineDragStartIndex = frameIndex;
             timelineDragCurrentIndex = frameIndex;
+            timelineDownModifiers = Control.ModifierKeys & (Keys.Shift | Keys.Control);
             dragBaseSelection = new SortedSet<int>(selectedFrames);
             lvTimeline.Capture = true;
         }
@@ -2632,12 +2634,34 @@ namespace DataManager
         {
             int clickedIndex = timelineDragStartIndex;
             bool shouldShowFrame = isTimelineRangeDragging && !hasTimelineRangeDragMoved;
+            Keys mods = timelineDownModifiers;
             StopTimelineRangeDrag();
 
             if (shouldShowFrame && clickedIndex >= 0)
             {
-                ClearSelection();
-                ShowFrame(clickedIndex);
+                if ((mods & Keys.Control) != 0)
+                {
+                    // Ctrl+클릭: 프레임 목록과 같이 해당 프레임을 공유 선택에서 토글한다.
+                    if (!selectedFrames.Remove(clickedIndex)) selectedFrames.Add(clickedIndex);
+                    selectionAnchorIndex = clickedIndex;
+                    RefreshSelectionVisuals();
+                    ShowFrame(clickedIndex);
+                }
+                else if ((mods & Keys.Shift) != 0)
+                {
+                    // Shift+클릭: 프레임 목록과 같이 앵커~클릭 범위를 공유 선택에 누적한다.
+                    int anchor = selectionAnchorIndex >= 0 ? selectionAnchorIndex : clickedIndex;
+                    CommitRange(anchor, clickedIndex);
+                    RefreshSelectionVisuals();
+                    ShowFrame(clickedIndex);
+                }
+                else
+                {
+                    // 일반 클릭: 선택 해제 + 이동
+                    ClearSelection();
+                    ShowFrame(clickedIndex);
+                    selectionAnchorIndex = clickedIndex;
+                }
             }
         }
 
@@ -2670,6 +2694,7 @@ namespace DataManager
             timelineDragTimer.Stop();
             lvTimeline.Capture = false;
             dragBaseSelection = null;
+            timelineDownModifiers = Keys.None;
         }
 
         private void UpdateTimelineDragRange(int currentIndex)
