@@ -222,6 +222,8 @@ namespace DataManager
             toolTip1.SetToolTip(btnEmptyTrash, "휴지통의 프레임을 완전히 삭제합니다. 되돌릴 수 없습니다(원본 복사본은 deleted 폴더에 백업).");
             SetupFilterTooltips();
             lstFrames.SelectionMode = SelectionMode.MultiExtended;
+            lstFrames.DrawMode = DrawMode.OwnerDrawFixed;
+            lstFrames.DrawItem += lstFrames_DrawItem;
             lstFrames.MouseDown += lstFrames_MouseDown;
             lstFrames.MouseMove += lstFrames_MouseMove;
             lstFrames.MouseUp += lstFrames_MouseUp;
@@ -2260,16 +2262,19 @@ namespace DataManager
         {
             // 재생 중에는 트랙바 값만 바꾸지 않고 ShowFrame을 호출해서 이미지/라벨/목록 선택까지 같이 갱신한다.
             int current = trackFrame.Value;
-            int next = AdvanceActiveIndex(current, playbackFrameStep);
+            bool selectingWhilePlaying = IsEnterSelectionActive();
+            int next = selectingWhilePlaying
+                ? AdvanceActiveIndex(current, playbackFrameStep)
+                : AdvancePlayableIndex(current, playbackFrameStep);
             if (next < 0)
             {
                 if (chkAutoPlay.Checked)
                 {
-                    int firstActive = FirstActiveIndex();
-                    if (firstActive >= 0)
+                    int firstPlayable = selectingWhilePlaying ? FirstActiveIndex() : FirstPlayableIndex();
+                    if (firstPlayable >= 0)
                     {
-                        AddActiveFrameRangeToSelectionIfEnterHeld(current, LastActiveIndex());
-                        ShowFrame(firstActive, syncFrameListSelection: !HasSelection(), syncTimelineSelection: !HasSelection());
+                        AddActiveFrameRangeToSelectionIfEnterHeld(current, selectingWhilePlaying ? LastActiveIndex() : LastPlayableIndex());
+                        ShowFrame(firstPlayable, syncFrameListSelection: !HasSelection(), syncTimelineSelection: !HasSelection());
                         AddCurrentFrameToSelectionIfEnterHeld();
                         return;
                     }
@@ -2709,9 +2714,22 @@ namespace DataManager
             if (timelineImage == null) return;
             e.Graphics.DrawImage(timelineImage, imageBounds);
 
-            bool isSelectedFrame = e.Item.Tag is int selectedFrameIndex
+            bool isExcludedFrame = e.Item.Tag is int selectedFrameIndex
                 && selectedFrames.Contains(selectedFrameIndex);
-            if (e.Item.Selected || isSelectedFrame)
+            if (isExcludedFrame)
+            {
+                using SolidBrush excludedBrush = new SolidBrush(Color.FromArgb(120, Color.Gray));
+                e.Graphics.FillRectangle(excludedBrush, imageBounds);
+
+                int iconSize = Math.Clamp(Math.Min(imageBounds.Width, imageBounds.Height) / 3, 14, 28);
+                Rectangle iconBounds = new Rectangle(
+                    imageBounds.Left + (imageBounds.Width - iconSize) / 2,
+                    imageBounds.Top + (imageBounds.Height - iconSize) / 2,
+                    iconSize,
+                    iconSize);
+                DrawClosedEyeIcon(e.Graphics, iconBounds, Color.White);
+            }
+            else if (e.Item.Selected)
             {
                 using SolidBrush selectedBrush = new SolidBrush(Color.FromArgb(80, Color.DodgerBlue));
                 e.Graphics.FillRectangle(selectedBrush, imageBounds);
@@ -2912,8 +2930,12 @@ namespace DataManager
         {
             int index = trackFrame.Value;
             if (index < 0 || index >= tubFrames.Count) return;
-            selectedFrames.Add(index);
-            RefreshSelectionVisuals();
+            if (!selectedFrames.Add(index)) return;
+
+            if (isEnterSelectingFrames && playTimer.Enabled)
+                RefreshSelectionVisualsLight(new[] { index });
+            else
+                RefreshSelectionVisuals();
         }
 
         private void ClearAllFrameSelections()
@@ -2932,6 +2954,11 @@ namespace DataManager
             return IsKeyPhysicallyDown(Keys.Enter);
         }
 
+        private bool IsEnterSelectionActive()
+        {
+            return isEnterSelectingFrames || IsEnterKeyPhysicallyDown();
+        }
+
         private static bool IsKeyPhysicallyDown(Keys key)
         {
             return (GetAsyncKeyState(key) & unchecked((short)0x8000)) != 0;
@@ -2939,7 +2966,7 @@ namespace DataManager
 
         private void AddCurrentFrameToSelectionIfEnterHeld()
         {
-            isEnterSelectingFrames = IsEnterKeyPhysicallyDown();
+            isEnterSelectingFrames = IsEnterSelectionActive();
             if (!isEnterSelectingFrames) return;
 
             AddCurrentFrameToSelection();
@@ -2947,19 +2974,25 @@ namespace DataManager
 
         private void AddActiveFrameRangeToSelectionIfEnterHeld(int from, int to)
         {
-            isEnterSelectingFrames = IsEnterKeyPhysicallyDown();
+            isEnterSelectingFrames = IsEnterSelectionActive();
             if (!isEnterSelectingFrames) return;
             if (from < 0 || to < 0 || from >= tubFrames.Count || to >= tubFrames.Count) return;
 
             CapturePendingSelectionUndo();
             int index = NextActiveIndex(from);
             if (index < 0) return;
+            List<int> addedFrames = new();
             while (index >= 0 && index <= to)
             {
-                selectedFrames.Add(index);
+                if (selectedFrames.Add(index)) addedFrames.Add(index);
                 index = NextActiveIndex(index);
             }
-            RefreshSelectionVisuals();
+
+            if (addedFrames.Count == 0) return;
+            if (isEnterSelectingFrames && playTimer.Enabled)
+                RefreshSelectionVisualsLight(addedFrames);
+            else
+                RefreshSelectionVisuals();
         }
 
         // 선택 요약 라벨 텍스트.
@@ -3016,9 +3049,42 @@ namespace DataManager
 
                 SyncTimelineSelectionFromModel();
                 UpdateSelectionLabel();
+                lstFrames.Invalidate();
             }
             finally { isRefreshingSelectionVisuals = false; }
             RenderTubGraph();
+        }
+
+        // 재생 중 Enter 연속 선택은 전체 그래프/전체 목록을 매 프레임 다시 만들지 않고,
+        // 방금 선택된 프레임만 갱신해서 재생이 멈춘 것처럼 느려지는 상황을 줄인다.
+        private void RefreshSelectionVisualsLight(IEnumerable<int> changedFrames)
+        {
+            if (isRefreshingSelectionVisuals) return;
+            isRefreshingSelectionVisuals = true;
+            try
+            {
+                List<int> changed = changedFrames
+                    .Where(i => i >= 0 && i < tubFrames.Count)
+                    .Distinct()
+                    .ToList();
+
+                lstFrames.SelectedIndexChanged -= lstFrames_SelectedIndexChanged;
+                try
+                {
+                    lstFrames.BeginUpdate();
+                    foreach (int i in changed)
+                    {
+                        if (i >= 0 && i < lstFrames.Items.Count) lstFrames.SetSelected(i, true);
+                    }
+                    lstFrames.EndUpdate();
+                }
+                finally { lstFrames.SelectedIndexChanged += lstFrames_SelectedIndexChanged; }
+
+                foreach (int i in changed) InvalidateTimelineFrame(i);
+                UpdateSelectionLabel();
+                lstFrames.Invalidate();
+            }
+            finally { isRefreshingSelectionVisuals = false; }
         }
 
         // 타임라인 항목 선택/포커스를 공유 선택 기준으로 맞춘다(목록 갱신 없이 타임라인만).
@@ -3861,6 +3927,71 @@ namespace DataManager
             }
         }
 
+        private void lstFrames_DrawItem(object? sender, DrawItemEventArgs e)
+        {
+            if (e.Index < 0 || e.Index >= lstFrames.Items.Count) return;
+
+            e.DrawBackground();
+            bool isExcludedFrame = selectedFrames.Contains(e.Index);
+            bool isSelected = (e.State & DrawItemState.Selected) == DrawItemState.Selected;
+            Color textColor = isSelected ? SystemColors.HighlightText : lstFrames.ForeColor;
+            using Brush textBrush = new SolidBrush(textColor);
+
+            Rectangle textBounds = e.Bounds;
+            int iconSize = Math.Max(12, Math.Min(16, e.Bounds.Height - 4));
+            if (isExcludedFrame)
+            {
+                textBounds.Width = Math.Max(0, textBounds.Width - iconSize - 8);
+            }
+
+            TextRenderer.DrawText(
+                e.Graphics,
+                lstFrames.Items[e.Index]?.ToString() ?? "",
+                e.Font,
+                textBounds,
+                textColor,
+                TextFormatFlags.VerticalCenter | TextFormatFlags.Left | TextFormatFlags.EndEllipsis);
+
+            if (isExcludedFrame)
+            {
+                Rectangle iconBounds = new Rectangle(
+                    e.Bounds.Right - iconSize - 4,
+                    e.Bounds.Top + (e.Bounds.Height - iconSize) / 2,
+                    iconSize,
+                    iconSize);
+                DrawClosedEyeIcon(e.Graphics, iconBounds, isSelected ? SystemColors.HighlightText : Color.DimGray);
+            }
+
+            e.DrawFocusRectangle();
+        }
+
+        private static void DrawClosedEyeIcon(Graphics graphics, Rectangle bounds, Color color)
+        {
+            if (bounds.Width <= 0 || bounds.Height <= 0) return;
+
+            graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            float scaleX = bounds.Width / 64f;
+            float scaleY = bounds.Height / 64f;
+
+            PointF P(float x, float y) => new(bounds.Left + x * scaleX, bounds.Top + y * scaleY);
+            using Pen pen = new Pen(color, Math.Max(1.6f, bounds.Width / 14f))
+            {
+                StartCap = LineCap.Round,
+                EndCap = LineCap.Round,
+                LineJoin = LineJoin.Round
+            };
+
+            using GraphicsPath eyePath = new GraphicsPath();
+            eyePath.AddBezier(P(10, 32), P(16, 23), P(24, 19.7f), P(32, 19.7f));
+            eyePath.AddBezier(P(32, 19.7f), P(40, 19.7f), P(48, 23), P(54, 32));
+            graphics.DrawPath(pen, eyePath);
+
+            graphics.DrawLine(pen, P(17.5f, 40.5f), P(22.2f, 35.8f));
+            graphics.DrawLine(pen, P(28.8f, 44.2f), P(30.1f, 37.7f));
+            graphics.DrawLine(pen, P(46.5f, 40.5f), P(41.8f, 35.8f));
+            graphics.DrawLine(pen, P(35.2f, 44.2f), P(33.9f, 37.7f));
+        }
+
         // 목록 드래그 = 공유 선택에 범위 누적, 단순 클릭 = 선택 해제 + 이동(트래시 목록과 동일한 클릭-vs-드래그).
         private void lstFrames_MouseDown(object? sender, MouseEventArgs e)
         {
@@ -3982,6 +4113,36 @@ namespace DataManager
             return current;
         }
 
+        private bool IsPlayableFrame(int index)
+        {
+            return index >= 0
+                && index < tubFrames.Count
+                && !tubFrames[index].Deleted
+                && !selectedFrames.Contains(index);
+        }
+
+        private int NextPlayableIndex(int from)
+        {
+            for (int i = from + 1; i < tubFrames.Count; i++)
+                if (IsPlayableFrame(i)) return i;
+            return -1;
+        }
+
+        private int AdvancePlayableIndex(int from, int frameStep)
+        {
+            int current = from;
+            int steps = Math.Max(1, frameStep);
+
+            for (int i = 0; i < steps; i++)
+            {
+                int next = NextPlayableIndex(current);
+                if (next < 0) return i == 0 ? -1 : current;
+                current = next;
+            }
+
+            return current;
+        }
+
         private int PrevActiveIndex(int from)
         {
             for (int i = from - 1; i >= 0; i--)
@@ -3996,10 +4157,24 @@ namespace DataManager
             return -1;
         }
 
+        private int FirstPlayableIndex()
+        {
+            for (int i = 0; i < tubFrames.Count; i++)
+                if (IsPlayableFrame(i)) return i;
+            return -1;
+        }
+
         private int LastActiveIndex()
         {
             for (int i = tubFrames.Count - 1; i >= 0; i--)
                 if (!tubFrames[i].Deleted) return i;
+            return -1;
+        }
+
+        private int LastPlayableIndex()
+        {
+            for (int i = tubFrames.Count - 1; i >= 0; i--)
+                if (IsPlayableFrame(i)) return i;
             return -1;
         }
 
@@ -5198,13 +5373,13 @@ namespace DataManager
         {
             if (tubFrames.Count == 0) return false;
 
-            int firstActive = FirstActiveIndex();
-            if (firstActive < 0) return false;
+            int firstPlayable = FirstPlayableIndex();
+            if (firstPlayable < 0) return false;
 
             // 마지막 프레임에서 재생 버튼을 누르면 처음 유효 프레임부터 다시 시작한다.
-            if (NextActiveIndex(trackFrame.Value) < 0)
+            if (NextPlayableIndex(trackFrame.Value) < 0)
             {
-                ShowFrame(firstActive);
+                ShowFrame(firstPlayable);
             }
 
             ApplyPlaybackSpeed();
