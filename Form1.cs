@@ -83,6 +83,9 @@ namespace DataManager
         private readonly SortedSet<int> selectedFrames = new();   // 공유 선택(절대 tubFrames 인덱스) - 모든 선택 기능의 단일 진실원
         private int pendingRangeAnchor = -1;                       // 시작 지정 앵커(-1=없음)
         private SortedSet<int>? dragBaseSelection = null;          // 드래그 시작 시 선택 스냅샷(타임라인·목록 공용)
+        private SelectionSnapshot? pendingSelectionUndoSnapshot;    // 드래그/엔터 선택 묶음 시작 전 상태
+        private readonly Stack<UndoAction> undoStack = new();       // Ctrl+Z 마지막 작업 취소
+        private bool isApplyingUndo;                               // undo 실행 중 재기록 방지
         private bool isRefreshingSelectionVisuals = false;         // 선택 시각화 재진입 가드
         private int frameListDragStartIndex = -1;                  // 목록 드래그 앵커
         private int selectionAnchorIndex = -1;                     // Shift+클릭 범위 기준 앵커
@@ -297,6 +300,7 @@ namespace DataManager
             {
                 isEnterSelectingFrames = false;
                 StopKeyboardFrameMoveTimer();
+                CommitPendingSelectionUndo();
             }
             else if (e.KeyCode is Keys.Left or Keys.Right or Keys.A or Keys.D)
             {
@@ -310,6 +314,12 @@ namespace DataManager
 
             Keys keyCode = keyData & Keys.KeyCode;
             Keys modifiers = keyData & Keys.Modifiers;
+            if (keyCode == Keys.Z && modifiers == Keys.Control)
+            {
+                UndoLastAction();
+                return true;
+            }
+
             if (modifiers != Keys.None) return base.ProcessCmdKey(ref msg, keyData);
 
             if (keyCode is Keys.Left or Keys.A)
@@ -338,6 +348,7 @@ namespace DataManager
 
             if (keyCode == Keys.Enter)
             {
+                CapturePendingSelectionUndo();
                 isEnterSelectingFrames = true;
                 AddCurrentFrameToSelection();
                 UpdateKeyboardFrameMoveTimerFromHeldKeys();
@@ -432,6 +443,162 @@ namespace DataManager
         {
             keyboardFrameMoveTimer.Stop();
             keyboardFrameMoveDirection = 0;
+        }
+
+        private SelectionSnapshot CaptureSelectionSnapshot()
+        {
+            return new SelectionSnapshot(
+                new SortedSet<int>(selectedFrames),
+                pendingRangeAnchor,
+                selectionAnchorIndex);
+        }
+
+        private static bool SameSelectionSnapshot(SelectionSnapshot a, SelectionSnapshot b)
+        {
+            return a.PendingRangeAnchor == b.PendingRangeAnchor
+                && a.SelectionAnchorIndex == b.SelectionAnchorIndex
+                && a.Frames.SetEquals(b.Frames);
+        }
+
+        private void CapturePendingSelectionUndo()
+        {
+            if (isApplyingUndo || pendingSelectionUndoSnapshot != null) return;
+            pendingSelectionUndoSnapshot = CaptureSelectionSnapshot();
+        }
+
+        private SelectionSnapshot? BeginSelectionUndo()
+        {
+            if (isApplyingUndo || pendingSelectionUndoSnapshot != null) return null;
+            return CaptureSelectionSnapshot();
+        }
+
+        private void CommitSelectionUndo(SelectionSnapshot? before)
+        {
+            if (isApplyingUndo) return;
+
+            SelectionSnapshot? snapshot = pendingSelectionUndoSnapshot ?? before;
+            pendingSelectionUndoSnapshot = null;
+            if (snapshot == null) return;
+
+            if (!SameSelectionSnapshot(snapshot, CaptureSelectionSnapshot()))
+            {
+                undoStack.Push(UndoAction.FromSelection(snapshot));
+            }
+        }
+
+        private void CommitPendingSelectionUndo()
+        {
+            CommitSelectionUndo(null);
+        }
+
+        private void PushDeleteUndo(IEnumerable<TrashEntry> entries)
+        {
+            if (isApplyingUndo) return;
+            List<TrashEntry> list = entries.ToList();
+            if (list.Count > 0) undoStack.Push(UndoAction.FromDelete(list));
+        }
+
+        private void PushRestoreUndo(IEnumerable<TubFrame> frames)
+        {
+            if (isApplyingUndo) return;
+            List<TubFrame> list = frames.ToList();
+            if (list.Count > 0) undoStack.Push(UndoAction.FromRestore(list));
+        }
+
+        private void RestoreSelectionSnapshot(SelectionSnapshot snapshot)
+        {
+            selectedFrames.Clear();
+            selectedFrames.UnionWith(snapshot.Frames.Where(i => i >= 0 && i < tubFrames.Count));
+            pendingRangeAnchor = snapshot.PendingRangeAnchor;
+            selectionAnchorIndex = snapshot.SelectionAnchorIndex;
+            dragBaseSelection = null;
+            pendingSelectionUndoSnapshot = null;
+            isEnterSelectingFrames = false;
+            RefreshSelectionVisuals();
+        }
+
+        private void UndoLastAction()
+        {
+            if (undoStack.Count == 0)
+            {
+                AddLog("되돌릴 작업이 없습니다.");
+                return;
+            }
+
+            UndoAction action = undoStack.Pop();
+            isApplyingUndo = true;
+            try
+            {
+                switch (action.Kind)
+                {
+                    case UndoActionKind.Selection:
+                        if (action.Selection != null) RestoreSelectionSnapshot(action.Selection);
+                        AddLog("프레임 선택을 이전 상태로 되돌렸습니다.");
+                        break;
+                    case UndoActionKind.Delete:
+                        UndoDeleteAction(action.TrashEntries);
+                        break;
+                    case UndoActionKind.Restore:
+                        UndoRestoreAction(action.RestoredFrames);
+                        break;
+                }
+            }
+            finally
+            {
+                isApplyingUndo = false;
+            }
+        }
+
+        private void UndoDeleteAction(List<TrashEntry> entries)
+        {
+            List<TrashEntry> restorable = entries.Where(entry => trashStore.Contains(entry)).ToList();
+            if (restorable.Count == 0)
+            {
+                AddLog("삭제 취소 실패: 복원할 휴지통 항목을 찾을 수 없습니다.");
+                return;
+            }
+
+            TubFrame? frameToKeep = trackFrame.Value >= 0 && trackFrame.Value < tubFrames.Count ? tubFrames[trackFrame.Value] : null;
+            int fallbackIndex = trackFrame.Value;
+            List<TubFrame> restoredFrames = new();
+
+            foreach (TrashEntry entry in restorable)
+            {
+                RestoreEntry(entry);
+                TubFrame? frame = CreateRestoredTubFrame(entry);
+                if (frame != null) restoredFrames.Add(frame);
+            }
+
+            WriteTrashStore();
+            SyncManifestToCatalogs();
+            RefreshTubViewAfterRestore(restoredFrames, frameToKeep, fallbackIndex);
+            AddLog($"삭제 작업을 취소하고 {restoredFrames.Count}개 프레임을 복원했습니다.");
+        }
+
+        private void UndoRestoreAction(List<TubFrame> frames)
+        {
+            List<(TubFrame frame, string reason)> targets = new();
+            foreach (TubFrame frame in frames)
+            {
+                TubFrame? current = tubFrames.FirstOrDefault(item =>
+                    item.FrameNumber == frame.FrameNumber &&
+                    string.Equals(item.ImageFileName, frame.ImageFileName, StringComparison.OrdinalIgnoreCase));
+                if (current != null) targets.Add((current, "복원 취소"));
+            }
+
+            if (targets.Count == 0)
+            {
+                AddLog("복원 취소 실패: 다시 휴지통으로 보낼 프레임을 찾을 수 없습니다.");
+                return;
+            }
+
+            HashSet<TubFrame> targetFrames = targets.Select(t => t.frame).ToHashSet();
+            TubFrame? frameToKeep = FindFrameToShowAfterRemoval(targetFrames, trackFrame.Value);
+            int fallbackIndex = trackFrame.Value;
+
+            int moved = DeleteFramesToTrash(targets);
+            RefreshTubViewAfterDeletion(frameToKeep, fallbackIndex);
+            AddLog($"복원 작업을 취소하고 {moved}개 프레임을 다시 휴지통으로 이동했습니다.");
         }
 
         private int GetHeldKeyboardFrameMoveDirection()
@@ -1086,6 +1253,7 @@ namespace DataManager
             menuHotkeys.DropDownItems.Add("Enter : 현재 프레임 선택 추가");
             menuHotkeys.DropDownItems.Add("Esc : 선택한 프레임/범위 전체 취소");
             menuHotkeys.DropDownItems.Add("Delete : 선택한 프레임 또는 지정 범위를 휴지통으로 이동");
+            menuHotkeys.DropDownItems.Add("Ctrl + Z : 마지막 선택/삭제/복원 작업 되돌리기");
             menuHotkeys.MouseEnter += (s, e) => menuHotkeys.ShowDropDown();
 
             menuAttempts = new ToolStripMenuItem("📊 오늘의 시도");
@@ -2589,6 +2757,7 @@ namespace DataManager
             ListViewItem? item = lvTimeline.GetItemAt(e.X, e.Y);
             if (item?.Tag is not int frameIndex) return;
 
+            CapturePendingSelectionUndo();
             isTimelineRangeDragging = true;
             hasTimelineRangeDragMoved = false;
             timelineDragStartIndex = frameIndex;
@@ -2662,6 +2831,11 @@ namespace DataManager
                     ShowFrame(clickedIndex);
                     selectionAnchorIndex = clickedIndex;
                 }
+                CommitPendingSelectionUndo();
+            }
+            else
+            {
+                CommitPendingSelectionUndo();
             }
         }
 
@@ -2712,6 +2886,7 @@ namespace DataManager
         // 공유 선택을 모두 해제하고 시각화를 갱신한다.
         private void ClearSelection()
         {
+            SelectionSnapshot? before = BeginSelectionUndo();
             selectedFrames.Clear();
             pendingRangeAnchor = -1;
             selectionAnchorIndex = -1;
@@ -2721,6 +2896,7 @@ namespace DataManager
             timelineDragCurrentIndex = -1;
             hasTimelineRangeDragMoved = false;
             RefreshSelectionVisuals();
+            CommitSelectionUndo(before);
         }
 
         // [a..b] 구간을 공유 선택에 누적한다.
@@ -2775,6 +2951,7 @@ namespace DataManager
             if (!isEnterSelectingFrames) return;
             if (from < 0 || to < 0 || from >= tubFrames.Count || to >= tubFrames.Count) return;
 
+            CapturePendingSelectionUndo();
             int index = NextActiveIndex(from);
             if (index < 0) return;
             while (index >= 0 && index <= to)
@@ -3693,6 +3870,7 @@ namespace DataManager
             frameListDragStartIndex = lstFrames.IndexFromPoint(e.Location);
             lastFrameListPreviewIndex = frameListDragStartIndex;
             frameListDownModifiers = Control.ModifierKeys & (Keys.Shift | Keys.Control);
+            if (frameListDragStartIndex >= 0) CapturePendingSelectionUndo();
             dragBaseSelection = new SortedSet<int>(selectedFrames);
             if (frameListDragStartIndex >= 0) ShowDragPreviewFrame(frameListDragStartIndex);
         }
@@ -3731,9 +3909,14 @@ namespace DataManager
             if (moved)
             {
                 selectionAnchorIndex = clicked;   // 드래그 후 앵커는 시작점
+                CommitPendingSelectionUndo();
                 return;
             }
-            if (clicked < 0 || clicked >= tubFrames.Count) return;
+            if (clicked < 0 || clicked >= tubFrames.Count)
+            {
+                CommitPendingSelectionUndo();
+                return;
+            }
 
             if ((mods & Keys.Control) != 0)
             {
@@ -3758,6 +3941,8 @@ namespace DataManager
                 ShowFrame(clicked);
                 selectionAnchorIndex = clicked;
             }
+
+            CommitPendingSelectionUndo();
         }
 
         private void ShowDragPreviewFrame(int index)
@@ -4152,14 +4337,17 @@ namespace DataManager
         private void btnSetLeft_Click(object? sender, EventArgs e)
         {
             if (tubFrames.Count == 0) return;
+            SelectionSnapshot? before = BeginSelectionUndo();
             pendingRangeAnchor = trackFrame.Value;
             UpdateSelectionLabel();
+            CommitSelectionUndo(before);
         }
 
         // 끝 지정: 앵커~현재를 한 범위로 공유 선택에 누적(여러 번 하면 여러 범위).
         private void btnSetRight_Click(object? sender, EventArgs e)
         {
             if (tubFrames.Count == 0) return;
+            SelectionSnapshot? before = BeginSelectionUndo();
             if (pendingRangeAnchor >= 0)
             {
                 CommitRange(pendingRangeAnchor, trackFrame.Value);
@@ -4170,6 +4358,7 @@ namespace DataManager
                 selectedFrames.Add(trackFrame.Value);
             }
             RefreshSelectionVisuals();
+            CommitSelectionUndo(before);
         }
 
         // 필터 통계용 구간. 선택이 없으면 전체, 있으면 선택의 [최소..최대].
@@ -4210,6 +4399,7 @@ namespace DataManager
             TubFrame? frameToKeep = FindFrameToShowAfterRemoval(targetFrames, trackFrame.Value);
             int fallbackIndex = trackFrame.Value;
 
+            int trashStart = trashStore.Count;
             int moved;
             try { moved = DeleteFramesToTrash(targets); }
             catch (Exception ex) { MessageBox.Show($"필터 적용 중 오류: {ex.Message}", "필터 오류", MessageBoxButtons.OK, MessageBoxIcon.Error); AddLog($"필터 오류: {ex.Message}"); return; }
@@ -4219,6 +4409,7 @@ namespace DataManager
                 MessageBox.Show("조건에 해당하는 프레임이 없습니다.", "필터 적용", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
+            PushDeleteUndo(trashStore.Skip(trashStart));
             AddLog($"필터로 {moved}개 프레임을 catalog에서 제거하고 휴지통으로 이동했습니다.");
             RefreshTubViewAfterDeletion(frameToKeep, fallbackIndex);
         }
@@ -4304,10 +4495,12 @@ namespace DataManager
             TubFrame? frameToKeep = FindFrameToShowAfterRemoval(targetFrames, trackFrame.Value);
             int fallbackIndex = trackFrame.Value;
 
+            int trashStart = trashStore.Count;
             int moved;
             try { moved = DeleteFramesToTrash(targets); }
             catch (Exception ex) { MessageBox.Show($"삭제 중 오류: {ex.Message}", "삭제 오류", MessageBoxButtons.OK, MessageBoxIcon.Error); AddLog($"삭제 오류: {ex.Message}"); return; }
 
+            PushDeleteUndo(trashStore.Skip(trashStart));
             AddLog($"{moved}개 프레임을 catalog에서 제거하고 휴지통으로 이동했습니다(복원 가능).");
             RefreshTubViewAfterDeletion(frameToKeep, fallbackIndex);
         }
@@ -4344,6 +4537,7 @@ namespace DataManager
             }
             AddLog($"{restored}개 프레임을 복원(catalog에 재삽입)했습니다.");
             RefreshTubViewAfterRestore(restoredFrames, frameToKeep, fallbackIndex);
+            PushRestoreUndo(restoredFrames);
         }
 
         // 완전 삭제: 디스크 휴지통(deleted/trash.jsonl + images)을 영구 삭제한다.
@@ -4376,6 +4570,8 @@ namespace DataManager
                 if (Directory.Exists(DeletedImagesDir)) Directory.Delete(DeletedImagesDir, true);
                 if (File.Exists(TrashJsonlPath)) File.Delete(TrashJsonlPath);
                 trashStore.Clear();
+                undoStack.Clear();
+                pendingSelectionUndoSnapshot = null;
                 RebuildTrashList();
 
                 AddLog($"휴지통 비우기(완전 삭제) 완료: {n}건 영구 삭제.");
@@ -4615,6 +4811,55 @@ namespace DataManager
         // ==========================================
         // 내부 클래스
         // ==========================================
+        private enum UndoActionKind
+        {
+            Selection,
+            Delete,
+            Restore
+        }
+
+        private sealed class SelectionSnapshot
+        {
+            public SelectionSnapshot(SortedSet<int> frames, int pendingRangeAnchor, int selectionAnchorIndex)
+            {
+                Frames = frames;
+                PendingRangeAnchor = pendingRangeAnchor;
+                SelectionAnchorIndex = selectionAnchorIndex;
+            }
+
+            public SortedSet<int> Frames { get; }
+            public int PendingRangeAnchor { get; }
+            public int SelectionAnchorIndex { get; }
+        }
+
+        private sealed class UndoAction
+        {
+            private UndoAction(UndoActionKind kind)
+            {
+                Kind = kind;
+            }
+
+            public UndoActionKind Kind { get; }
+            public SelectionSnapshot? Selection { get; private init; }
+            public List<TrashEntry> TrashEntries { get; private init; } = new();
+            public List<TubFrame> RestoredFrames { get; private init; } = new();
+
+            public static UndoAction FromSelection(SelectionSnapshot snapshot)
+            {
+                return new UndoAction(UndoActionKind.Selection) { Selection = snapshot };
+            }
+
+            public static UndoAction FromDelete(List<TrashEntry> entries)
+            {
+                return new UndoAction(UndoActionKind.Delete) { TrashEntries = entries };
+            }
+
+            public static UndoAction FromRestore(List<TubFrame> frames)
+            {
+                return new UndoAction(UndoActionKind.Restore) { RestoredFrames = frames };
+            }
+        }
+
         private sealed class TubFrame
         {
             public int FrameNumber { get; set; }
@@ -5241,9 +5486,12 @@ namespace DataManager
             TubFrame? frameToKeep = FindFrameToShowAfterRemoval(targetFrames, trackFrame.Value);
             int fallbackIndex = trackFrame.Value;
 
+            int trashStart = trashStore.Count;
             int moved;
             try { moved = DeleteFramesToTrash(targets); }
             catch (Exception ex) { MessageBox.Show($"삭제 중 오류: {ex.Message}", "삭제 오류", MessageBoxButtons.OK, MessageBoxIcon.Error); AddLog($"삭제 오류: {ex.Message}"); return; }
+
+            PushDeleteUndo(trashStore.Skip(trashStart));
 
             // 처리 완료된 항목은 AI 컴파일 목록에서 빼준다.
             foreach (var entry in selectedEntries)
