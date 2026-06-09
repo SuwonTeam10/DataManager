@@ -843,7 +843,7 @@
             // grpTestImage
             // 
             grpTestImage.Controls.Add(picTestImage);
-            grpTestImage.Controls.Add(btnSelectTestImage);
+            grpTestImage.Controls.Add(btnModelTest);
             grpTestImage.Font = new Font("나눔고딕", 8.999999F, FontStyle.Regular, GraphicsUnit.Point, 129);
             grpTestImage.Location = new Point(396, 128);
             grpTestImage.Name = "grpTestImage";
@@ -864,10 +864,10 @@
             // btnSelectTestImage
             // 
             btnSelectTestImage.Font = new Font("나눔고딕", 10.125F, FontStyle.Regular, GraphicsUnit.Point, 129);
-            btnSelectTestImage.Location = new Point(19, 41);
+            btnSelectTestImage.Location = new Point(255, 35);
             btnSelectTestImage.Margin = new Padding(4);
             btnSelectTestImage.Name = "btnSelectTestImage";
-            btnSelectTestImage.Size = new Size(307, 60);
+            btnSelectTestImage.Size = new Size(266, 53);
             btnSelectTestImage.TabIndex = 14;
             btnSelectTestImage.Text = "테스트 이미지 선택";
             toolTip1.SetToolTip(btnSelectTestImage, "모델 테스트할 Data 폴더 열기");
@@ -893,7 +893,7 @@
             // 
             grpTrainSetting.Controls.Add(btnStopTest);
             grpTrainSetting.Controls.Add(btnSelectModel);
-            grpTrainSetting.Controls.Add(btnModelTest);
+            grpTrainSetting.Controls.Add(btnSelectTestImage);
             grpTrainSetting.Font = new Font("나눔고딕", 8.999999F, FontStyle.Regular, GraphicsUnit.Point, 129);
             grpTrainSetting.Location = new Point(396, 10);
             grpTrainSetting.Name = "grpTrainSetting";
@@ -935,10 +935,10 @@
             // 
             btnModelTest.Font = new Font("나눔고딕", 10.125F, FontStyle.Regular, GraphicsUnit.Point, 129);
             btnModelTest.ImageAlign = ContentAlignment.MiddleLeft;
-            btnModelTest.Location = new Point(255, 35);
+            btnModelTest.Location = new Point(19, 41);
             btnModelTest.Margin = new Padding(4);
             btnModelTest.Name = "btnModelTest";
-            btnModelTest.Size = new Size(266, 53);
+            btnModelTest.Size = new Size(307, 60);
             btnModelTest.TabIndex = 12;
             btnModelTest.Text = "모델 테스트 실행";
             btnModelTest.UseVisualStyleBackColor = true;

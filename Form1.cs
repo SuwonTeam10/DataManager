@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -29,6 +30,13 @@ namespace DataManager
         private string modelPath = "";
         private string testImagePath = "";
         private string latestTestImagePath = "";
+        private const int ModelTestPreviewUpdateIntervalMs = 5000;
+        private long lastTestPreviewUpdateTick;
+        private readonly ConcurrentQueue<string> modelTestLogQueue = new();
+        private readonly System.Windows.Forms.Timer modelTestLogTimer = new();
+        private const int ModelTestLogUiIntervalMs = 50;
+        private const int ModelTestLogMaxPerTick = 10;
+        private bool isModelTestRunning;
         private double? latestTestRealAngle;
         private double? latestTestPredictAngle;
         private readonly Dictionary<string, double> predictedAnglesByImageKey = new(StringComparer.OrdinalIgnoreCase);
@@ -73,6 +81,13 @@ namespace DataManager
         private int timelineDragEdgeDirection;
         private readonly System.Windows.Forms.Timer timelineDragTimer = new();
         private readonly System.Windows.Forms.Timer keyboardFrameMoveTimer = new();
+        private readonly System.Windows.Forms.Timer deferredFrameUiTimer = new();
+        private const int DeferredFrameUiUpdateIntervalMs = 30;
+        private int deferredFrameIndex = -1;
+        private int deferredPreviousFrameIndex = -1;
+        private bool deferredSyncFrameListSelection;
+        private bool deferredSyncTimelineSelection;
+        private bool deferredUpdateTimelineWindow;
         private bool isFrameListMouseDragging;
         private int lastFrameListPreviewIndex = -1;
         private int playbackFrameStep = 1;
@@ -179,6 +194,12 @@ namespace DataManager
 
             keyboardFrameMoveTimer.Interval = 70;
             keyboardFrameMoveTimer.Tick += KeyboardFrameMoveTimer_Tick;
+
+            deferredFrameUiTimer.Interval = DeferredFrameUiUpdateIntervalMs;
+            deferredFrameUiTimer.Tick += DeferredFrameUiTimer_Tick;
+
+            modelTestLogTimer.Interval = ModelTestLogUiIntervalMs;
+            modelTestLogTimer.Tick += ModelTestLogTimer_Tick;
 
             // 표시용 이미지 캐시 초기화 (최근 64프레임 유지)
             frameImageCache = new FrameImageCache(64, LoadImage);
@@ -1450,6 +1471,8 @@ namespace DataManager
                 if (res == DialogResult.Yes)
                 {
                     _executor.Cancel(); // 파이썬에 강제 종료 신호 전송
+                    isModelTestRunning = false;
+                    ClearPendingModelTestLogs();
 
                     txtLog.AppendText(Environment.NewLine + "🛑 [알림] 사용자에 의해 작업이 강제 중지되었습니다." + Environment.NewLine);
                     _summaryLogBuilder.AppendLine("🛑 [알림] 사용자에 의해 작업이 강제 중지되었습니다.");
@@ -2046,6 +2069,9 @@ namespace DataManager
             txtLog.AppendText(Environment.NewLine + $"[Test] {Path.GetFileName(modelPath)} 예측 시작...");
             ResetModelTestResult();
             ShowTestImagePreview(FindFirstTestImagePath());
+            ClearPendingModelTestLogs();
+            isModelTestRunning = true;
+            modelTestLogTimer.Start();
 
             UpdateStatusLabel("모델 테스트 중", Color.DarkOrange);
             _testCount++;
@@ -2054,8 +2080,7 @@ namespace DataManager
             bool useVenv = chkUseVenv != null ? chkUseVenv.Checked : true;
             _executor.ExecuteTest(configPath, modelPath, testImagePath, useVenv, (log) =>
             {
-                // 프리징 방지를 위해 BeginInvoke 사용
-                this.BeginInvoke(new Action(() => HandleModelTestLog(log)));
+                modelTestLogQueue.Enqueue(log);
             });
         }
 
@@ -2073,6 +2098,28 @@ namespace DataManager
             lblTrainStatus2.ForeColor = Color.DarkOrange;
         }
 
+        private void ModelTestLogTimer_Tick(object? sender, EventArgs e)
+        {
+            int processed = 0;
+            while (processed < ModelTestLogMaxPerTick && modelTestLogQueue.TryDequeue(out string? logText))
+            {
+                HandleModelTestLog(logText);
+                processed++;
+            }
+
+            if (!isModelTestRunning && modelTestLogQueue.IsEmpty)
+            {
+                modelTestLogTimer.Stop();
+            }
+        }
+
+        private void ClearPendingModelTestLogs()
+        {
+            while (modelTestLogQueue.TryDequeue(out _))
+            {
+            }
+        }
+
         private void HandleModelTestLog(string logText)
         {
             if (string.IsNullOrWhiteSpace(logText)) return;
@@ -2080,6 +2127,7 @@ namespace DataManager
             // 모델 파일 없음 팝업 로직 (그대로 유지)
             if (logText.StartsWith("[NO_MODEL]"))
             {
+                isModelTestRunning = false;
                 string missingPath = logText.Substring(10).Trim();
                 MessageBox.Show($"지정된 경로에 AI 모델(.h5) 파일이 존재하지 않습니다.\n\n경로: {missingPath}\n\n아직 학습이 완료되지 않았거나 파일이 지워졌습니다. 먼저 [학습 시작]을 눌러 모델을 생성해 주세요.", "모델 파일 없음", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 UpdateStatusLabel("대기 중", Color.Green);
@@ -2120,10 +2168,6 @@ namespace DataManager
 
             string? imageReference = TryFindImageReferenceFromLog(logText);
             string? imagePath = TryFindImagePathFromLog(logText);
-            if (!string.IsNullOrWhiteSpace(imagePath))
-            {
-                ShowTestImagePreview(imagePath);
-            }
 
             if (TryExtractLogValue(logText, new[]
                 {
@@ -2132,7 +2176,6 @@ namespace DataManager
                 }, out double realAngle))
             {
                 latestTestRealAngle = realAngle;
-                lblRealAngle2.Text = realAngle.ToString("0.000");
             }
 
             if (TryExtractLogValue(logText, new[] 
@@ -2144,33 +2187,32 @@ namespace DataManager
                 latestTestPredictAngle = predictAngle;
                 string? predictionImageReference = imagePath ?? imageReference ?? latestTestImagePath;
                 StorePredictedAngleForImage(predictionImageReference, predictAngle);
-                if (TryFindTubFrameByImageReference(predictionImageReference, out TubFrame? predictedFrame) && predictedFrame is not null)
-                {
-                    UpdatePredictionResultLabels(predictedFrame, predictAngle);
-                }
-                else
-                {
-                    lblPredictAngle2.Text = predictAngle.ToString("0.000");
-                }
                 picFrame.Invalidate();
             }
 
+            double? parsedErrorValue = null;
             if (TryExtractLogValue(logText, new[]
                 {
                     @"(?:error|loss|diff|오차)\s*[:=]\s*(-?\d+(?:\.\d+)?)"
                 }, out double errorValue))
             {
-                lblErrorValue2.Text = Math.Abs(errorValue).ToString("0.000");
+                parsedErrorValue = Math.Abs(errorValue);
             }
             else if (latestTestRealAngle.HasValue && latestTestPredictAngle.HasValue)
             {
-                lblErrorValue2.Text = Math.Abs(latestTestRealAngle.Value - latestTestPredictAngle.Value).ToString("0.000");
+                parsedErrorValue = Math.Abs(latestTestRealAngle.Value - latestTestPredictAngle.Value);
+            }
+
+            if (!string.IsNullOrWhiteSpace(imagePath) && ShowTestImagePreview(imagePath, throttle: true))
+            {
+                UpdateModelTestResultForPreview(imagePath, imageReference, parsedErrorValue);
             }
 
             if (logText.Contains("Finished", StringComparison.OrdinalIgnoreCase)
                 || logText.Contains("complete", StringComparison.OrdinalIgnoreCase)
                 || logText.Contains("완료", StringComparison.OrdinalIgnoreCase))
             {
+                isModelTestRunning = false;
                 lblTrainStatus2.Text = "테스트 완료";
                 lblTrainStatus2.ForeColor = Color.Green;
                 UpdateStatusLabel("대기 중", Color.Green);
@@ -2179,6 +2221,7 @@ namespace DataManager
                 || logText.Contains("Exception", StringComparison.OrdinalIgnoreCase)
                 || logText.Contains("Traceback", StringComparison.OrdinalIgnoreCase))
             {
+                isModelTestRunning = false;
                 lblTrainStatus2.Text = "오류";
                 lblTrainStatus2.ForeColor = Color.Red;
                 UpdateStatusLabel("대기 중", Color.Green);
@@ -2306,6 +2349,26 @@ namespace DataManager
             lblErrorValue2.Text = Math.Abs(frame.Angle - predictAngle).ToString("0.000");
         }
 
+        private void UpdateModelTestResultForPreview(string imagePath, string? imageReference, double? parsedErrorValue)
+        {
+            string? predictionImageReference = imagePath ?? imageReference;
+            if (TryFindTubFrameByImageReference(predictionImageReference, out TubFrame? previewFrame) && previewFrame is not null)
+            {
+                UpdatePredictionResultLabels(previewFrame);
+                return;
+            }
+
+            lblRealAngle2.Text = latestTestRealAngle.HasValue
+                ? latestTestRealAngle.Value.ToString("0.000")
+                : "-";
+            lblPredictAngle2.Text = latestTestPredictAngle.HasValue
+                ? latestTestPredictAngle.Value.ToString("0.000")
+                : "-";
+            lblErrorValue2.Text = parsedErrorValue.HasValue
+                ? parsedErrorValue.Value.ToString("0.000")
+                : "-";
+        }
+
         private static IEnumerable<string> GetImagePredictionKeys(string? imagePath)
         {
             if (string.IsNullOrWhiteSpace(imagePath)) yield break;
@@ -2317,15 +2380,23 @@ namespace DataManager
             if (!string.IsNullOrWhiteSpace(fileName)) yield return fileName;
         }
 
-        private void ShowTestImagePreview(string? imagePath)
+        private bool ShowTestImagePreview(string? imagePath, bool throttle = false)
         {
-            if (string.IsNullOrWhiteSpace(imagePath) || !File.Exists(imagePath)) return;
-            if (string.Equals(latestTestImagePath, imagePath, StringComparison.OrdinalIgnoreCase)) return;
+            if (string.IsNullOrWhiteSpace(imagePath) || !File.Exists(imagePath)) return false;
+            if (string.Equals(latestTestImagePath, imagePath, StringComparison.OrdinalIgnoreCase)) return false;
+
+            if (throttle)
+            {
+                long now = Environment.TickCount64;
+                if (now - lastTestPreviewUpdateTick < ModelTestPreviewUpdateIntervalMs) return false;
+                lastTestPreviewUpdateTick = now;
+            }
 
             Image? oldImage = picTestImage.Image;
             picTestImage.Image = LoadImage(imagePath);
             oldImage?.Dispose();
             latestTestImagePath = imagePath;
+            return true;
         }
 
         private static bool TryExtractLogValue(string logText, IEnumerable<string> patterns, out double value)
@@ -3237,19 +3308,7 @@ namespace DataManager
             if (index < 0 || index >= tubFrames.Count) return;
 
             TubFrame frame = tubFrames[index];
-            bool preserveAccumulatedSelection = HasSelection();
             int previousFrameIndex = trackFrame.Value;
-
-            if (syncFrameListSelection && !preserveAccumulatedSelection)
-            {
-                lstFrames.SelectedIndexChanged -= lstFrames_SelectedIndexChanged;
-                if (index < lstFrames.Items.Count)
-                {
-                    lstFrames.ClearSelected();
-                    lstFrames.SetSelected(index, true);
-                }
-                lstFrames.SelectedIndexChanged += lstFrames_SelectedIndexChanged;
-            }
 
             trackFrame.Value = index;
 
@@ -3264,6 +3323,60 @@ namespace DataManager
             UpdatePredictionResultLabels(frame);
             picFrame.Invalidate();
             picFrame.Update();
+
+            if (updateTimelineWindow)
+            {
+                UpdateTimelineForFrame(index);
+            }
+
+            ScheduleDeferredFrameUiUpdate(index, previousFrameIndex, syncFrameListSelection, syncTimelineSelection, updateTimelineWindow: false);
+        }
+
+        private void ScheduleDeferredFrameUiUpdate(int index, int previousFrameIndex, bool syncFrameListSelection, bool syncTimelineSelection, bool updateTimelineWindow)
+        {
+            deferredFrameIndex = index;
+            deferredPreviousFrameIndex = previousFrameIndex;
+            deferredSyncFrameListSelection = syncFrameListSelection;
+            deferredSyncTimelineSelection = syncTimelineSelection;
+            deferredUpdateTimelineWindow = updateTimelineWindow;
+
+            deferredFrameUiTimer.Stop();
+            deferredFrameUiTimer.Start();
+        }
+
+        private void DeferredFrameUiTimer_Tick(object? sender, EventArgs e)
+        {
+            deferredFrameUiTimer.Stop();
+            ApplyDeferredFrameUiUpdate();
+        }
+
+        private void ApplyDeferredFrameUiUpdate()
+        {
+            int index = deferredFrameIndex;
+            if (index < 0 || index >= tubFrames.Count) return;
+
+            int previousFrameIndex = deferredPreviousFrameIndex;
+            bool preserveAccumulatedSelection = HasSelection();
+            bool syncFrameListSelection = deferredSyncFrameListSelection;
+            bool syncTimelineSelection = deferredSyncTimelineSelection;
+            bool updateTimelineWindow = deferredUpdateTimelineWindow;
+
+            if (syncFrameListSelection && !preserveAccumulatedSelection)
+            {
+                lstFrames.SelectedIndexChanged -= lstFrames_SelectedIndexChanged;
+                try
+                {
+                    if (index < lstFrames.Items.Count)
+                    {
+                        lstFrames.ClearSelected();
+                        lstFrames.SetSelected(index, true);
+                    }
+                }
+                finally
+                {
+                    lstFrames.SelectedIndexChanged += lstFrames_SelectedIndexChanged;
+                }
+            }
 
             if (updateTimelineWindow)
             {
