@@ -238,6 +238,15 @@
   <metadata name="toolTip1.TrayLocation" type="System.Drawing.Point, System.Drawing, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a">
     <value>17, 17</value>
   </metadata>
+  <data name="btnStopTest.Image" type="System.Drawing.Bitmap, System.Drawing" mimetype="application/x-microsoft.net.object.bytearray.base64">
+    <value>
+        iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAABGdBTUEAALGPC/xhBQAAAAlwSFlzAAAd
+        hQAAHYUB8Bsy7AAAAL5JREFUWEftlj0KwkAQRnMLQfBI+fm+tdHCSq8S7ey09DBWqTyMiJlsUNmAIIOy
+        uBY282DaN2+3miwzDOMDt7KcSFWtBNh3wCFlBNgJsLgUxVj7o/TAsgNOAkhH3lNGyFbIpndupv1Rwst/
+        Wf4a4Z1ba3+U4RvfCFPGk1vtj2IBFmABFmABFvD3gOGYIFst+3YEuHqg1v4o4ZLxZPNLRFgu5LEFptof
+        JZxRQs6F3IQvTBqgDsvPeT7SfsMwnjwAZJDxB4+3AqcAAAAASUVORK5CYII=
+</value>
+  </data>
   <data name="btnLoadConfig.Image" type="System.Drawing.Bitmap, System.Drawing" mimetype="application/x-microsoft.net.object.bytearray.base64">
     <value>
         iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAABGdBTUEAALGPC/xhBQAAAAlwSFlzAAAd

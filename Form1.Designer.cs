@@ -65,7 +65,15 @@
             btnSetLeft = new Button();
             tabGraph = new TabPage();
             tabTrainTest = new TabPage();
-            txtSummaryLog = new TextBox();
+            grpTrainProgress = new GroupBox();
+            lblProgressPercent = new Label();
+            lblProgress = new Label();
+            progressBarTrain = new ProgressBar();
+            grpTrainControl = new GroupBox();
+            btnTrain = new Button();
+            btnStopTask = new Button();
+            txtLog = new TextBox();
+            tabAiCompile = new TabPage();
             grpPredictResult = new GroupBox();
             panel4 = new Panel();
             lblTrainStatus2 = new Label();
@@ -76,21 +84,14 @@
             lblTrainStatus = new Label();
             lblPredictAngle = new Label();
             lblRealAngle = new Label();
-            grpTrainProgress = new GroupBox();
-            lblProgressPercent = new Label();
-            lblProgress = new Label();
-            progressBarTrain = new ProgressBar();
-            grpTrainControl = new GroupBox();
-            btnTrain = new Button();
-            btnStopTask = new Button();
             grpTestImage = new GroupBox();
             picTestImage = new PictureBox();
             btnSelectTestImage = new Button();
+            txtSummaryLog = new TextBox();
             grpTrainSetting = new GroupBox();
+            btnStopTest = new Button();
             btnSelectModel = new Button();
             btnModelTest = new Button();
-            txtLog = new TextBox();
-            tabAiCompile = new TabPage();
             lstHighErrorFrames = new ListBox();
             btnDeleteHighError = new Button();
             btnRunAICompile = new Button();
@@ -134,13 +135,13 @@
             tabCleaner.SuspendLayout();
             groupBoxTrash.SuspendLayout();
             tabTrainTest.SuspendLayout();
-            grpPredictResult.SuspendLayout();
             grpTrainProgress.SuspendLayout();
             grpTrainControl.SuspendLayout();
+            tabAiCompile.SuspendLayout();
+            grpPredictResult.SuspendLayout();
             grpTestImage.SuspendLayout();
             ((System.ComponentModel.ISupportInitialize)picTestImage).BeginInit();
             grpTrainSetting.SuspendLayout();
-            tabAiCompile.SuspendLayout();
             groupFrameList.SuspendLayout();
             ((System.ComponentModel.ISupportInitialize)picFrame).BeginInit();
             ((System.ComponentModel.ISupportInitialize)trackFrame).BeginInit();
@@ -415,7 +416,7 @@
             groupBoxTrash.TabIndex = 20;
             groupBoxTrash.TabStop = false;
             groupBoxTrash.Text = "휴지통";
-            //
+            // 
             // lblTrastList
             // 
             lblTrastList.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
@@ -588,34 +589,135 @@
             // tabTrainTest
             // 
             tabTrainTest.BackColor = Color.White;
-            tabTrainTest.Controls.Add(txtSummaryLog);
-            tabTrainTest.Controls.Add(grpPredictResult);
             tabTrainTest.Controls.Add(grpTrainProgress);
             tabTrainTest.Controls.Add(grpTrainControl);
-            tabTrainTest.Controls.Add(grpTestImage);
-            tabTrainTest.Controls.Add(grpTrainSetting);
             tabTrainTest.Controls.Add(txtLog);
             tabTrainTest.Location = new Point(8, 46);
             tabTrainTest.Margin = new Padding(4);
             tabTrainTest.Name = "tabTrainTest";
             tabTrainTest.Size = new Size(2381, 260);
             tabTrainTest.TabIndex = 2;
-            tabTrainTest.Text = "학습/테스트";
+            tabTrainTest.Text = " 학습";
             // 
-            // txtSummaryLog
+            // grpTrainProgress
             // 
-            txtSummaryLog.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
-            txtSummaryLog.BackColor = SystemColors.ButtonHighlight;
-            txtSummaryLog.Font = new Font("나눔고딕", 8.999999F, FontStyle.Regular, GraphicsUnit.Point, 0);
-            txtSummaryLog.Location = new Point(2036, 13);
-            txtSummaryLog.Margin = new Padding(4);
-            txtSummaryLog.Multiline = true;
-            txtSummaryLog.Name = "txtSummaryLog";
-            txtSummaryLog.ReadOnly = true;
-            txtSummaryLog.ScrollBars = ScrollBars.Vertical;
-            txtSummaryLog.Size = new Size(341, 224);
-            txtSummaryLog.TabIndex = 31;
-            txtSummaryLog.Text = "준비 완료...\r\n";
+            grpTrainProgress.Controls.Add(lblProgressPercent);
+            grpTrainProgress.Controls.Add(lblProgress);
+            grpTrainProgress.Controls.Add(progressBarTrain);
+            grpTrainProgress.Font = new Font("나눔고딕", 8.999999F, FontStyle.Regular, GraphicsUnit.Point, 129);
+            grpTrainProgress.Location = new Point(30, 131);
+            grpTrainProgress.Name = "grpTrainProgress";
+            grpTrainProgress.Size = new Size(481, 123);
+            grpTrainProgress.TabIndex = 29;
+            grpTrainProgress.TabStop = false;
+            grpTrainProgress.Text = "학습 진행률";
+            // 
+            // lblProgressPercent
+            // 
+            lblProgressPercent.AutoSize = true;
+            lblProgressPercent.Font = new Font("나눔고딕", 8.999999F, FontStyle.Regular, GraphicsUnit.Point, 129);
+            lblProgressPercent.Location = new Point(410, 59);
+            lblProgressPercent.Margin = new Padding(4, 0, 4, 0);
+            lblProgressPercent.Name = "lblProgressPercent";
+            lblProgressPercent.Size = new Size(53, 28);
+            lblProgressPercent.TabIndex = 25;
+            lblProgressPercent.Text = "0%";
+            // 
+            // lblProgress
+            // 
+            lblProgress.AutoSize = true;
+            lblProgress.Font = new Font("나눔고딕", 8.999999F, FontStyle.Regular, GraphicsUnit.Point, 129);
+            lblProgress.Location = new Point(10, 59);
+            lblProgress.Margin = new Padding(4, 0, 4, 0);
+            lblProgress.Name = "lblProgress";
+            lblProgress.Size = new Size(88, 28);
+            lblProgress.TabIndex = 17;
+            lblProgress.Text = "진행률:";
+            // 
+            // progressBarTrain
+            // 
+            progressBarTrain.Location = new Point(98, 59);
+            progressBarTrain.Margin = new Padding(6);
+            progressBarTrain.Name = "progressBarTrain";
+            progressBarTrain.Size = new Size(302, 29);
+            progressBarTrain.TabIndex = 24;
+            // 
+            // grpTrainControl
+            // 
+            grpTrainControl.Controls.Add(btnTrain);
+            grpTrainControl.Controls.Add(btnStopTask);
+            grpTrainControl.Font = new Font("나눔고딕", 8.999999F, FontStyle.Regular, GraphicsUnit.Point, 129);
+            grpTrainControl.Location = new Point(34, 13);
+            grpTrainControl.Name = "grpTrainControl";
+            grpTrainControl.Size = new Size(481, 112);
+            grpTrainControl.TabIndex = 28;
+            grpTrainControl.TabStop = false;
+            grpTrainControl.Text = "학습 제어";
+            // 
+            // btnTrain
+            // 
+            btnTrain.BackColor = Color.DodgerBlue;
+            btnTrain.Font = new Font("나눔고딕 ExtraBold", 8.999999F, FontStyle.Bold, GraphicsUnit.Point, 129);
+            btnTrain.ForeColor = Color.White;
+            btnTrain.Image = (Image)resources.GetObject("btnTrain.Image");
+            btnTrain.ImageAlign = ContentAlignment.MiddleLeft;
+            btnTrain.Location = new Point(31, 37);
+            btnTrain.Margin = new Padding(4);
+            btnTrain.Name = "btnTrain";
+            btnTrain.Padding = new Padding(15, 0, 0, 0);
+            btnTrain.Size = new Size(191, 53);
+            btnTrain.TabIndex = 11;
+            btnTrain.Text = "　학습 시작";
+            btnTrain.UseVisualStyleBackColor = false;
+            btnTrain.Click += btnTrain_Click;
+            // 
+            // btnStopTask
+            // 
+            btnStopTask.BackColor = Color.White;
+            btnStopTask.Font = new Font("나눔고딕", 8.999999F, FontStyle.Bold, GraphicsUnit.Point, 129);
+            btnStopTask.ForeColor = Color.Red;
+            btnStopTask.Image = (Image)resources.GetObject("btnStopTask.Image");
+            btnStopTask.ImageAlign = ContentAlignment.MiddleLeft;
+            btnStopTask.Location = new Point(258, 37);
+            btnStopTask.Margin = new Padding(6);
+            btnStopTask.Name = "btnStopTask";
+            btnStopTask.Padding = new Padding(15, 0, 0, 0);
+            btnStopTask.Size = new Size(191, 53);
+            btnStopTask.TabIndex = 25;
+            btnStopTask.Text = "　학습 중지";
+            btnStopTask.UseVisualStyleBackColor = false;
+            // 
+            // txtLog
+            // 
+            txtLog.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
+            txtLog.BackColor = SystemColors.ButtonHighlight;
+            txtLog.Font = new Font("나눔고딕", 8.999999F, FontStyle.Regular, GraphicsUnit.Point, 0);
+            txtLog.Location = new Point(603, 13);
+            txtLog.Margin = new Padding(4);
+            txtLog.Multiline = true;
+            txtLog.Name = "txtLog";
+            txtLog.ReadOnly = true;
+            txtLog.ScrollBars = ScrollBars.Vertical;
+            txtLog.Size = new Size(344, 241);
+            txtLog.TabIndex = 20;
+            txtLog.Text = "준비 완료...\r\n";
+            // 
+            // tabAiCompile
+            // 
+            tabAiCompile.BackColor = Color.White;
+            tabAiCompile.Controls.Add(grpPredictResult);
+            tabAiCompile.Controls.Add(grpTestImage);
+            tabAiCompile.Controls.Add(txtSummaryLog);
+            tabAiCompile.Controls.Add(grpTrainSetting);
+            tabAiCompile.Controls.Add(lstHighErrorFrames);
+            tabAiCompile.Controls.Add(btnDeleteHighError);
+            tabAiCompile.Controls.Add(btnRunAICompile);
+            tabAiCompile.Location = new Point(8, 46);
+            tabAiCompile.Name = "tabAiCompile";
+            tabAiCompile.Padding = new Padding(3);
+            tabAiCompile.Size = new Size(2381, 260);
+            tabAiCompile.TabIndex = 3;
+            tabAiCompile.Text = "AI 컴파일";
             // 
             // grpPredictResult
             // 
@@ -630,10 +732,10 @@
             grpPredictResult.Controls.Add(lblPredictAngle);
             grpPredictResult.Controls.Add(lblRealAngle);
             grpPredictResult.Font = new Font("나눔고딕", 8.999999F, FontStyle.Regular, GraphicsUnit.Point, 129);
-            grpPredictResult.Location = new Point(1261, 13);
+            grpPredictResult.Location = new Point(1278, 10);
             grpPredictResult.Name = "grpPredictResult";
             grpPredictResult.Size = new Size(343, 241);
-            grpPredictResult.TabIndex = 30;
+            grpPredictResult.TabIndex = 34;
             grpPredictResult.TabStop = false;
             grpPredictResult.Text = "예측 결과";
             // 
@@ -738,103 +840,15 @@
             lblRealAngle.TabIndex = 19;
             lblRealAngle.Text = "실제 조향각";
             // 
-            // grpTrainProgress
-            // 
-            grpTrainProgress.Controls.Add(lblProgressPercent);
-            grpTrainProgress.Controls.Add(lblProgress);
-            grpTrainProgress.Controls.Add(progressBarTrain);
-            grpTrainProgress.Font = new Font("나눔고딕", 8.999999F, FontStyle.Regular, GraphicsUnit.Point, 129);
-            grpTrainProgress.Location = new Point(17, 131);
-            grpTrainProgress.Name = "grpTrainProgress";
-            grpTrainProgress.Size = new Size(481, 123);
-            grpTrainProgress.TabIndex = 29;
-            grpTrainProgress.TabStop = false;
-            grpTrainProgress.Text = "학습 진행률";
-            // 
-            // lblProgressPercent
-            // 
-            lblProgressPercent.AutoSize = true;
-            lblProgressPercent.Font = new Font("나눔고딕", 8.999999F, FontStyle.Regular, GraphicsUnit.Point, 129);
-            lblProgressPercent.Location = new Point(410, 59);
-            lblProgressPercent.Margin = new Padding(4, 0, 4, 0);
-            lblProgressPercent.Name = "lblProgressPercent";
-            lblProgressPercent.Size = new Size(53, 28);
-            lblProgressPercent.TabIndex = 25;
-            lblProgressPercent.Text = "0%";
-            // 
-            // lblProgress
-            // 
-            lblProgress.AutoSize = true;
-            lblProgress.Font = new Font("나눔고딕", 8.999999F, FontStyle.Regular, GraphicsUnit.Point, 129);
-            lblProgress.Location = new Point(10, 59);
-            lblProgress.Margin = new Padding(4, 0, 4, 0);
-            lblProgress.Name = "lblProgress";
-            lblProgress.Size = new Size(88, 28);
-            lblProgress.TabIndex = 17;
-            lblProgress.Text = "진행률:";
-            // 
-            // progressBarTrain
-            // 
-            progressBarTrain.Location = new Point(98, 59);
-            progressBarTrain.Margin = new Padding(6);
-            progressBarTrain.Name = "progressBarTrain";
-            progressBarTrain.Size = new Size(302, 29);
-            progressBarTrain.TabIndex = 24;
-            // 
-            // grpTrainControl
-            // 
-            grpTrainControl.Controls.Add(btnTrain);
-            grpTrainControl.Controls.Add(btnStopTask);
-            grpTrainControl.Font = new Font("나눔고딕", 8.999999F, FontStyle.Regular, GraphicsUnit.Point, 129);
-            grpTrainControl.Location = new Point(17, 13);
-            grpTrainControl.Name = "grpTrainControl";
-            grpTrainControl.Size = new Size(481, 112);
-            grpTrainControl.TabIndex = 28;
-            grpTrainControl.TabStop = false;
-            grpTrainControl.Text = "학습 제어";
-            // 
-            // btnTrain
-            // 
-            btnTrain.BackColor = Color.DodgerBlue;
-            btnTrain.Font = new Font("나눔고딕 ExtraBold", 8.999999F, FontStyle.Bold, GraphicsUnit.Point, 129);
-            btnTrain.ForeColor = Color.White;
-            btnTrain.Image = (Image)resources.GetObject("btnTrain.Image");
-            btnTrain.ImageAlign = ContentAlignment.MiddleLeft;
-            btnTrain.Location = new Point(31, 37);
-            btnTrain.Margin = new Padding(4);
-            btnTrain.Name = "btnTrain";
-            btnTrain.Padding = new Padding(15, 0, 0, 0);
-            btnTrain.Size = new Size(191, 53);
-            btnTrain.TabIndex = 11;
-            btnTrain.Text = "　학습 시작";
-            btnTrain.UseVisualStyleBackColor = false;
-            btnTrain.Click += btnTrain_Click;
-            // 
-            // btnStopTask
-            // 
-            btnStopTask.BackColor = Color.White;
-            btnStopTask.Font = new Font("나눔고딕", 8.999999F, FontStyle.Bold, GraphicsUnit.Point, 129);
-            btnStopTask.ForeColor = Color.Red;
-            btnStopTask.Image = (Image)resources.GetObject("btnStopTask.Image");
-            btnStopTask.ImageAlign = ContentAlignment.MiddleLeft;
-            btnStopTask.Location = new Point(258, 37);
-            btnStopTask.Margin = new Padding(6);
-            btnStopTask.Name = "btnStopTask";
-            btnStopTask.Padding = new Padding(15, 0, 0, 0);
-            btnStopTask.Size = new Size(191, 53);
-            btnStopTask.TabIndex = 25;
-            btnStopTask.Text = "　학습 중지";
-            btnStopTask.UseVisualStyleBackColor = false;
-            // 
             // grpTestImage
             // 
             grpTestImage.Controls.Add(picTestImage);
             grpTestImage.Controls.Add(btnSelectTestImage);
             grpTestImage.Font = new Font("나눔고딕", 8.999999F, FontStyle.Regular, GraphicsUnit.Point, 129);
-            grpTestImage.Location = new Point(537, 131);
+            grpTestImage.Location = new Point(396, 128);
             grpTestImage.Name = "grpTestImage";
             grpTestImage.Size = new Size(670, 126);
-            grpTestImage.TabIndex = 27;
+            grpTestImage.TabIndex = 33;
             grpTestImage.TabStop = false;
             grpTestImage.Text = "테스트 이미지";
             // 
@@ -858,19 +872,50 @@
             btnSelectTestImage.Text = "테스트 이미지 선택";
             toolTip1.SetToolTip(btnSelectTestImage, "모델 테스트할 Data 폴더 열기");
             btnSelectTestImage.UseVisualStyleBackColor = true;
-            btnSelectTestImage.Click += btnSelectTestImage_Click;
+            // 
+            // txtSummaryLog
+            // 
+            txtSummaryLog.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
+            txtSummaryLog.BackColor = SystemColors.ButtonHighlight;
+            txtSummaryLog.Font = new Font("나눔고딕", 8.999999F, FontStyle.Regular, GraphicsUnit.Point, 0);
+            txtSummaryLog.Location = new Point(15, 17);
+            txtSummaryLog.Margin = new Padding(4);
+            txtSummaryLog.Multiline = true;
+            txtSummaryLog.Name = "txtSummaryLog";
+            txtSummaryLog.ReadOnly = true;
+            txtSummaryLog.ScrollBars = ScrollBars.Vertical;
+            txtSummaryLog.Size = new Size(341, 224);
+            txtSummaryLog.TabIndex = 32;
+            txtSummaryLog.Text = "준비 완료...\r\n";
             // 
             // grpTrainSetting
             // 
+            grpTrainSetting.Controls.Add(btnStopTest);
             grpTrainSetting.Controls.Add(btnSelectModel);
             grpTrainSetting.Controls.Add(btnModelTest);
             grpTrainSetting.Font = new Font("나눔고딕", 8.999999F, FontStyle.Regular, GraphicsUnit.Point, 129);
-            grpTrainSetting.Location = new Point(537, 18);
+            grpTrainSetting.Location = new Point(396, 10);
             grpTrainSetting.Name = "grpTrainSetting";
-            grpTrainSetting.Size = new Size(670, 112);
-            grpTrainSetting.TabIndex = 26;
+            grpTrainSetting.Size = new Size(778, 112);
+            grpTrainSetting.TabIndex = 27;
             grpTrainSetting.TabStop = false;
             grpTrainSetting.Text = "학습 설정";
+            // 
+            // btnStopTest
+            // 
+            btnStopTest.BackColor = Color.White;
+            btnStopTest.Font = new Font("나눔고딕", 8.999999F, FontStyle.Bold, GraphicsUnit.Point, 129);
+            btnStopTest.ForeColor = Color.Red;
+            btnStopTest.Image = (Image)resources.GetObject("btnStopTest.Image");
+            btnStopTest.ImageAlign = ContentAlignment.MiddleLeft;
+            btnStopTest.Location = new Point(549, 35);
+            btnStopTest.Margin = new Padding(6);
+            btnStopTest.Name = "btnStopTest";
+            btnStopTest.Padding = new Padding(15, 0, 0, 0);
+            btnStopTest.Size = new Size(214, 53);
+            btnStopTest.TabIndex = 35;
+            btnStopTest.Text = "　테스트 중지";
+            btnStopTest.UseVisualStyleBackColor = false;
             // 
             // btnSelectModel
             // 
@@ -882,61 +927,32 @@
             btnSelectModel.TabIndex = 13;
             btnSelectModel.Text = ".h5 파일 선택";
             btnSelectModel.UseVisualStyleBackColor = true;
-            btnSelectModel.Click += btnSelectModel_Click;
             // 
             // btnModelTest
             // 
             btnModelTest.Font = new Font("나눔고딕", 10.125F, FontStyle.Regular, GraphicsUnit.Point, 129);
             btnModelTest.ImageAlign = ContentAlignment.MiddleLeft;
-            btnModelTest.Location = new Point(327, 35);
+            btnModelTest.Location = new Point(255, 35);
             btnModelTest.Margin = new Padding(4);
             btnModelTest.Name = "btnModelTest";
-            btnModelTest.Size = new Size(309, 53);
+            btnModelTest.Size = new Size(266, 53);
             btnModelTest.TabIndex = 12;
             btnModelTest.Text = "모델 테스트 실행";
             btnModelTest.UseVisualStyleBackColor = true;
-            btnModelTest.Click += btnModelTest_Click;
-            // 
-            // txtLog
-            // 
-            txtLog.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
-            txtLog.BackColor = SystemColors.ButtonHighlight;
-            txtLog.Font = new Font("나눔고딕", 8.999999F, FontStyle.Regular, GraphicsUnit.Point, 0);
-            txtLog.Location = new Point(1668, 13);
-            txtLog.Margin = new Padding(4);
-            txtLog.Multiline = true;
-            txtLog.Name = "txtLog";
-            txtLog.ReadOnly = true;
-            txtLog.ScrollBars = ScrollBars.Vertical;
-            txtLog.Size = new Size(344, 224);
-            txtLog.TabIndex = 20;
-            txtLog.Text = "준비 완료...\r\n";
-            // 
-            // tabAiCompile
-            // 
-            tabAiCompile.Controls.Add(lstHighErrorFrames);
-            tabAiCompile.Controls.Add(btnDeleteHighError);
-            tabAiCompile.Controls.Add(btnRunAICompile);
-            tabAiCompile.Location = new Point(8, 46);
-            tabAiCompile.Name = "tabAiCompile";
-            tabAiCompile.Padding = new Padding(3);
-            tabAiCompile.Size = new Size(2381, 260);
-            tabAiCompile.TabIndex = 3;
-            tabAiCompile.Text = "AI 컴파일";
             // 
             // lstHighErrorFrames
             // 
             lstHighErrorFrames.FormattingEnabled = true;
-            lstHighErrorFrames.Location = new Point(16, 16);
+            lstHighErrorFrames.Location = new Point(1668, 23);
             lstHighErrorFrames.Name = "lstHighErrorFrames";
-            lstHighErrorFrames.Size = new Size(520, 132);
+            lstHighErrorFrames.Size = new Size(520, 228);
             lstHighErrorFrames.TabIndex = 0;
             lstHighErrorFrames.SelectedIndexChanged += lstHighErrorFrames_SelectedIndexChanged;
             // 
             // btnDeleteHighError
             // 
             btnDeleteHighError.Font = new Font("나눔고딕", 10.125F);
-            btnDeleteHighError.Location = new Point(552, 96);
+            btnDeleteHighError.Location = new Point(2211, 128);
             btnDeleteHighError.Name = "btnDeleteHighError";
             btnDeleteHighError.Size = new Size(140, 52);
             btnDeleteHighError.TabIndex = 2;
@@ -947,7 +963,7 @@
             // btnRunAICompile
             // 
             btnRunAICompile.Font = new Font("나눔고딕", 10.125F);
-            btnRunAICompile.Location = new Point(552, 24);
+            btnRunAICompile.Location = new Point(2211, 56);
             btnRunAICompile.Name = "btnRunAICompile";
             btnRunAICompile.Size = new Size(140, 52);
             btnRunAICompile.TabIndex = 1;
@@ -1397,15 +1413,16 @@
             groupBoxTrash.PerformLayout();
             tabTrainTest.ResumeLayout(false);
             tabTrainTest.PerformLayout();
-            grpPredictResult.ResumeLayout(false);
-            grpPredictResult.PerformLayout();
             grpTrainProgress.ResumeLayout(false);
             grpTrainProgress.PerformLayout();
             grpTrainControl.ResumeLayout(false);
+            tabAiCompile.ResumeLayout(false);
+            tabAiCompile.PerformLayout();
+            grpPredictResult.ResumeLayout(false);
+            grpPredictResult.PerformLayout();
             grpTestImage.ResumeLayout(false);
             ((System.ComponentModel.ISupportInitialize)picTestImage).EndInit();
             grpTrainSetting.ResumeLayout(false);
-            tabAiCompile.ResumeLayout(false);
             groupFrameList.ResumeLayout(false);
             ((System.ComponentModel.ISupportInitialize)picFrame).EndInit();
             ((System.ComponentModel.ISupportInitialize)trackFrame).EndInit();
@@ -1438,10 +1455,6 @@
         private TabPage tabTrainTest;
         private TabPage tabAiCompile;
         private Label lblProgress;
-        private Label lblTrainStatus;
-        private Button btnSelectTestImage;
-        private Button btnSelectModel;
-        private Button btnModelTest;
         private Button btnTrain;
         private Label lblTrastList;
         private Button btnEmptyTrash;
@@ -1457,8 +1470,6 @@
         private Button btnSetRight;
         private Button btnSetLeft;
         private TextBox txtLog;
-        private Label lblRealAngle;
-        private Label lblPredictAngle;
         private Button btnLoadConfig;
         private Label lblConfigPath;
         // (removed stale GroupBox 'groupConfigLoader' — replaced by 'groupBoxDataLoad' in this version)
@@ -1489,20 +1500,10 @@
         private Label lblSpeed;
         private Label lblCurrentFrame2;
         private Label lblCurrentFrame;
-        private GroupBox grpTestImage;
-        private PictureBox picTestImage;
-        private GroupBox grpTrainSetting;
         private GroupBox grpTrainControl;
         private ToolTip toolTip1;
         private GroupBox grpTrainProgress;
         private Label lblProgressPercent;
-        private GroupBox grpPredictResult;
-        private Label lblErrorValue;
-        private Label lblErrorValue2;
-        private Label lblPredictAngle2;
-        private Label lblRealAngle2;
-        private Panel panel4;
-        private Label lblTrainStatus2;
         private Panel panel5;
         private Label lblUser;
         private Label lblStatus2;
@@ -1514,9 +1515,26 @@
         private Label lblAngle2;
         private Label lblFrame2;
         private Label lblThrottle2;
-        private TextBox txtSummaryLog;
         private ListBox lstHighErrorFrames;
         private Button btnDeleteHighError;
         private Button btnRunAICompile;
+        private TextBox txtSummaryLog;
+        private GroupBox grpTrainSetting;
+        private Button btnSelectModel;
+        private Button btnModelTest;
+        private GroupBox grpPredictResult;
+        private Panel panel4;
+        private Label lblTrainStatus2;
+        private Label lblErrorValue;
+        private Label lblErrorValue2;
+        private Label lblPredictAngle2;
+        private Label lblRealAngle2;
+        private Label lblTrainStatus;
+        private Label lblPredictAngle;
+        private Label lblRealAngle;
+        private GroupBox grpTestImage;
+        private PictureBox picTestImage;
+        private Button btnSelectTestImage;
+        private Button btnStopTest;
     }
 }
