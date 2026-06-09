@@ -3309,15 +3309,40 @@ namespace DataManager
             lock (frameImagePrefetchLock)
             {
                 frameImagePrefetchCts?.Cancel();
-                frameImagePrefetchCts?.Dispose();
                 frameImagePrefetchCts = cts;
             }
 
             _ = Task.Run(() =>
             {
-                PrefetchFrameImages(imagePaths, cts.Token);
-                PrefetchTimelineThumbnails(thumbnailPaths, thumbnailSize, cts.Token);
-            }, cts.Token);
+                CancellationToken token = cts.Token;
+                try
+                {
+                    PrefetchFrameImages(imagePaths, token);
+                    PrefetchTimelineThumbnails(thumbnailPaths, thumbnailSize, token);
+                }
+                catch (OperationCanceledException)
+                {
+                }
+                catch (ObjectDisposedException)
+                {
+                }
+                catch
+                {
+                    // 미리 읽기 실패는 실제 프레임 표시 흐름을 막지 않도록 백그라운드에서만 정리한다.
+                }
+                finally
+                {
+                    lock (frameImagePrefetchLock)
+                    {
+                        if (ReferenceEquals(frameImagePrefetchCts, cts))
+                        {
+                            frameImagePrefetchCts = null;
+                        }
+                    }
+
+                    cts.Dispose();
+                }
+            });
         }
 
         private List<string> GetNextFrameImagePaths(int frameIndex, int count)
@@ -3380,12 +3405,14 @@ namespace DataManager
 
         private void CancelFrameImagePrefetch()
         {
+            CancellationTokenSource? cts;
             lock (frameImagePrefetchLock)
             {
-                frameImagePrefetchCts?.Cancel();
-                frameImagePrefetchCts?.Dispose();
+                cts = frameImagePrefetchCts;
                 frameImagePrefetchCts = null;
             }
+
+            cts?.Cancel();
         }
 
 
