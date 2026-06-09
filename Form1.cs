@@ -1473,16 +1473,30 @@ namespace DataManager
         {
             try
             {
+                // 1. 바탕화면 경로 가져오기
                 string desktopPath = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
+
+                // 2. 바탕화면 안에 만들 '전용 폴더 경로' 지정 (이름은 원하시는 대로 변경 가능합니다)
+                string logDirectory = Path.Combine(desktopPath, "Donkeycar_Logs");
+
+                // 3. 만약 해당 폴더가 없다면 새로 만들기!
+                if (!Directory.Exists(logDirectory))
+                {
+                    Directory.CreateDirectory(logDirectory);
+                }
+
                 string timeStamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
 
-                string origPath = Path.Combine(desktopPath, $"TrainLog_Original_{timeStamp}.txt");
-                string summaryPath = Path.Combine(desktopPath, $"TrainLog_Summary_{timeStamp}.txt");
+                // 4. 바탕화면이 아닌, 방금 만든 '전용 폴더(logDirectory)' 안에 파일 경로 지정
+                string origPath = Path.Combine(logDirectory, $"TrainLog_Original_{timeStamp}.txt");
+                string summaryPath = Path.Combine(logDirectory, $"TrainLog_Summary_{timeStamp}.txt");
 
+                // 5. 텍스트 파일 저장
                 File.WriteAllText(origPath, _originalLogBuilder.ToString());
                 File.WriteAllText(summaryPath, _summaryLogBuilder.ToString());
 
-                txtLog.AppendText(Environment.NewLine + $"💾 [로그 저장 완료] 바탕화면을 확인해 주세요!");
+                // 6. UI 로그 메시지도 폴더 이름을 알려주도록 친절하게 수정
+                txtLog.AppendText(Environment.NewLine + $"💾 [로그 저장 완료] 바탕화면의 'Donkeycar_Logs' 폴더를 확인해 주세요!");
                 txtLog.AppendText(Environment.NewLine + $"- 원본 로그: {Path.GetFileName(origPath)}");
                 txtLog.AppendText(Environment.NewLine + $"- 요약 로그: {Path.GetFileName(summaryPath)}");
             }
