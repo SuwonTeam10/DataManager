@@ -316,7 +316,7 @@ namespace DataManager
                         StartInfo = new ProcessStartInfo
                         {
                             FileName = "wsl",
-                            Arguments = "bash -lc \"pkill -f 'python.*train.py' || true; pkill -f 'train.py' || true\"",
+                            Arguments = "bash -lc \"pkill -f 'python.*train.py' || true; pkill -f 'train.py' || true; pkill -f 'eval_model.py' || true\"",
                             UseShellExecute = false,
                             CreateNoWindow = true
                         }

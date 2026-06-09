@@ -41,6 +41,8 @@ namespace DataManager
         private ToolStripMenuItem infoTrain;
         private ToolStripMenuItem infoTest;
         private ToolStripMenuItem menuAttempts;
+        private System.Text.StringBuilder _originalLogBuilder = new System.Text.StringBuilder();
+        private System.Text.StringBuilder _summaryLogBuilder = new System.Text.StringBuilder();
 
         private string configPath = "";
         private string tubPath = "";
@@ -1450,6 +1452,9 @@ namespace DataManager
                     _executor.Cancel(); // 파이썬에 강제 종료 신호 전송
 
                     txtLog.AppendText(Environment.NewLine + "🛑 [알림] 사용자에 의해 작업이 강제 중지되었습니다." + Environment.NewLine);
+                    _summaryLogBuilder.AppendLine("🛑 [알림] 사용자에 의해 작업이 강제 중지되었습니다.");
+
+                    if (_originalLogBuilder.Length > 0) SaveLogsToFile();
 
                     // 강제 중지 후 학습/테스트 UI 상태를 대기 상태로 되돌린다.
                     if (progressBarTrain != null) progressBarTrain.Value = 0;
@@ -1463,6 +1468,30 @@ namespace DataManager
                 }
             }
         }
+
+        private void SaveLogsToFile()
+        {
+            try
+            {
+                string desktopPath = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
+                string timeStamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+
+                string origPath = Path.Combine(desktopPath, $"TrainLog_Original_{timeStamp}.txt");
+                string summaryPath = Path.Combine(desktopPath, $"TrainLog_Summary_{timeStamp}.txt");
+
+                File.WriteAllText(origPath, _originalLogBuilder.ToString());
+                File.WriteAllText(summaryPath, _summaryLogBuilder.ToString());
+
+                txtLog.AppendText(Environment.NewLine + $"💾 [로그 저장 완료] 바탕화면을 확인해 주세요!");
+                txtLog.AppendText(Environment.NewLine + $"- 원본 로그: {Path.GetFileName(origPath)}");
+                txtLog.AppendText(Environment.NewLine + $"- 요약 로그: {Path.GetFileName(summaryPath)}");
+            }
+            catch (Exception ex)
+            {
+                txtLog.AppendText(Environment.NewLine + $"🚨 로그 파일 저장 실패: {ex.Message}");
+            }
+        }
+
 
         private void btnTrain_Click(object sender, EventArgs e)
         {
@@ -1491,7 +1520,16 @@ namespace DataManager
             if (res == DialogResult.No) return;
 
             ResetTrainingLossGraph();
-            txtLog.AppendText(Environment.NewLine + "[Train] AI 모델 학습을 시작합니다...");
+            txtLog.Text = "";
+            if (txtLogOriginal != null) txtLogOriginal.Text = "";
+
+            txtLog.AppendText("[Train] AI 모델 학습 요약을 시작합니다..." + Environment.NewLine);
+            if (txtLogOriginal != null) txtLogOriginal.AppendText("[Train] AI 모델 원본 로그를 기록합니다..." + Environment.NewLine);
+
+            _originalLogBuilder.Clear();
+            _summaryLogBuilder.Clear();
+            _originalLogBuilder.AppendLine($"--- Donkeycar 학습 원본 로그 ({DateTime.Now}) ---");
+            _summaryLogBuilder.AppendLine($"--- Donkeycar 학습 요약 로그 ({DateTime.Now}) ---");
 
             UpdateStatusLabel("학습 중", Color.DarkOrange);
 
@@ -1514,7 +1552,35 @@ namespace DataManager
             if (string.IsNullOrEmpty(logText)) return;
 
             bool isJunkLog = logText.Contains('\r') || logText.Contains('\b') || logText.Count(c => c == '=') > 10 || logText.Contains("\u001b");
-            if (!isJunkLog) txtLog.AppendText(logText + Environment.NewLine);
+
+            if (!isJunkLog)
+            {
+                if (txtLogOriginal != null)
+                {
+                    txtLogOriginal.AppendText(logText + Environment.NewLine);
+                    txtLogOriginal.ScrollToCaret();
+                }
+                _originalLogBuilder.AppendLine(logText);
+
+                bool isSummaryImportant =
+                    logText.StartsWith("Epoch ") ||
+                    logText.Contains("val_loss") ||
+                    logText.StartsWith("Records #") ||
+                    logText.StartsWith("[Train]") ||
+                    logText.StartsWith("🛑") ||
+                    logText.StartsWith("✅") ||
+                    logText.StartsWith("📁") ||
+                    logText.StartsWith("💾") ||
+                    logText.Contains("Error:") ||
+                    logText.Contains("---TRAINING_COMPLETE---");
+
+                if (isSummaryImportant)
+                {
+                    txtLog.AppendText(logText + Environment.NewLine);
+                    txtLog.ScrollToCaret();
+                    _summaryLogBuilder.AppendLine(logText);
+                }
+            }
 
             CaptureTrainingLoss(logText);
 
@@ -1522,10 +1588,10 @@ namespace DataManager
             {
                 MessageBox.Show($"학습 중 파이썬 오류가 발생했습니다.\n\n내용: {logText}", "학습 오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 UpdateStatusLabel("대기 중", Color.Green);
+                SaveLogsToFile();
                 return;
             }
 
-            // ★ 성공 감지기 (파이썬이 완전히 종료되었을 때 딱 1번만 실행됨)
             if (logText.Trim() == "---TRAINING_COMPLETE---")
             {
                 if (progressBarTrain != null) progressBarTrain.Value = progressBarTrain.Maximum;
@@ -1537,15 +1603,16 @@ namespace DataManager
                 txtLog.AppendText(Environment.NewLine + "--------------------------------------------------" + Environment.NewLine);
 
                 ShowTrainingLossGraph();
+                SaveLogsToFile();
+
                 MessageBox.Show($"🎉 AI 모델 학습이 성공적으로 완료되었습니다!\n\n[자동 저장 위치]\n{configPath}/models/mypilot.h5\n\n[다음 단계 안내]\n1. 좌측의 [모델 선택] 버튼을 누르세요. (자동으로 세팅됩니다.)\n2. [테스트 이미지 선택]을 누르세요. (원격 서버 폴더 자동 세팅)\n3. [모델 테스트 실행] 버튼을 눌러보세요!", "학습 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 UpdateStatusLabel("대기 중", Color.Green);
             }
-
-            // ★ 실패 감지기 (메모리 부족 등으로 튕겼을 때)
             else if (logText.Contains("Killed") || logText.Contains("Segmentation fault"))
             {
                 MessageBox.Show("🚨 학습이 비정상적으로 종료되었습니다. (메모리 부족 등)\n학습 옵션을 조절하거나 서버 상태를 확인하세요.", "학습 실패", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 UpdateStatusLabel("대기 중", Color.Green);
+                SaveLogsToFile();
             }
 
             Match epochMatch = Regex.Match(logText, @"Epoch\s+(\d+)/(\d+)");
@@ -1996,7 +2063,7 @@ namespace DataManager
         {
             if (string.IsNullOrWhiteSpace(logText)) return;
 
-            // ★ 인성님 요청: 모델 파일이 없을 때 팝업창으로 강력하게 알려주기!
+            // 모델 파일 없음 팝업 로직 (그대로 유지)
             if (logText.StartsWith("[NO_MODEL]"))
             {
                 string missingPath = logText.Substring(10).Trim();
@@ -2005,7 +2072,37 @@ namespace DataManager
                 return;
             }
 
-            txtLog.AppendText(Environment.NewLine + logText);
+            // ★ 추가: 원본 로그에서도 보기 흉한 로딩바(====)나 깨진 문자(\r, \b)는 걸러냅니다.
+            bool isJunkLog = logText.Contains('\r') || logText.Contains('\b') || logText.Count(c => c == '=') > 10 || logText.Contains("\u001b");
+            if (isJunkLog) return; // 정크 로그면 여기서 바로 종료! 아무곳에도 기록하지 않음.
+
+            // ==========================================
+            // ★ 로그 분리 로직 추가 (요약 vs 원본)
+            // ==========================================
+
+            // 1. 원본 로그에는 모든 테스트 결과를 기록 (Junk 제외)
+            if (txtLogOriginal != null)
+            {
+                txtLogOriginal.AppendText(Environment.NewLine + logText);
+                txtLogOriginal.ScrollToCaret();
+            }
+            _originalLogBuilder.AppendLine(logText);
+
+            // 2. 요약 로그에는 시작, 에러, 완료 등 '핵심 정보'만 기록
+            bool isSummaryImportant =
+                logText.StartsWith("[Test]") ||
+                logText.StartsWith("[Info]") || // 총 N개의 이미지를 테스트합니다.
+                logText.Contains("Error") ||
+                logText.Contains("Exception") ||
+                logText.Contains("Finished") ||
+                logText.StartsWith("🛑");
+
+            if (isSummaryImportant)
+            {
+                txtLog.AppendText(Environment.NewLine + logText);
+                txtLog.ScrollToCaret();
+                _summaryLogBuilder.AppendLine(logText);
+            }
 
             string? imageReference = TryFindImageReferenceFromLog(logText);
             string? imagePath = TryFindImagePathFromLog(logText);
@@ -2024,8 +2121,9 @@ namespace DataManager
                 lblRealAngle2.Text = realAngle.ToString("0.000");
             }
 
-            if (TryExtractLogValue(logText, new[]
+            if (TryExtractLogValue(logText, new[] 
                 {
+              
                     @"(?:predict(?:ed)?|prediction|pred|pilot/angle|예측\s*조향각|예측)\s*[:=]\s*(-?\d+(?:\.\d+)?)"
                 }, out double predictAngle))
             {
