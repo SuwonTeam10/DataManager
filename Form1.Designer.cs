@@ -88,7 +88,6 @@
             grpTestImage = new GroupBox();
             picTestImage = new PictureBox();
             btnSelectTestImage = new Button();
-            txtSummaryLog = new TextBox();
             grpTrainSetting = new GroupBox();
             btnStopTest = new Button();
             btnSelectModel = new Button();
@@ -585,14 +584,13 @@
             tabGraph.Padding = new Padding(4);
             tabGraph.Size = new Size(2381, 260);
             tabGraph.TabIndex = 1;
-            tabGraph.Text = "그래프";
+            tabGraph.Text = "속도/조향각 그래프";
             // 
             // tabTrainTest
             // 
             tabTrainTest.BackColor = Color.White;
             tabTrainTest.Controls.Add(grpTrainProgress);
             tabTrainTest.Controls.Add(grpTrainControl);
-            tabTrainTest.Controls.Add(txtLogOriginal);
             tabTrainTest.Controls.Add(txtLog);
             tabTrainTest.Location = new Point(8, 46);
             tabTrainTest.Margin = new Padding(4);
@@ -704,24 +702,12 @@
             txtLog.TabIndex = 20;
             txtLog.Text = "준비 완료...\r\n";
             // 
-            // txtLogOriginal
-            // 
-            txtLogOriginal.Location = new Point(0, 0);
-            txtLogOriginal.Multiline = true;
-            txtLogOriginal.Name = "txtLogOriginal";
-            txtLogOriginal.ReadOnly = true;
-            txtLogOriginal.ScrollBars = ScrollBars.Vertical;
-            txtLogOriginal.Size = new Size(10, 10);
-            txtLogOriginal.TabIndex = 31;
-            txtLogOriginal.Text = "준비 완료...\r\n";
-            txtLogOriginal.Visible = false;
-            // 
             // tabAiCompile
             // 
             tabAiCompile.BackColor = Color.White;
             tabAiCompile.Controls.Add(grpPredictResult);
             tabAiCompile.Controls.Add(grpTestImage);
-            tabAiCompile.Controls.Add(txtSummaryLog);
+            tabAiCompile.Controls.Add(txtLogOriginal);
             tabAiCompile.Controls.Add(grpTrainSetting);
             tabAiCompile.Controls.Add(lstHighErrorFrames);
             tabAiCompile.Controls.Add(btnDeleteHighError);
@@ -731,7 +717,7 @@
             tabAiCompile.Padding = new Padding(3);
             tabAiCompile.Size = new Size(2381, 260);
             tabAiCompile.TabIndex = 3;
-            tabAiCompile.Text = "AI 컴파일";
+            tabAiCompile.Text = "이미지 테스트";
             // 
             // grpPredictResult
             // 
@@ -888,20 +874,20 @@
             btnSelectTestImage.UseVisualStyleBackColor = true;
             btnSelectTestImage.Click += btnSelectTestImage_Click;
             // 
-            // txtSummaryLog
+            // txtLogOriginal
             // 
-            txtSummaryLog.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
-            txtSummaryLog.BackColor = SystemColors.ButtonHighlight;
-            txtSummaryLog.Font = new Font("나눔고딕", 8.999999F, FontStyle.Regular, GraphicsUnit.Point, 0);
-            txtSummaryLog.Location = new Point(15, 17);
-            txtSummaryLog.Margin = new Padding(4);
-            txtSummaryLog.Multiline = true;
-            txtSummaryLog.Name = "txtSummaryLog";
-            txtSummaryLog.ReadOnly = true;
-            txtSummaryLog.ScrollBars = ScrollBars.Vertical;
-            txtSummaryLog.Size = new Size(341, 224);
-            txtSummaryLog.TabIndex = 32;
-            txtSummaryLog.Text = "준비 완료...\r\n";
+            txtLogOriginal.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
+            txtLogOriginal.BackColor = SystemColors.ButtonHighlight;
+            txtLogOriginal.Font = new Font("나눔고딕", 8.999999F, FontStyle.Regular, GraphicsUnit.Point, 0);
+            txtLogOriginal.Location = new Point(15, 17);
+            txtLogOriginal.Margin = new Padding(4);
+            txtLogOriginal.Multiline = true;
+            txtLogOriginal.Name = "txtLogOriginal";
+            txtLogOriginal.ReadOnly = true;
+            txtLogOriginal.ScrollBars = ScrollBars.Vertical;
+            txtLogOriginal.Size = new Size(341, 224);
+            txtLogOriginal.TabIndex = 32;
+            txtLogOriginal.Text = "준비 완료...\r\n";
             // 
             // grpTrainSetting
             // 
@@ -1201,7 +1187,7 @@
             chkAutoPlay.Name = "chkAutoPlay";
             chkAutoPlay.Size = new Size(137, 44);
             chkAutoPlay.TabIndex = 10;
-            chkAutoPlay.Text = "자동 재생";
+            chkAutoPlay.Text = "연속 재생";
             chkAutoPlay.TextAlign = ContentAlignment.MiddleCenter;
             chkAutoPlay.UseVisualStyleBackColor = false;
             chkAutoPlay.CheckedChanged += chkAutoPlay_CheckedChanged;
@@ -1537,7 +1523,6 @@
         private ListBox lstHighErrorFrames;
         private Button btnDeleteHighError;
         private Button btnRunAICompile;
-        private TextBox txtSummaryLog;
         private GroupBox grpTrainSetting;
         private Button btnSelectModel;
         private Button btnModelTest;
