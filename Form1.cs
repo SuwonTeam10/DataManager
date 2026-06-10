@@ -1067,11 +1067,11 @@ namespace DataManager
             else if (tabMain.SelectedTab == tabTrainTest)
             {
                 ScaleChildrenByParent(tabTrainTest);
+                if (panelTrainingLoss.Visible) LayoutTrainingLossOverlay();
             }
             else if (tabMain.SelectedTab == tabAiCompile)
             {
                 ScaleChildrenByParent(tabAiCompile);
-                if (panelTrainingLoss.Visible) LayoutTrainingLossOverlay();
             }
         }
 
@@ -1718,40 +1718,49 @@ namespace DataManager
                 LayoutTrainingLossOverlay();
                 if (panelTrainingLoss.Visible) DrawTrainingLossGraph();
             };
-            tabAiCompile.Resize += (_, _) =>
+            tabTrainTest.Resize += (_, _) =>
             {
                 if (!panelTrainingLoss.Visible) return;
                 LayoutTrainingLossOverlay();
                 DrawTrainingLossGraph();
             };
-            tabAiCompile.Controls.Add(panelTrainingLoss);
+            tabTrainTest.Controls.Add(panelTrainingLoss);
             LayoutTrainingLossOverlay();
             DrawTrainingLossGraph();
         }
 
         private void LayoutTrainingLossOverlay()
         {
-            int margin = 10;
-            int controlsRight = Math.Max(btnRunAICompile.Right, Math.Max(btnDeleteHighError.Right, lstHighErrorFrames.Right));
-            int controlsBottom = Math.Max(btnRunAICompile.Bottom, Math.Max(btnDeleteHighError.Bottom, lstHighErrorFrames.Bottom));
-            int left = controlsRight + margin;
+            int margin = 12;
+            int gap = 14;
             int top = margin;
-            int width = tabAiCompile.ClientSize.Width - left - margin;
+            int controlsRight = Math.Max(grpTrainControl.Right, grpTrainProgress.Right);
+            int contentLeft = controlsRight + gap;
+            int contentWidth = tabTrainTest.ClientSize.Width - contentLeft - margin;
+            int height = tabTrainTest.ClientSize.Height - top - margin;
 
-            if (width < 360)
+            int logWidth = Math.Max(360, (int)(contentWidth * 0.42));
+            int graphLeft = contentLeft + logWidth + gap;
+            int graphWidth = tabTrainTest.ClientSize.Width - graphLeft - margin;
+
+            if (contentWidth < 780)
             {
-                left = margin;
-                top = controlsBottom + margin;
-                width = tabAiCompile.ClientSize.Width - margin * 2;
+                logWidth = Math.Max(260, contentWidth / 2 - gap);
+                graphLeft = contentLeft + logWidth + gap;
+                graphWidth = tabTrainTest.ClientSize.Width - graphLeft - margin;
             }
 
-            int height = tabAiCompile.ClientSize.Height - top - margin;
+            txtLog.SetBounds(
+                Math.Max(margin, contentLeft),
+                top,
+                Math.Max(260, logWidth),
+                Math.Max(TrainingLossMinimumPanelHeight, height));
 
             panelTrainingLoss.SetBounds(
-                Math.Max(margin, left),
-                Math.Max(margin, top),
-                Math.Max(260, width),
-                Math.Max(120, height));
+                Math.Max(margin, graphLeft),
+                top,
+                Math.Max(360, graphWidth),
+                Math.Max(TrainingLossMinimumPanelHeight, height));
 
             int innerLeft = panelTrainingLoss.Padding.Left;
             int innerTop = panelTrainingLoss.Padding.Top;
@@ -1823,7 +1832,7 @@ namespace DataManager
                     $"전체 학습 점수 {score}점 ({GetTrainingScoreGrade(score)})  |  프레임 {tubFrames.Count:N0}개  |  최종 loss {latest.Loss:0.#####}  |  loss가 낮아질수록 예측 오차가 줄어듭니다.";
             }
 
-            tabMain.SelectedTab = tabAiCompile;
+            tabMain.SelectedTab = tabTrainTest;
             panelTrainingLoss.Visible = true;
             panelTrainingLoss.BringToFront();
             ApplySelectedTabLayout();
