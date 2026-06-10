@@ -1565,10 +1565,10 @@ namespace DataManager
 
             ResetTrainingLossGraph();
             txtLog.Text = "";
-            if (txtLogOriginal != null) txtLogOriginal.Text = ""; 
+            if (txtLogOriginal != null) txtLogOriginal.Text = "";
 
             txtLog.AppendText("[Train] AI 모델 학습 요약을 시작합니다..." + Environment.NewLine);
-            if (txtLogOriginal != null) txtLogOriginal.AppendText("[Train] AI 모델 원본 로그를 기록합니다..." + Environment.NewLine); 
+            if (txtLogOriginal != null) txtLogOriginal.AppendText("[Train] AI 모델 원본 로그를 기록합니다..." + Environment.NewLine);
 
             _originalLogBuilder.Clear();
             _summaryLogBuilder.Clear();
@@ -1599,7 +1599,7 @@ namespace DataManager
 
             if (!isJunkLog)
             {
-                if (txtLogOriginal != null) 
+                if (txtLogOriginal != null)
                 {
                     txtLogOriginal.AppendText(logText + Environment.NewLine);
                     txtLogOriginal.ScrollToCaret();
@@ -1806,65 +1806,7 @@ namespace DataManager
 
         private void LayoutImageTestTabControls()
         {
-            if (isLayingOutLogPanels || tabAiCompile.ClientSize.Width <= 0) return;
-            isLayingOutLogPanels = true;
-
-            try
-            {
-                int margin = 14;
-                int gap = 14;
-                int top = 8;
-                int fullHeight = Math.Max(80, tabAiCompile.ClientSize.Height - top - margin);
-
-                int settingWidth = 470;
-                int testImageWidth = 430;
-                int testBlockWidth = Math.Max(settingWidth, testImageWidth);
-                int predictWidth = 172;
-                int errorButtonWidth = 86;
-                int highErrorWidth = 262;
-
-                int x = margin;
-                grpTrainSetting.SetBounds(x, top, settingWidth, 56);
-                grpTestImage.SetBounds(x, grpTrainSetting.Bottom + 6, testImageWidth, 63);
-                LayoutImageTestLeftGroups();
-
-                x += testBlockWidth + gap;
-                grpPredictResult.SetBounds(x, top, predictWidth, fullHeight);
-                LayoutPredictResultGroup();
-
-                int buttonsLeft = tabAiCompile.ClientSize.Width - margin - errorButtonWidth;
-                int listRight = buttonsLeft - gap;
-                int logsLeft = grpPredictResult.Right + gap;
-                int availableForLogsAndList = listRight - logsLeft;
-
-                highErrorWidth = Math.Min(highErrorWidth, Math.Max(170, availableForLogsAndList - gap * 2 - 120));
-                int logAreaWidth = Math.Max(80, availableForLogsAndList - highErrorWidth - gap * 2);
-                int logWidth = Math.Max(40, logAreaWidth / 2);
-                int logHeight = Math.Max(80, fullHeight - 12);
-
-                txtTestLog.SetBounds(logsLeft, top + 6, logWidth, logHeight);
-                txtTestLogOriginal.SetBounds(txtTestLog.Right + gap, top + 6, logWidth, logHeight);
-
-                int listLeft = txtTestLogOriginal.Right + gap;
-                int maxListWidth = Math.Max(120, listRight - listLeft);
-                lstHighErrorFrames.SetBounds(listLeft, top + 6, maxListWidth, logHeight);
-
-                btnRunAICompile.SetBounds(buttonsLeft, top + 28, errorButtonWidth, 26);
-                btnDeleteHighError.SetBounds(buttonsLeft, top + 64, errorButtonWidth, 26);
-
-                grpTrainSetting.BringToFront();
-                grpTestImage.BringToFront();
-                grpPredictResult.BringToFront();
-                txtTestLog.BringToFront();
-                txtTestLogOriginal.BringToFront();
-                lstHighErrorFrames.BringToFront();
-                btnRunAICompile.BringToFront();
-                btnDeleteHighError.BringToFront();
-            }
-            finally
-            {
-                isLayingOutLogPanels = false;
-            }
+            return;
         }
 
         private void LayoutImageTestLeftGroups()
@@ -2194,15 +2136,12 @@ namespace DataManager
                 if (res == DialogResult.No) return;
             }
 
-            // 1. 새로 만든 테스트용 텍스트박스 2개를 깨끗하게 비웁니다.
-            if (txtTestLog != null) txtTestLog.Text = "";
+            // ★ 수정됨: 요약 텍스트박스(txtTestLog) 지우고 오리지널 텍스트박스만 사용!
             if (txtTestLogOriginal != null) txtTestLogOriginal.Text = "";
 
-            // 2. 테스트 시작 메시지를 학습 창(txtLog)이 아닌 테스트 창(txtTestLog)에 씁니다.
-            if (txtTestLog != null) txtTestLog.AppendText($"[Test] {Path.GetFileName(modelPath)} 예측 시작..." + Environment.NewLine);
-            if (txtTestLogOriginal != null) txtTestLogOriginal.AppendText($"[Test] {Path.GetFileName(modelPath)} 원본 로그 기록 시작..." + Environment.NewLine);
+            if (txtTestLogOriginal != null) txtTestLogOriginal.AppendText($"[Test] {Path.GetFileName(modelPath)} 예측 시작 (완료 시 자동 오차 추출)..." + Environment.NewLine);
 
-            // 3. 바탕화면 저장용 보따리(Builder)도 새 테스트에 맞춰 깨끗하게 비웁니다.
+            // 파일 저장용 보따리 초기화
             _originalLogBuilder.Clear();
             _summaryLogBuilder.Clear();
             _originalLogBuilder.AppendLine($"--- Donkeycar 테스트 원본 로그 ({DateTime.Now}) ---");
@@ -2211,6 +2150,10 @@ namespace DataManager
             ResetModelTestResult();
             ShowTestImagePreview(FindFirstTestImagePath());
 
+            ClearPendingModelTestLogs();
+            isModelTestRunning = true;
+            modelTestLogTimer.Start();
+
             UpdateStatusLabel("모델 테스트 중", Color.DarkOrange);
             _testCount++;
             if (infoTest != null) infoTest.Text = $"오늘 테스트 시도: {_testCount}회";
@@ -2218,8 +2161,7 @@ namespace DataManager
             bool useVenv = chkUseVenv != null ? chkUseVenv.Checked : true;
             _executor.ExecuteTest(configPath, modelPath, testImagePath, useVenv, (log) =>
             {
-                // 프리징 방지를 위해 BeginInvoke 사용
-                this.BeginInvoke(new Action(() => HandleModelTestLog(log)));
+                modelTestLogQueue.Enqueue(log);
             });
         }
 
@@ -2263,49 +2205,28 @@ namespace DataManager
         {
             if (string.IsNullOrWhiteSpace(logText)) return;
 
-            // 모델 파일 없음 팝업 로직 (그대로 유지)
             if (logText.StartsWith("[NO_MODEL]"))
             {
+                isModelTestRunning = false;
                 string missingPath = logText.Substring(10).Trim();
                 MessageBox.Show($"지정된 경로에 AI 모델(.h5) 파일이 존재하지 않습니다.\n\n경로: {missingPath}\n\n아직 학습이 완료되지 않았거나 파일이 지워졌습니다. 먼저 [학습 시작]을 눌러 모델을 생성해 주세요.", "모델 파일 없음", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 UpdateStatusLabel("대기 중", Color.Green);
                 return;
             }
 
-            // 정크 문자 필터링 (그대로 유지)
             bool isJunkLog = logText.Contains('\r') || logText.Contains('\b') || logText.Count(c => c == '=') > 10 || logText.Contains("\u001b");
             if (isJunkLog) return;
 
-            // ==========================================
-            // ★ 테스트 전용 로그 출력으로 변경!
-            // ==========================================
-
-            // 1. 테스트 원본 로그 (txtTestLogOriginal 에 출력)
+            // 1. 테스트 원본 로그만 출력 (요약 로그 출력 로직 완전 삭제)
             if (txtTestLogOriginal != null)
             {
                 txtTestLogOriginal.AppendText(Environment.NewLine + logText);
                 txtTestLogOriginal.ScrollToCaret();
             }
-            _originalLogBuilder.AppendLine(logText); // 텍스트 파일 저장용은 공통 사용
+            _originalLogBuilder.AppendLine(logText);
 
-            // 2. 테스트 요약 로그 (txtTestLog 에 출력)
-            bool isSummaryImportant =
-                logText.StartsWith("[Test]") ||
-                logText.StartsWith("[Info]") ||
-                logText.Contains("Error") ||
-                logText.Contains("Exception") ||
-                logText.Contains("Finished") ||
-                logText.StartsWith("🛑");
-
-            if (isSummaryImportant)
-            {
-                if (txtTestLog != null)
-                {
-                    txtTestLog.AppendText(Environment.NewLine + logText);
-                    txtTestLog.ScrollToCaret();
-                }
-                _summaryLogBuilder.AppendLine(logText); // 텍스트 파일 저장용은 공통 사용
-            }
+            // 파일 저장을 위해 요약 빌더에도 같이 넣어둠
+            _summaryLogBuilder.AppendLine(logText);
 
             string? imageReference = TryFindImageReferenceFromLog(logText);
             string? imagePath = TryFindImagePathFromLog(logText);
@@ -2317,17 +2238,20 @@ namespace DataManager
                 }, out double realAngle))
             {
                 latestTestRealAngle = realAngle;
+                if (lblRealAngle2 != null) lblRealAngle2.Text = realAngle.ToString("0.000");
             }
 
             if (TryExtractLogValue(logText, new[]
                 {
-
                     @"(?:predict(?:ed)?|prediction|pred|pilot/angle|예측\s*조향각|예측)\s*[:=]\s*(-?\d+(?:\.\d+)?)"
                 }, out double predictAngle))
             {
                 latestTestPredictAngle = predictAngle;
                 string? predictionImageReference = imagePath ?? imageReference ?? latestTestImagePath;
                 StorePredictedAngleForImage(predictionImageReference, predictAngle);
+
+                if (lblPredictAngle2 != null) lblPredictAngle2.Text = predictAngle.ToString("0.000");
+
                 picFrame.Invalidate();
             }
 
@@ -2344,10 +2268,16 @@ namespace DataManager
                 parsedErrorValue = Math.Abs(latestTestRealAngle.Value - latestTestPredictAngle.Value);
             }
 
-            if (!string.IsNullOrWhiteSpace(imagePath) && ShowTestImagePreview(imagePath, throttle: true))
+            if (parsedErrorValue.HasValue && lblErrorValue2 != null)
             {
-                UpdateModelTestResultForPreview(imagePath, imageReference, parsedErrorValue);
+                lblErrorValue2.Text = parsedErrorValue.Value.ToString("0.000");
             }
+
+            if (!string.IsNullOrWhiteSpace(imagePath))
+            {
+                ShowTestImagePreview(imagePath, throttle: true);
+            }
+            UpdateModelTestResultForPreview(imagePath ?? "", imageReference, parsedErrorValue);
 
             if (logText.Contains("Finished", StringComparison.OrdinalIgnoreCase)
                 || logText.Contains("complete", StringComparison.OrdinalIgnoreCase)
@@ -2357,6 +2287,16 @@ namespace DataManager
                 lblTrainStatus2.Text = "테스트 완료";
                 lblTrainStatus2.ForeColor = Color.Green;
                 UpdateStatusLabel("대기 중", Color.Green);
+
+                // ★ 추가됨: 테스트가 끝나면 AI 컴파일(오차 추출) 버튼을 코드가 알아서 눌러줌!
+                if (txtTestLogOriginal != null)
+                {
+                    txtTestLogOriginal.AppendText(Environment.NewLine + "✅ 테스트 완료! 자동으로 오차 데이터를 추출합니다..." + Environment.NewLine);
+                    txtTestLogOriginal.ScrollToCaret();
+                }
+
+                // 오차 추출 버튼 강제 클릭 이벤트 발생
+                btnRunAICompile_Click(null, EventArgs.Empty);
             }
             else if (logText.Contains("Error", StringComparison.OrdinalIgnoreCase)
                 || logText.Contains("Exception", StringComparison.OrdinalIgnoreCase)
@@ -6091,6 +6031,11 @@ namespace DataManager
         }
 
         private void textBox2_TextChanged(object sender, EventArgs e)
+        {
+
+        }
+
+        private void chkUseVenv_CheckedChanged_1(object sender, EventArgs e)
         {
 
         }
