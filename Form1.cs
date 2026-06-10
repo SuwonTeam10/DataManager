@@ -770,7 +770,7 @@ namespace DataManager
                  Sx(2397), Sy(168)
             );
 
-            
+
             tabMain.SetBounds(
                 Sx(56), Sy(1185),
                 Sx(2397), Sy(314)
@@ -945,7 +945,7 @@ namespace DataManager
             _baseLayoutCaptured = true;
         }
 
-        
+
         // 부모 컨트롤 내부의 모든 자식 컨트롤 정보를 재귀적으로 저장
         private void CaptureBaseLayout(Control parent)
         {
@@ -1558,10 +1558,10 @@ namespace DataManager
 
             ResetTrainingLossGraph();
             txtLog.Text = "";
-            if (txtLogOriginal != null) txtLogOriginal.Text = "";
+            if (txtLogOriginal != null) txtLogOriginal.Text = ""; 
 
             txtLog.AppendText("[Train] AI 모델 학습 요약을 시작합니다..." + Environment.NewLine);
-            if (txtLogOriginal != null) txtLogOriginal.AppendText("[Train] AI 모델 원본 로그를 기록합니다..." + Environment.NewLine);
+            if (txtLogOriginal != null) txtLogOriginal.AppendText("[Train] AI 모델 원본 로그를 기록합니다..." + Environment.NewLine); 
 
             _originalLogBuilder.Clear();
             _summaryLogBuilder.Clear();
@@ -1592,7 +1592,7 @@ namespace DataManager
 
             if (!isJunkLog)
             {
-                if (txtLogOriginal != null)
+                if (txtLogOriginal != null) 
                 {
                     txtLogOriginal.AppendText(logText + Environment.NewLine);
                     txtLogOriginal.ScrollToCaret();
@@ -2075,12 +2075,22 @@ namespace DataManager
                 if (res == DialogResult.No) return;
             }
 
-            txtLog.AppendText(Environment.NewLine + $"[Test] {Path.GetFileName(modelPath)} 예측 시작...");
+            // 1. 새로 만든 테스트용 텍스트박스 2개를 깨끗하게 비웁니다.
+            if (txtTestLog != null) txtTestLog.Text = "";
+            if (txtTestLogOriginal != null) txtTestLogOriginal.Text = "";
+
+            // 2. 테스트 시작 메시지를 학습 창(txtLog)이 아닌 테스트 창(txtTestLog)에 씁니다.
+            if (txtTestLog != null) txtTestLog.AppendText($"[Test] {Path.GetFileName(modelPath)} 예측 시작..." + Environment.NewLine);
+            if (txtTestLogOriginal != null) txtTestLogOriginal.AppendText($"[Test] {Path.GetFileName(modelPath)} 원본 로그 기록 시작..." + Environment.NewLine);
+
+            // 3. 바탕화면 저장용 보따리(Builder)도 새 테스트에 맞춰 깨끗하게 비웁니다.
+            _originalLogBuilder.Clear();
+            _summaryLogBuilder.Clear();
+            _originalLogBuilder.AppendLine($"--- Donkeycar 테스트 원본 로그 ({DateTime.Now}) ---");
+            _summaryLogBuilder.AppendLine($"--- Donkeycar 테스트 요약 로그 ({DateTime.Now}) ---");
+
             ResetModelTestResult();
             ShowTestImagePreview(FindFirstTestImagePath());
-            ClearPendingModelTestLogs();
-            isModelTestRunning = true;
-            modelTestLogTimer.Start();
 
             UpdateStatusLabel("모델 테스트 중", Color.DarkOrange);
             _testCount++;
@@ -2089,7 +2099,8 @@ namespace DataManager
             bool useVenv = chkUseVenv != null ? chkUseVenv.Checked : true;
             _executor.ExecuteTest(configPath, modelPath, testImagePath, useVenv, (log) =>
             {
-                modelTestLogQueue.Enqueue(log);
+                // 프리징 방지를 위해 BeginInvoke 사용
+                this.BeginInvoke(new Action(() => HandleModelTestLog(log)));
             });
         }
 
@@ -2136,33 +2147,32 @@ namespace DataManager
             // 모델 파일 없음 팝업 로직 (그대로 유지)
             if (logText.StartsWith("[NO_MODEL]"))
             {
-                isModelTestRunning = false;
                 string missingPath = logText.Substring(10).Trim();
                 MessageBox.Show($"지정된 경로에 AI 모델(.h5) 파일이 존재하지 않습니다.\n\n경로: {missingPath}\n\n아직 학습이 완료되지 않았거나 파일이 지워졌습니다. 먼저 [학습 시작]을 눌러 모델을 생성해 주세요.", "모델 파일 없음", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 UpdateStatusLabel("대기 중", Color.Green);
                 return;
             }
 
-            // ★ 추가: 원본 로그에서도 보기 흉한 로딩바(====)나 깨진 문자(\r, \b)는 걸러냅니다.
+            // 정크 문자 필터링 (그대로 유지)
             bool isJunkLog = logText.Contains('\r') || logText.Contains('\b') || logText.Count(c => c == '=') > 10 || logText.Contains("\u001b");
-            if (isJunkLog) return; // 정크 로그면 여기서 바로 종료! 아무곳에도 기록하지 않음.
+            if (isJunkLog) return;
 
             // ==========================================
-            // ★ 로그 분리 로직 추가 (요약 vs 원본)
+            // ★ 테스트 전용 로그 출력으로 변경!
             // ==========================================
 
-            // 1. 원본 로그에는 모든 테스트 결과를 기록 (Junk 제외)
-            if (txtLogOriginal != null)
+            // 1. 테스트 원본 로그 (txtTestLogOriginal 에 출력)
+            if (txtTestLogOriginal != null)
             {
-                txtLogOriginal.AppendText(Environment.NewLine + logText);
-                txtLogOriginal.ScrollToCaret();
+                txtTestLogOriginal.AppendText(Environment.NewLine + logText);
+                txtTestLogOriginal.ScrollToCaret();
             }
-            _originalLogBuilder.AppendLine(logText);
+            _originalLogBuilder.AppendLine(logText); // 텍스트 파일 저장용은 공통 사용
 
-            // 2. 요약 로그에는 시작, 에러, 완료 등 '핵심 정보'만 기록
+            // 2. 테스트 요약 로그 (txtTestLog 에 출력)
             bool isSummaryImportant =
                 logText.StartsWith("[Test]") ||
-                logText.StartsWith("[Info]") || // 총 N개의 이미지를 테스트합니다.
+                logText.StartsWith("[Info]") ||
                 logText.Contains("Error") ||
                 logText.Contains("Exception") ||
                 logText.Contains("Finished") ||
@@ -2170,9 +2180,12 @@ namespace DataManager
 
             if (isSummaryImportant)
             {
-                txtLog.AppendText(Environment.NewLine + logText);
-                txtLog.ScrollToCaret();
-                _summaryLogBuilder.AppendLine(logText);
+                if (txtTestLog != null)
+                {
+                    txtTestLog.AppendText(Environment.NewLine + logText);
+                    txtTestLog.ScrollToCaret();
+                }
+                _summaryLogBuilder.AppendLine(logText); // 텍스트 파일 저장용은 공통 사용
             }
 
             string? imageReference = TryFindImageReferenceFromLog(logText);
@@ -2187,9 +2200,9 @@ namespace DataManager
                 latestTestRealAngle = realAngle;
             }
 
-            if (TryExtractLogValue(logText, new[] 
+            if (TryExtractLogValue(logText, new[]
                 {
-              
+
                     @"(?:predict(?:ed)?|prediction|pred|pilot/angle|예측\s*조향각|예측)\s*[:=]\s*(-?\d+(?:\.\d+)?)"
                 }, out double predictAngle))
             {
@@ -5954,6 +5967,11 @@ namespace DataManager
         }
 
         private void groupDataView_Enter(object sender, EventArgs e)
+        {
+
+        }
+
+        private void textBox2_TextChanged(object sender, EventArgs e)
         {
 
         }
