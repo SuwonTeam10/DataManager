@@ -170,6 +170,7 @@ namespace DataManager
         private readonly PictureBox picTrainingLossGraph = new();
         private readonly List<TrainingLossPoint> trainingLossPoints = new();
         private Rectangle trainingLossPlotBounds = Rectangle.Empty;
+        private bool isLayingOutLogPanels = false;
         // ==========================================
         // 1. 초기화 및 생성자
         // ==========================================
@@ -286,6 +287,7 @@ namespace DataManager
             timelineDragTimer.Tick += timelineDragTimer_Tick;
 
             InitializeTrainingLossOverlay();
+            tabAiCompile.Resize += (_, _) => LayoutImageTestTabControls();
             InitializeGraphControls();
             picTestImage.SizeMode = PictureBoxSizeMode.Zoom;
             MinimumSize = new Size(Math.Max(MinimumSize.Width, MinimumResponsiveFormWidth), MinimumSize.Height);
@@ -297,6 +299,8 @@ namespace DataManager
 
                 ApplyResponsiveMainLayout();
                 ArrangeCleanerControls();
+                LayoutTrainingLossOverlay();
+                LayoutImageTestTabControls();
 
                 // 버튼 이미지 자동 스케일링 등록
                 RegisterScaledButton(btnTrain);
@@ -313,6 +317,8 @@ namespace DataManager
 
             ApplyResponsiveMainLayout();
             ArrangeCleanerControls();
+            LayoutTrainingLossOverlay();
+            LayoutImageTestTabControls();
         }
 
         private void Form1_KeyDown(object? sender, KeyEventArgs e)
@@ -1072,6 +1078,7 @@ namespace DataManager
             else if (tabMain.SelectedTab == tabAiCompile)
             {
                 ScaleChildrenByParent(tabAiCompile);
+                LayoutImageTestTabControls();
             }
         }
 
@@ -1731,6 +1738,11 @@ namespace DataManager
 
         private void LayoutTrainingLossOverlay()
         {
+            if (isLayingOutLogPanels) return;
+            isLayingOutLogPanels = true;
+
+            try
+            {
             int margin = 12;
             int gap = 14;
             int top = margin;
@@ -1739,28 +1751,35 @@ namespace DataManager
             int contentWidth = tabTrainTest.ClientSize.Width - contentLeft - margin;
             int height = tabTrainTest.ClientSize.Height - top - margin;
 
-            int logWidth = Math.Max(360, (int)(contentWidth * 0.42));
-            int graphLeft = contentLeft + logWidth + gap;
-            int graphWidth = tabTrainTest.ClientSize.Width - graphLeft - margin;
+            int graphWidth = Math.Max(360, (int)(contentWidth * 0.46));
+            int logAreaWidth = contentWidth - graphWidth - gap * 2;
 
-            if (contentWidth < 780)
+            if (logAreaWidth < 260)
             {
-                logWidth = Math.Max(260, contentWidth / 2 - gap);
-                graphLeft = contentLeft + logWidth + gap;
-                graphWidth = tabTrainTest.ClientSize.Width - graphLeft - margin;
+                graphWidth = Math.Max(300, contentWidth - 260 - gap * 2);
+                logAreaWidth = contentWidth - graphWidth - gap * 2;
             }
+
+            int logWidth = Math.Max(100, logAreaWidth / 2);
+            int logHeight = Math.Max(TrainingLossMinimumPanelHeight, height);
 
             txtLog.SetBounds(
                 Math.Max(margin, contentLeft),
                 top,
-                Math.Max(260, logWidth),
-                Math.Max(TrainingLossMinimumPanelHeight, height));
+                logWidth,
+                logHeight);
+
+            txtLogOriginal.SetBounds(
+                txtLog.Right + gap,
+                top,
+                logWidth,
+                logHeight);
 
             panelTrainingLoss.SetBounds(
-                Math.Max(margin, graphLeft),
+                txtLogOriginal.Right + gap,
                 top,
-                Math.Max(360, graphWidth),
-                Math.Max(TrainingLossMinimumPanelHeight, height));
+                Math.Max(300, tabTrainTest.ClientSize.Width - txtLogOriginal.Right - gap - margin),
+                logHeight);
 
             int innerLeft = panelTrainingLoss.Padding.Left;
             int innerTop = panelTrainingLoss.Padding.Top;
@@ -1778,6 +1797,106 @@ namespace DataManager
             picTrainingLossGraph.SetBounds(innerLeft, graphTop, innerWidth, graphHeight);
             panelTrainingLoss.PerformLayout();
             picTrainingLossGraph.Update();
+            }
+            finally
+            {
+                isLayingOutLogPanels = false;
+            }
+        }
+
+        private void LayoutImageTestTabControls()
+        {
+            if (isLayingOutLogPanels || tabAiCompile.ClientSize.Width <= 0) return;
+            isLayingOutLogPanels = true;
+
+            try
+            {
+                int margin = 14;
+                int gap = 14;
+                int top = 8;
+                int fullHeight = Math.Max(80, tabAiCompile.ClientSize.Height - top - margin);
+
+                int settingWidth = 470;
+                int testImageWidth = 430;
+                int testBlockWidth = Math.Max(settingWidth, testImageWidth);
+                int predictWidth = 172;
+                int errorButtonWidth = 86;
+                int highErrorWidth = 262;
+
+                int x = margin;
+                grpTrainSetting.SetBounds(x, top, settingWidth, 56);
+                grpTestImage.SetBounds(x, grpTrainSetting.Bottom + 6, testImageWidth, 63);
+                LayoutImageTestLeftGroups();
+
+                x += testBlockWidth + gap;
+                grpPredictResult.SetBounds(x, top, predictWidth, fullHeight);
+                LayoutPredictResultGroup();
+
+                int buttonsLeft = tabAiCompile.ClientSize.Width - margin - errorButtonWidth;
+                int listRight = buttonsLeft - gap;
+                int logsLeft = grpPredictResult.Right + gap;
+                int availableForLogsAndList = listRight - logsLeft;
+
+                highErrorWidth = Math.Min(highErrorWidth, Math.Max(170, availableForLogsAndList - gap * 2 - 120));
+                int logAreaWidth = Math.Max(80, availableForLogsAndList - highErrorWidth - gap * 2);
+                int logWidth = Math.Max(40, logAreaWidth / 2);
+                int logHeight = Math.Max(80, fullHeight - 12);
+
+                txtTestLog.SetBounds(logsLeft, top + 6, logWidth, logHeight);
+                txtTestLogOriginal.SetBounds(txtTestLog.Right + gap, top + 6, logWidth, logHeight);
+
+                int listLeft = txtTestLogOriginal.Right + gap;
+                int maxListWidth = Math.Max(120, listRight - listLeft);
+                lstHighErrorFrames.SetBounds(listLeft, top + 6, maxListWidth, logHeight);
+
+                btnRunAICompile.SetBounds(buttonsLeft, top + 28, errorButtonWidth, 26);
+                btnDeleteHighError.SetBounds(buttonsLeft, top + 64, errorButtonWidth, 26);
+
+                grpTrainSetting.BringToFront();
+                grpTestImage.BringToFront();
+                grpPredictResult.BringToFront();
+                txtTestLog.BringToFront();
+                txtTestLogOriginal.BringToFront();
+                lstHighErrorFrames.BringToFront();
+                btnRunAICompile.BringToFront();
+                btnDeleteHighError.BringToFront();
+            }
+            finally
+            {
+                isLayingOutLogPanels = false;
+            }
+        }
+
+        private void LayoutImageTestLeftGroups()
+        {
+            btnSelectModel.SetBounds(8, 18, 145, 26);
+            btnSelectTestImage.SetBounds(163, 18, 165, 26);
+            btnStopTest.SetBounds(328, 18, 134, 26);
+            btnStopTest.TextAlign = ContentAlignment.MiddleRight;
+            btnStopTest.Padding = new Padding(6, 0, 6, 0);
+
+            btnModelTest.SetBounds(10, 20, 230, 30);
+            picTestImage.SetBounds(300, 12, 114, 50);
+        }
+
+        private void LayoutPredictResultGroup()
+        {
+            int labelX = 12;
+            int valueX = Math.Max(104, grpPredictResult.ClientSize.Width - 52);
+            int row1 = 18;
+            int row2 = 43;
+            int row3 = 68;
+            int bottomRow = Math.Max(98, grpPredictResult.ClientSize.Height - 24);
+
+            lblRealAngle.SetBounds(labelX, row1, 84, 22);
+            lblPredictAngle.SetBounds(labelX, row2, 84, 22);
+            lblErrorValue.SetBounds(labelX, row3, 84, 22);
+            lblRealAngle2.SetBounds(valueX, row1, 46, 22);
+            lblPredictAngle2.SetBounds(valueX, row2, 46, 22);
+            lblErrorValue2.SetBounds(valueX, row3, 46, 22);
+            panel4.SetBounds(0, Math.Max(92, grpPredictResult.ClientSize.Height - 34), grpPredictResult.ClientSize.Width, 1);
+            lblTrainStatus.SetBounds(labelX, bottomRow, 38, 20);
+            lblTrainStatus2.SetBounds(labelX + 45, bottomRow, 92, 20);
         }
 
         private void ResetTrainingLossGraph()
