@@ -48,11 +48,15 @@ Tub 데이터 불러오기, 프레임 탐색, 데이터 필터링, 학습 실행
 |------|------|
 | 💻 Language | C# |
 | 🖼️ Framework | .NET Windows Forms |
-| 🤖 AI Framework | DonkeyCar |
-| 🌐 Remote | SSH.NET |
+| 🧩 Target Framework | .NET 10.0 Windows (`net10.0-windows`) |
+| 🤖 AI Framework | DonkeyCar v5.3.dev1 |
+| 🧠 TensorFlow | TensorFlow 2.x |
+| 🐍 Python | Python 3.11 계열 (`e2e_env`) |
+| 🌐 Remote | SSH.NET 2025.1.0 |
 | 📂 Data Format | catalog_*.catalog / record_*.json |
 | 🧠 Model Format | .h5 |
-| 🖥️ OS | Windows / Ubuntu |
+| 🖥️ OS | Windows 10 Home 22H2 / Ubuntu 22.04 |
+| 🐧 WSL | Ubuntu-22.04 |
 | 🔨 IDE | Visual Studio 2022 |
 
 -----------------------------------------------------------------------------------------------------------------------------------
