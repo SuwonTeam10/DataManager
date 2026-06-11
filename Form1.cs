@@ -166,7 +166,6 @@ namespace DataManager
         private readonly Panel panelTrainingLoss = new();
         private readonly Label lblTrainingLossSummary = new();
         private readonly Label lblTrainingLossHover = new();
-        private readonly Button btnCloseTrainingLoss = new();
         private readonly PictureBox picTrainingLossGraph = new();
         private readonly List<TrainingLossPoint> trainingLossPoints = new();
         private Rectangle trainingLossPlotBounds = Rectangle.Empty;
@@ -1626,7 +1625,11 @@ namespace DataManager
                 }
             }
 
-            CaptureTrainingLoss(logText);
+            bool capturedLoss = CaptureTrainingLoss(logText);
+            if (capturedLoss && IsEpochLossUpdateLog(logText))
+            {
+                ShowTrainingLossGraph(isFinal: false);
+            }
 
             if (logText.Contains("[Errno 2]") || logText.Contains("Error") || logText.Contains("Exception"))
             {
@@ -1646,7 +1649,7 @@ namespace DataManager
                 txtLog.AppendText(Environment.NewLine + $"📁 자동 저장 위치: {configPath}/models/mypilot.h5");
                 txtLog.AppendText(Environment.NewLine + "--------------------------------------------------" + Environment.NewLine);
 
-                ShowTrainingLossGraph();
+                ShowTrainingLossGraph(isFinal: true);
                 SaveLogsToFile();
 
                 MessageBox.Show($"🎉 AI 모델 학습이 성공적으로 완료되었습니다!\n\n[자동 저장 위치]\n{configPath}/models/mypilot.h5\n\n[다음 단계 안내]\n1. 좌측의 [모델 선택] 버튼을 누르세요. (자동으로 세팅됩니다.)\n2. [테스트 이미지 선택]을 누르세요. (원격 서버 폴더 자동 세팅)\n3. [모델 테스트 실행] 버튼을 눌러보세요!", "학습 완료", MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -1687,11 +1690,6 @@ namespace DataManager
             lblTrainingLossSummary.Font = new Font("나눔고딕", 9F, FontStyle.Bold);
             lblTrainingLossSummary.Text = "학습 완료 후 loss 그래프가 여기에 표시됩니다.";
 
-            btnCloseTrainingLoss.Text = "X";
-            btnCloseTrainingLoss.Size = new Size(28, 24);
-            btnCloseTrainingLoss.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-            btnCloseTrainingLoss.Click += (_, _) => HideTrainingLossGraph();
-
             picTrainingLossGraph.Dock = DockStyle.None;
             picTrainingLossGraph.BackColor = Color.White;
             picTrainingLossGraph.BorderStyle = BorderStyle.FixedSingle;
@@ -1719,7 +1717,6 @@ namespace DataManager
 
             panelTrainingLoss.Controls.Add(picTrainingLossGraph);
             panelTrainingLoss.Controls.Add(lblTrainingLossSummary);
-            panelTrainingLoss.Controls.Add(btnCloseTrainingLoss);
             panelTrainingLoss.Resize += (_, _) =>
             {
                 LayoutTrainingLossOverlay();
@@ -1784,13 +1781,9 @@ namespace DataManager
             int innerLeft = panelTrainingLoss.Padding.Left;
             int innerTop = panelTrainingLoss.Padding.Top;
             int innerWidth = Math.Max(1, panelTrainingLoss.ClientSize.Width - panelTrainingLoss.Padding.Horizontal);
-            int summaryWidth = Math.Max(1, innerWidth - btnCloseTrainingLoss.Width - 8);
+            int summaryWidth = innerWidth;
 
             lblTrainingLossSummary.SetBounds(innerLeft, innerTop, summaryWidth, 30);
-            btnCloseTrainingLoss.Location = new Point(
-                Math.Max(6, panelTrainingLoss.ClientSize.Width - btnCloseTrainingLoss.Width - 8),
-                5);
-            btnCloseTrainingLoss.BringToFront();
 
             int graphTop = lblTrainingLossSummary.Bottom + 4;
             int graphHeight = Math.Max(70, panelTrainingLoss.ClientSize.Height - graphTop - panelTrainingLoss.Padding.Bottom);
@@ -1857,14 +1850,14 @@ namespace DataManager
             DrawTrainingLossGraph();
         }
 
-        private void CaptureTrainingLoss(string logText)
+        private bool CaptureTrainingLoss(string logText)
         {
             Match lossMatch = Regex.Match(logText, @"\bloss\s*[:=]\s*([-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?)");
-            if (!lossMatch.Success) return;
+            if (!lossMatch.Success) return false;
 
             if (!double.TryParse(lossMatch.Groups[1].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out double loss))
             {
-                return;
+                return false;
             }
 
             double? valLoss = null;
@@ -1877,9 +1870,22 @@ namespace DataManager
 
             int frameIndex = MapLossOrderToFrameIndex(trainingLossPoints.Count, trainingLossPoints.Count + 1);
             trainingLossPoints.Add(new TrainingLossPoint(trainingLossPoints.Count + 1, frameIndex, loss, valLoss));
+            return true;
         }
 
-        private void ShowTrainingLossGraph()
+        private static bool IsEpochLossUpdateLog(string logText)
+        {
+            if (logText.Contains("val_loss")) return true;
+            if (Regex.IsMatch(logText, @"^\s*Epoch\s+\d+/\d+")) return true;
+
+            Match stepMatch = Regex.Match(logText, @"^\s*(\d+)/(\d+).*?\bloss\s*[:=]");
+            return stepMatch.Success
+                && int.TryParse(stepMatch.Groups[1].Value, out int currentStep)
+                && int.TryParse(stepMatch.Groups[2].Value, out int totalStep)
+                && currentStep >= totalStep;
+        }
+
+        private void ShowTrainingLossGraph(bool isFinal)
         {
             if (trainingLossPoints.Count == 0)
             {
@@ -1889,11 +1895,16 @@ namespace DataManager
             {
                 TrainingLossPoint latest = trainingLossPoints[^1];
                 int score = CalculateTrainingScore(latest.Loss);
+                string title = isFinal ? "전체 학습 점수" : "학습 중 점수";
                 lblTrainingLossSummary.Text =
-                    $"전체 학습 점수 {score}점 ({GetTrainingScoreGrade(score)})  |  프레임 {tubFrames.Count:N0}개  |  최종 loss {latest.Loss:0.#####}  |  loss가 낮아질수록 예측 오차가 줄어듭니다.";
+                    $"{title} {score}점 ({GetTrainingScoreGrade(score)})  |  프레임 {tubFrames.Count:N0}개  |  현재 loss {latest.Loss:0.#####}  |  loss가 낮아질수록 예측 오차가 줄어듭니다.";
             }
 
-            tabMain.SelectedTab = tabTrainTest;
+            if (isFinal)
+            {
+                tabMain.SelectedTab = tabTrainTest;
+            }
+
             panelTrainingLoss.Visible = true;
             panelTrainingLoss.BringToFront();
             ApplySelectedTabLayout();
