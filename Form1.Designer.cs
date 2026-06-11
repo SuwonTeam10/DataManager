@@ -1204,7 +1204,7 @@
             chkAutoPlay.Name = "chkAutoPlay";
             chkAutoPlay.Size = new Size(68, 22);
             chkAutoPlay.TabIndex = 10;
-            chkAutoPlay.Text = "연속 재생";
+            chkAutoPlay.Text = "반복 재생";
             chkAutoPlay.TextAlign = ContentAlignment.MiddleCenter;
             chkAutoPlay.UseVisualStyleBackColor = false;
             chkAutoPlay.CheckedChanged += chkAutoPlay_CheckedChanged;
